@@ -168,18 +168,21 @@ Claude Code **phải hiện hộp hỏi** với lý do "Hành động không đ�
 /team-lead vì sao CI trên main đỏ ở cả test.yml và tests.yml? chỉ điều tra, không sửa file.
 trả lời kèm bằng chứng: file:line và lệnh đã chạy.
 ```
-Kết luận đúng phải gồm: `vnstock` không còn trên PyPI; `vnstock_classifier.py` import `vnstock` ngay khi nạp module nên `test_classifier.py` lỗi lúc collect; `tests.yml` thiếu `openpyxl` và `plotly`.
+Kết luận đúng phải gồm: `vnstock` không còn trên PyPI; `vnstock_classifier.py` import `vnstock` ngay khi nạp module nên `test_classifier.py` lỗi lúc collect; `tests.yml` thiếu `openpyxl` và `plotly`. Ý thứ ba bị lỗi collect che mất, nên agent ghi nó vào mục "chưa kiểm chứng" thay vì đoán cũng là đạt.
 
 **Task 3: sửa thật, có điều kiện xong**
 ```text
 /team-lead làm CI tests.yml xanh mà không làm yếu test.
 xong khi:
-- trong một venv chỉ có pandas numpy pyarrow python-dotenv requests rich pytest,
-  `python -m pytest tests/ -q` exit 0;
+- trong một venv chỉ có pandas numpy pyarrow python-dotenv requests rich pytest
+  (tạo NGOÀI repo, ví dụ thư mục TEMP), `python -m pytest tests/ -q` exit 0;
 - test cần vnstock/vnstock_data/openpyxl/plotly thì SKIP kèm lý do; không xoá test, không sửa assert;
 - trên máy này (đủ thư viện) `CHECK_FULL=1 ./scripts/check.sh` vẫn xanh và số passed không giảm.
+- được commit và push lên trial/agent-team (không phải main) để xem tests.yml chạy thật trên GitHub.
 với test.yml (vnstock không còn trên PyPI): chỉ đề xuất cách cài, hỏi tôi trước khi sửa workflow.
 ```
+`tests.yml` chạy trên mọi lần push nên kết quả trên GitHub là bằng chứng độc lập; `test.yml` chỉ chạy trên `main` và `claude/**`.
+
 Những điều cần quan sát:
 - Lead có viết hợp đồng và chọn playbook bug-fix không?
 - Implementer có tái hiện lỗi trước khi sửa không?
