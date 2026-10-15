@@ -71,7 +71,7 @@ if have_jq; then
   jq -cn --arg r "$reason" '{decision: "block", reason: $r}'
   exit 0
 elif py="$(hook_python)"; then
-  "$py" -c 'import json, sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}, ensure_ascii=False))' "$reason"
+  "$py" -c 'import json, sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}))' "$reason"
   exit 0
 fi
 printf '%s\n' "$reason" >&2

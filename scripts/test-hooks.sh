@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test hành vi của các hook trong .claude/hooks bằng input JSON giống như Claude Code gửi.
-# Guard được test hai lần: có jq/Python và giả lập máy không có (KIT_NO_JSON_TOOLS=1).
+# Guard được test với từng cách đọc JSON: auto (jq), python, sed (KIT_JSON_TOOL).
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 root="$PWD"
@@ -35,11 +35,28 @@ bash_input() {
   fi
 }
 
-mode=0
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+gitc() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }
+# new_repo <thư mục> <nhánh>
+new_repo() {
+  mkdir -p "$1"
+  gitc "$1" init -q
+  gitc "$1" checkout -q -b "$2"
+  gitc "$1" commit -q --allow-empty -m init
+}
+# Mặc định chạy guard trong repo tạm trên nhánh feature, để kết quả không phụ thuộc nhánh của repo kit.
+work="$tmp/work"
+new_repo "$work" feat/x
+on_main="$tmp/main repo"
+new_repo "$on_main" main
+
+modes="auto sed"
+[ -n "$py" ] && modes="auto python sed"
+mode=auto
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$root}" out tag=""
-  [ "$mode" = 1 ] && tag=" [không jq/Python]"
-  out="$(bash_input "$cmd" "$dir" | KIT_NO_JSON_TOOLS="$mode" "$hooks/guard-irreversible.sh")"
+  local want="$1" cmd="$2" dir="${3:-$work}" out tag=" [$mode]"
+  out="$(bash_input "$cmd" "$dir" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   if [ "$want" = ask ]; then
     case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd" ;; esac
   else
@@ -47,9 +64,10 @@ expect_guard() {
   fi
 }
 
-for mode in 0 1; do
+for mode in $modes; do
   while IFS= read -r c; do [ -n "$c" ] && expect_guard ask "$c"; done <<'EOF'
 git push --force origin feat/x
+git push origin :feat/x
 git push -f
 git push --force-with-lease origin feat/x
 git push origin +feat/x
@@ -74,6 +92,8 @@ rm -rf "$HOME"
 rm -rf $HOME/
 cd /tmp && rm -Rf $HOME
 bash -c "rm -rf /"
+if [ -d x ]; then rm -rf ~; fi
+time rm -rf ~
 psql -c "DROP TABLE users;"
 npm publish
 terraform apply -auto-approve
@@ -103,25 +123,29 @@ terraform plan
 npm test
 ls -la
 EOF
+
+  # Đang ở nhánh chính: mọi `git push` đều phải hỏi, kể cả có redirect, option hay đường dẫn có dấu cách.
+  while IFS= read -r c; do [ -n "$c" ] && expect_guard ask "$c" "$on_main"; done <<'EOF'
+git push
+git push -u origin HEAD
+git push origin 2>&1
+git push -u origin 2>&1 | tail -3
+git push origin > /dev/null
+git push -o ci.skip origin
+git commit -m "Đổi tên" && git push origin
+EOF
+  expect_guard ask "git -C \"$on_main\" push origin"
+  expect_guard ask "cd \"$on_main\" && git push"
+  expect_guard allow "git push"
+  expect_guard allow "git push -u origin HEAD 2>&1"
 done
-mode=0
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-gitc() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false "${@:2}"; }
-
-# Guard: `git push` không refspec đẩy nhánh hiện tại → chỉ hỏi khi đang đứng trên nhánh chính.
-br="$tmp/branch"
-mkdir -p "$br"
-gitc "$br" init -q
-gitc "$br" checkout -q -b main
-gitc "$br" commit -q --allow-empty -m init
-expect_guard ask "git push" "$br"
-expect_guard ask "git push -u origin HEAD" "$br"
-expect_guard ask "git -C $br push" "$root"
-gitc "$br" checkout -q -b feat/x
-expect_guard allow "git push" "$br"
-expect_guard allow "git push -u origin HEAD" "$br"
+if [ -n "$py" ]; then
+  # Windows: Python đọc stdin theo cp1252, chữ "Đ" từng làm hỏng việc đọc lệnh.
+  out="$(bash_input 'git commit -m "Đổi tên" && git push origin' "$on_main" \
+    | PYTHONIOENCODING=cp1252 KIT_JSON_TOOL=python "$hooks/guard-irreversible.sh")"
+  case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi khi Python đọc stdin bằng cp1252" ;; esac
+fi
+mode=auto
 
 # Stop gate: repo tạm có check.sh giả (xanh khi có file GREEN).
 make_repo() {
@@ -181,7 +205,7 @@ out="$(stop_input "$repo" | AGENT_STOP_GATE=off "$hooks/stop-gate.sh")"; code=$?
 assert "stop-gate: AGENT_STOP_GATE=off phải cho dừng" [ "$code" -eq 0 ]
 
 session="test-$$-$RANDOM"
-out="$(stop_input "$repo" | KIT_NO_JSON_TOOLS=1 AGENT_STOP_GATE_MAX=9 "$hooks/stop-gate.sh" 2>/dev/null)"; code=$?
+out="$(stop_input "$repo" | KIT_JSON_TOOL=sed AGENT_STOP_GATE_MAX=9 "$hooks/stop-gate.sh" 2>/dev/null)"; code=$?
 assert "stop-gate: không có jq/Python thì chặn bằng exit 2 (exit $code)" [ "$code" -eq 2 ]
 
 # Commit cục bộ trên nhánh chưa có upstream vẫn là thay đổi chưa push → phải chạy check.

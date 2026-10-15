@@ -9,12 +9,8 @@ set -uo pipefail
 
 input="$(cat)"
 cwd="$(json_get "$input" cwd)"
-if have_jq || hook_python >/dev/null; then
-  cmd="$(json_get "$input" tool_input.command)"
-else
-  # Không đọc được JSON chính xác: so mẫu trên toàn bộ input thô thay vì một mẩu bị cắt.
-  cmd=""
-fi
+cmd="$(json_get "$input" tool_input.command)"
+# Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
 
 reason=""
@@ -25,20 +21,22 @@ rule() {
 }
 
 S='[[:space:]]'
-# Kết thúc một từ: khoảng trắng, dấu nối lệnh, dấu nháy (kể cả \" trong JSON thô) hoặc hết chuỗi.
+# Kết thúc một từ: khoảng trắng, dấu nối lệnh, dấu nháy hoặc hết chuỗi.
 # shellcheck disable=SC1003  # dấu \ trong bracket là ký tự cần khớp
 E='([[:space:];&|)"\'"'"']|$)'
 # Option chen giữa tên tool và subcommand: git -C dir, kubectl -n prod, terraform -chdir=infra...
-O='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+# Giá trị option có thể nằm trong nháy và chứa dấu cách: git -C "C:/my repo" push.
+O='([[:space:]]+-[^[:space:]]+([[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'][^[:space:]]*))?)*'
 # Vị trí bắt đầu một lệnh (để `git rm` không bị coi là `rm`).
-B='(^|[;&|(`"'"'"']|\$\()[[:space:]]*(sudo[[:space:]]+)?'
+B='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|time|xargs|exec|nohup|env)[[:space:]])[[:space:]]*(sudo[[:space:]]+)?'
 G="git${O}${S}+"
 MAIN='(main|master|trunk|production|release)'
 # shellcheck disable=SC2016  # $HOME ở đây là ký tự cần khớp, không phải biến
-RMT='\\?"?(/|/\*|~/?|~/\*|\$HOME/?|\$\{HOME\}/?|\.|\./|\.\.|\.\./|\*|\./\*)\\?"?'
+RMT='"?(/|/\*|~/?|~/\*|\$HOME/?|\$\{HOME\}/?|\.|\./|\.\.|\.\./|\*|\./\*)"?'
 
 rule "${G}push[^;&|]*${S}(-f|--force|--force-with-lease|--force-if-includes|--mirror|--delete|-d)${E}" "force-push hoặc xoá nhánh remote"
 rule "${G}push[^;&|]*${S}\+[^[:space:]]" "force-push bằng refspec +"
+rule "${G}push[^;&|]*${S}:[^[:space:]]" "xoá nhánh remote bằng refspec :nhánh"
 rule "${G}push[^;&|]*([[:space:]:]|refs/heads/)${MAIN}${E}" "push thẳng lên nhánh chính"
 rule "${G}reset[^;&|]*${S}--hard" "git reset --hard làm mất thay đổi chưa commit"
 rule "${G}clean[^;&|]*${S}(-[a-z]*f[a-z]*|--force)${E}" "git clean -f xoá file chưa track"
@@ -51,44 +49,33 @@ rule "terraform${O}${S}+(apply|destroy)|kubectl${O}${S}+(apply|delete|replace|ro
 rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn|bun)${S}+(run${S}+)?deploy|make${S}+deploy)${E}" "deploy"
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
 
-# `git push` không ghi refspec (hoặc chỉ ghi HEAD) đẩy nhánh hiện tại: hỏi nếu đó là nhánh chính.
-if [ -z "$reason" ]; then
-  while IFS= read -r seg; do
-    read -r -a words <<< "$seg"
-    dir="${cwd:-.}"
-    positional=()
-    seen_push=0
-    i=1
-    while [ "$i" -lt "${#words[@]}" ]; do
-      w="${words[$i]}"
-      if [ "$seen_push" = 0 ]; then
-        case "$w" in
-          -C)
-            i=$((i + 1))
-            d="${words[$i]:-.}"
-            case "$d" in /* | [A-Za-z]:*) dir="$d" ;; *) dir="${cwd:-.}/$d" ;; esac
-            ;;
-          push) seen_push=1 ;;
-        esac
-      else
-        case "$w" in -*) ;; *) positional+=("$w") ;; esac
-      fi
-      i=$((i + 1))
-    done
-    pushes_current=0
-    [ "${#positional[@]}" -le 1 ] && pushes_current=1
-    # ${arr[@]+...}: mảng rỗng không lỗi "unbound variable" với set -u trên bash 3.2 (macOS).
-    for p in ${positional[@]+"${positional[@]}"}; do
-      [ "$p" = HEAD ] && pushes_current=1
-    done
-    if [ "$pushes_current" = 1 ]; then
-      branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-      if printf '%s' "$branch" | grep -Eqx "$MAIN"; then
-        reason="push nhánh hiện tại ($branch) lên remote"
-        break
-      fi
-    fi
-  done < <(printf '%s' "$cmd" | grep -Eio "${G}push[^;&|]*")
+# resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc.
+resolve_dir() {
+  local d="$2"
+  d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
+  case "$d" in
+    \~ | \~/*) printf '%s\n' "$HOME${d#\~}" ;;
+    /* | [A-Za-z]:*) printf '%s\n' "$d" ;;
+    *) printf '%s\n' "$1/$d" ;;
+  esac
+}
+ARG='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|]+)'
+
+# Đang đứng trên nhánh chính thì MỌI `git push` đều hỏi: không đoán refspec, vì redirect
+# (2>&1), option (-o ci.skip) hay đường dẫn có dấu cách đều làm việc đoán sai.
+if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "${G}push"; then
+  dir="${cwd:-.}"
+  before="${cmd%git*push*}"
+  last_cd="$(printf '%s' "$before" | grep -Eo -- "(^|[;&|(])[[:space:]]*cd${S}+${ARG}" | tail -n 1 \
+    | sed -E 's/^[;&|(]?[[:space:]]*cd[[:space:]]+//')"
+  [ -n "$last_cd" ] && dir="$(resolve_dir "$dir" "$last_cd")"
+  c_dir="$(printf '%s' "$cmd" | grep -Eo -- "git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-C${S}+${ARG}" | head -n 1 \
+    | sed -E 's/.*-C[[:space:]]+//')"
+  [ -n "$c_dir" ] && dir="$(resolve_dir "$dir" "$c_dir")"
+  branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if printf '%s' "$branch" | grep -Eqx -- "$MAIN"; then
+    reason="push khi đang ở nhánh $branch"
+  fi
 fi
 
 if [ -n "$reason" ]; then
