@@ -159,6 +159,22 @@ assert "F: không được nhân đôi PreToolUse" [ "$(hook_groups "$f/.claude/
 (cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "F: validate-kit phải xanh sau khi cài lại" [ $? -eq 0 ]
 
+# G. Guard đăng ký ở hai nhóm (Bash, PowerShell) vẫn là đủ; nhóm có "matcher": null không làm hỏng việc gộp.
+"$py" - "$f/.claude/settings.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+pre = d["hooks"]["PreToolUse"]
+guard = [h for g in pre for h in g["hooks"] if "guard-irreversible.sh" in h["command"]]
+d["hooks"]["PreToolUse"] = [{"matcher": "Bash", "hooks": guard}, {"matcher": "PowerShell", "hooks": guard}]
+d["hooks"]["PostToolUse"][0]["matcher"] = None
+json.dump(d, open(p, "w"), indent=2)
+PYEOF
+(cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "G: guard ở hai nhóm Bash và PowerShell phải được coi là đủ" [ $? -eq 0 ]
+install "$f"
+assert "G: matcher null không được làm hỏng việc gộp" [ $? -eq 0 ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

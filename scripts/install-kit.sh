@@ -87,7 +87,7 @@ for event, groups in kit["hooks"].items():
         # Đã có hook của kit (bản cũ): thêm vào matcher những tool kit mới cần (vd PowerShell), giữ phần riêng.
         if "matcher" in group:
             for g in same:
-                if g.get("matcher", "") in ("", "*"):
+                if (g.get("matcher") or "") in ("", "*"):
                     continue  # đã khớp mọi tool
                 have = [t for t in g["matcher"].split("|") if t]
                 g["matcher"] = "|".join(have + [t for t in group["matcher"].split("|") if t not in have])

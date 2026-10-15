@@ -82,7 +82,7 @@ Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũn
 
 Guard cố ý hỏi thừa hơn là bỏ sót. Ví dụ, khi đang đứng trên nhánh chính thì **mọi** `git push` đều phải hỏi, kể cả push một nhánh khác.
 
-Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (mặc định với tài khoản claude.ai khi đã có Git Bash). Vì vậy guard đăng ký với matcher `Bash|PowerShell` và có thêm mẫu cho `Remove-Item -Recurse`, `rd /s`. `validate-kit.sh` báo đỏ nếu matcher thiếu PowerShell, và `install-kit.sh` tự nới matcher khi cài lại lên bản cũ.
+Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (mặc định với tài khoản claude.ai khi đã có Git Bash). Vì vậy guard đăng ký với matcher `Bash|PowerShell` và có thêm mẫu cho `Remove-Item -Recurse`, `rd /s`. `validate-kit.sh` báo đỏ nếu matcher thiếu PowerShell, và khi cài lại lên bản cũ, `install-kit.sh` tự thêm PowerShell vào matcher (cần `--force` nếu file của kit đã đổi). Nếu bạn đặt hook riêng chung nhóm với guard, hook đó cũng sẽ nhận lệnh PowerShell.
 
 ### Kit chạy được ở đâu
 
