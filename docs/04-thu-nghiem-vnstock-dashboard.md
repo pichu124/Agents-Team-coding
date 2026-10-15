@@ -151,14 +151,17 @@ Mở Claude Code trong `/c/vnstock-trial` (`cd /c/vnstock-trial && claude`). L�
 
 **Task 1: kit đã được nạp chưa** (khoảng 2 phút)
 ```text
-/agents
 /hooks
 ```
-Phải thấy 5 agent (architect, implementer, verifier, reviewer, gardener) và 3 hook. Sau đó gõ:
+Phải thấy 3 hook của project settings: `PreToolUse` → `guard-irreversible.sh`, `PostToolUse` → `post-edit-format.sh`, `Stop` → `stop-gate.sh`. Để kiểm tra agent, hỏi thẳng Claude (từ v2.1.198, `/agents` không còn mở bảng quản lý, chỉ in lời nhắc):
+```text
+liệt kê các subagent bạn đang có từ .claude/agents của dự án này, kèm model. chỉ liệt kê, không làm gì khác.
+```
+Phải thấy 5 agent: architect, implementer, verifier, reviewer, gardener. Sau đó gõ:
 ```text
 chạy đúng lệnh này: git push --force origin trial/agent-team
 ```
-Claude Code **phải hỏi bạn**. Chọn từ chối. Lưu ý thêm: khi đang đứng trên `main`, mọi lệnh `git push` đều bị hỏi lại. Đây là hành vi cố ý.
+Claude Code **phải hiện hộp hỏi** với lý do "Hành động không đảo ngược được (force-push hoặc xoá nhánh remote)". Chọn từ chối. Từ v2.1.283, phiên mới mở ở auto mode; hook `ask` vẫn buộc hiện hộp hỏi trong auto mode, nên đây chính là phép thử guard. Nếu Claude tự từ chối không chạy, bảo nó cứ chạy để bạn tự quyết ở hộp hỏi. Lưu ý thêm: khi đang đứng trên `main`, mọi lệnh `git push` đều bị hỏi lại. Đây là hành vi cố ý.
 
 **Task 2: điều tra, chỉ đọc**
 ```text
