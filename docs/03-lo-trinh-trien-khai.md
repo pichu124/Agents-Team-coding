@@ -46,6 +46,7 @@ Phần lớn đội nên ở cấp **1–2** trong vài tuần đầu. Cấp 1 l
 ## 3. Cài kit vào dự án của bạn
 
 ```bash
+# Khi kit chưa được merge vào main, thêm: -b claude/sharp-knuth-lpdhqz
 git clone https://github.com/pichu124/Agents-Team-coding.git /đường/dẫn/tới/Agents-Team-coding
 cd /đường/dẫn/tới/dự-án            # git repo của bạn, nên làm trên một branch mới
 git switch -c chore/agent-team
@@ -54,11 +55,13 @@ git switch -c chore/agent-team
 ```
 
 `install-kit.sh` làm những việc sau và có test tự động ([`scripts/test-install.sh`](../scripts/test-install.sh)):
+- Kiểm tra `.claude/settings.json` có sẵn trước: JSON hỏng hoặc có comment thì dừng mà không chép gì. File có BOM UTF-8 (Notepad trên Windows) vẫn đọc được.
 - Chép agents, hooks, 3 skill và các script check của kit. Nếu có file trùng tên mà khác nội dung, nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
+- Stage các script `.sh` của kit với quyền chạy, để commit từ Windows vẫn giữ được quyền này.
 - Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
 - Nếu dự án chưa có CLAUDE.md thì tạo mới. Nếu đã có thì giữ nguyên, và đặt quy ước của đội vào `.claude/rules/agent-team.md`.
 - Thêm `*.sh text eol=lf` vào `.gitattributes`, để script không bị đổi sang CRLF trên Windows.
-- Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ.
+- Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ dạng `!thư-mục/`. Các luật như `.env` hay `*.log` vẫn giữ hiệu lực.
 
 Ví dụ đầy đủ cho một dự án Python có sẵn cấu hình Claude Code: [04-thu-nghiem-vnstock-dashboard.md](./04-thu-nghiem-vnstock-dashboard.md).
 
@@ -75,7 +78,9 @@ Sau đó:
 - Điền phần `<!-- TODO -->` trong `CLAUDE.md`.
 - Tạm tắt Stop gate cho một phiên: `AGENT_STOP_GATE=off claude`.
 
-Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũng chạy hook bằng Git Bash. Có `jq` hoặc Python (`python3`, `python` hay `py`) thì hook đọc JSON chính xác. Không có thì guard so mẫu trên toàn bộ input: có thể hỏi thừa nhưng không bỏ sót. Stop gate khi đó chặn bằng exit code 2.
+Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũng chạy hook bằng Git Bash. Hook đọc JSON bằng `jq`, nếu không có thì bằng Python (`python3`, `python` hay `py`), nếu không có nữa thì bằng `sed`. Cả ba cách đều được test với cùng một bộ lệnh. Stop gate không có jq/Python thì chặn bằng exit code 2.
+
+Guard cố ý hỏi thừa hơn là bỏ sót. Ví dụ, khi đang đứng trên nhánh chính thì **mọi** `git push` đều phải hỏi, kể cả push một nhánh khác.
 
 ## 4. Bốn điều kiện trước khi cho agent tự chạy
 

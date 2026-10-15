@@ -93,7 +93,7 @@ Phải thấy 5 agent (architect, implementer, verifier, reviewer, gardener) và
 ```text
 chạy đúng lệnh này: git push --force origin trial/agent-team
 ```
-Claude Code **phải hỏi bạn**. Chọn từ chối.
+Claude Code **phải hỏi bạn**. Chọn từ chối. Lưu ý thêm: khi đang đứng trên `main`, mọi lệnh `git push` đều bị hỏi lại. Đây là hành vi cố ý.
 
 **Task 2: điều tra, chỉ đọc**
 ```text
@@ -147,6 +147,6 @@ Chạy sau vài phiên làm việc, khi bạn đã phải sửa agent cùng mộ
 | Triệu chứng | Cách xử lý |
 |---|---|
 | `$'\r': command not found` khi hook chạy | File `.sh` bị đổi sang CRLF. Kiểm tra `.gitattributes` có dòng `*.sh text eol=lf`, rồi chạy `git add --renormalize . && git checkout -- .claude/hooks scripts` |
-| `/hooks` không thấy hook | Chưa trust thư mục, hoặc `settings.json` hỏng. Chạy `python -m json.tool .claude/settings.json` |
+| `/hooks` không thấy hook | Chưa trust thư mục, hoặc `settings.json` hỏng. Kiểm tra bằng `python -c "import json; json.load(open('.claude/settings.json', encoding='utf-8-sig'))"` |
 | Hook báo không tìm thấy `python3` | Dùng Python thật, không dùng bản giả của Microsoft Store: kích hoạt venv trước khi mở `claude`, hoặc tắt "App execution aliases" cho python trong Windows Settings |
 | Check quá chậm khi chỉ làm việc nhỏ | Mở phiên với `AGENT_STOP_GATE=off claude`, rồi tự chạy `./scripts/check.sh` trước khi commit |
