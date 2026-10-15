@@ -96,6 +96,41 @@ assert "C: trùng file phải exit khác 0" [ $? -ne 0 ]
 assert "C: không được chép một phần" [ ! -e "$c/.claude/agents/architect.md" ]
 assert "C: không được ghi đè file của dự án" [ "$(cat "$c/.claude/agents/reviewer.md")" = "agent riêng của dự án" ]
 
+# D. settings.json có BOM (Notepad trên Windows) + hook riêng của dự án; .gitignore có luật bí mật.
+d="$tmp/windows proj"
+new_repo "$d"
+mkdir -p "$d/.claude/hooks" "$d/scripts"
+printf '\357\273\277{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python .claude/hooks/notify.py"}, {"type": "command", "command": "~/.claude/hooks/session.sh"}]}]}}\n' > "$d/.claude/settings.json"
+echo "print(1)" > "$d/.claude/hooks/notify.py"
+printf '.env\n*.log\n__pycache__/\n.claude/*\n!.claude/settings.json\nscripts/\n' > "$d/.gitignore"
+echo "SECRET=1" > "$d/scripts/.env"
+echo "log" > "$d/scripts/run.log"
+echo "SECRET=1" > "$d/.claude/hooks/.env"
+(cd / && "$kit/scripts/install-kit.sh" "$d" >/dev/null 2>&1)
+assert "D: settings.json có BOM vẫn phải cài được" [ $? -eq 0 ]
+assert "D: phải giữ hook riêng của dự án" grep -q 'notify.py' "$d/.claude/settings.json"
+assert "D: phải gộp Stop hook của kit" grep -q 'stop-gate.sh' "$d/.claude/settings.json"
+for p in .claude/hooks/stop-gate.sh scripts/check.sh; do
+  if git -C "$d" check-ignore -q "$p"; then bad "D: $p vẫn bị ignore"; else ok; fi
+done
+for p in scripts/.env scripts/run.log .claude/hooks/.env; do
+  if git -C "$d" check-ignore -q "$p"; then ok; else bad "D: ngoại lệ .gitignore làm lộ $p"; fi
+done
+mode="$(git -C "$d" ls-files -s .claude/hooks/stop-gate.sh | cut -c1-6)"
+assert "D: script của kit phải được stage với quyền chạy (Windows) → $mode" [ "$mode" = 100755 ]
+(cd "$d" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "D: validate-kit không được kiểm hook riêng của dự án" [ $? -eq 0 ]
+
+# E. settings.json là JSONC (có comment): dừng trước khi chép bất cứ gì.
+e="$tmp/jsonc"
+new_repo "$e"
+mkdir -p "$e/.claude"
+printf '{\n  // comment\n  "enabledPlugins": {}\n}\n' > "$e/.claude/settings.json"
+install "$e"
+assert "E: settings.json không đọc được thì phải exit khác 0" [ $? -ne 0 ]
+assert "E: không được chép file nào khi settings.json hỏng" [ ! -e "$e/.claude/agents/architect.md" ]
+assert "E: không được tạo .gitattributes khi dừng" [ ! -e "$e/.gitattributes" ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

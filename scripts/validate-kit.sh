@@ -108,21 +108,25 @@ if [ -f "$settings" ]; then
       break
     fi
   done
-  if command -v jq >/dev/null 2>&1; then
+  if [ -n "$py" ]; then
+    "$py" -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8-sig"))' "$settings" 2>/dev/null \
+      || err "$settings: JSON không hợp lệ"
+  elif command -v jq >/dev/null 2>&1; then
     jq empty "$settings" 2>/dev/null || err "$settings: JSON không hợp lệ"
-  elif [ -n "$py" ]; then
-    "$py" -m json.tool "$settings" >/dev/null 2>&1 || err "$settings: JSON không hợp lệ"
   elif command -v node >/dev/null 2>&1; then
-    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$settings" 2>/dev/null \
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, ""))' "$settings" 2>/dev/null \
       || err "$settings: JSON không hợp lệ"
   else
     printf '⚠ không có jq/python/node để kiểm tra JSON của %s\n' "$settings"
   fi
-  while IFS= read -r hook; do
+  # Chỉ kiểm hook của kit; hook riêng của dự án (python ..., ~/.claude/...) không thuộc phạm vi.
+  for h in guard-irreversible.sh stop-gate.sh post-edit-format.sh; do
+    hook=".claude/hooks/$h"
     hook_count=$((hook_count + 1))
-    [ -f "$hook" ] || { err "$settings: hook không tồn tại → $hook"; continue; }
+    grep -q "\.claude/hooks/$h" "$settings" || err "$settings: chưa đăng ký hook của kit $h"
+    [ -f "$hook" ] || { err "$hook: không tồn tại"; continue; }
     [ -x "$hook" ] || err "$hook: chưa có quyền chạy (chmod +x)"
-  done < <(grep -o '\.claude/hooks/[A-Za-z0-9_.-]*' "$settings" | sort -u)
+  done
 else
   err "$settings: không tồn tại (hook của kit chưa được đăng ký)"
 fi

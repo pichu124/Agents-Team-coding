@@ -56,23 +56,19 @@ if [ "$conflicts" -gt 0 ] && [ "$force" != "--force" ]; then
   exit 1
 fi
 
-for f in "${files[@]}"; do
-  mkdir -p "$target/$(dirname "$f")"
-  cp "$kit/$f" "$target/$f"
-  case "$f" in *.sh) chmod +x "$target/$f" ;; esac
-done
-echo "✔ đã chép ${#files[@]} file của kit"
-
+# Gộp settings.json TRƯỚC khi chép file: JSON hỏng thì dừng mà repo đích chưa bị đụng tới.
 settings="$target/.claude/settings.json"
-if [ ! -f "$settings" ]; then
-  cp "$kit/.claude/settings.json" "$settings"
-  echo "✔ tạo .claude/settings.json"
-elif [ -n "$py" ]; then
-  if "$py" - "$kit/.claude/settings.json" "$settings" <<'PYEOF'
+merged=""
+if [ -f "$settings" ] && [ -n "$py" ]; then
+  merged="$(mktemp)"
+  errf="$(mktemp)"
+  trap 'rm -f "$merged" "$errf"' EXIT
+  # Heredoc không đặt trong $(...): bash 3.2 (macOS) parse sai trường hợp đó.
+  if ! "$py" - "$kit/.claude/settings.json" "$settings" "$merged" 2>"$errf" <<'PYEOF'
 import json, sys
 kit = json.load(open(sys.argv[1], encoding="utf-8"))
-path = sys.argv[2]
-cur = json.load(open(path, encoding="utf-8"))
+# utf-8-sig: chấp nhận BOM mà Notepad trên Windows hay thêm vào đầu file.
+cur = json.load(open(sys.argv[2], encoding="utf-8-sig"))
 perm = cur.setdefault("permissions", {})
 for key in ("allow", "deny"):
     rules = perm.setdefault(key, [])
@@ -88,16 +84,30 @@ for event, groups in kit["hooks"].items():
             existing.append(group)
 out = {"$schema": cur.pop("$schema", kit.get("$schema"))}
 out.update(cur)
-with open(path, "w", encoding="utf-8") as fh:
+with open(sys.argv[3], "w", encoding="utf-8") as fh:
     json.dump(out, fh, ensure_ascii=False, indent=2)
     fh.write("\n")
 PYEOF
   then
-    echo "✔ gộp permissions + hooks vào .claude/settings.json"
-  else
-    echo "✘ không gộp được .claude/settings.json (JSON hỏng?). Gộp tay theo $kit/.claude/settings.json" >&2
+    echo "✘ không đọc được .claude/settings.json nên chưa chép gì: $(tail -n 1 "$errf")" >&2
+    echo "  Sửa file (JSON chuẩn, không comment) rồi chạy lại, hoặc gộp tay theo $kit/.claude/settings.json" >&2
     exit 1
   fi
+fi
+
+for f in "${files[@]}"; do
+  mkdir -p "$target/$(dirname "$f")"
+  cp "$kit/$f" "$target/$f"
+  case "$f" in *.sh) chmod +x "$target/$f" ;; esac
+done
+echo "✔ đã chép ${#files[@]} file của kit"
+
+if [ ! -f "$settings" ]; then
+  cp "$kit/.claude/settings.json" "$settings"
+  echo "✔ tạo .claude/settings.json"
+elif [ -n "$merged" ]; then
+  cp "$merged" "$settings"
+  echo "✔ gộp permissions + hooks vào .claude/settings.json"
 else
   echo "⚠ không có Python: hãy gộp tay phần permissions + hooks từ $kit/.claude/settings.json" >&2
 fi
@@ -129,11 +139,12 @@ if [ "${#ignored[@]}" -gt 0 ]; then
     echo
     echo "# Bộ agent team (Agents-Team-coding)"
     # Git không bật lại được file nằm trong thư mục cha đã bị ignore, nên mở từ thư mục cấp cao nhất.
+    # Chỉ ghi !dir/ (không ghi !dir/**): dạng ** đứng cuối file sẽ đè luật .env, *.log... phía trên.
     for p in "${ignored[@]}"; do
       case "$p" in
         .claude/settings.json) echo "!.claude/settings.json" ;;
-        .claude/*) d="${p#.claude/}"; d=".claude/${d%%/*}"; printf '!%s/\n!%s/**\n' "$d" "$d" ;;
-        *) d="${p%%/*}"; printf '!%s/\n!%s/**\n' "$d" "$d" ;;
+        .claude/*) d="${p#.claude/}"; printf '!.claude/%s/\n' "${d%%/*}" ;;
+        *) printf '!%s/\n' "${p%%/*}" ;;
       esac
     done
   } >> "$target/.gitignore"
@@ -146,6 +157,14 @@ if [ "${#ignored[@]}" -gt 0 ]; then
     exit 1
   fi
   echo "✔ .gitignore: thêm ngoại lệ cho ${ignored[*]}"
+fi
+
+sh_files=()
+for f in "${files[@]}"; do
+  case "$f" in *.sh) sh_files+=("$f") ;; esac
+done
+if git -C "$target" add --chmod=+x -- "${sh_files[@]}" 2>/dev/null; then
+  echo "✔ đã stage ${#sh_files[@]} script với quyền chạy (giữ được cả khi commit từ Windows)"
 fi
 
 echo
