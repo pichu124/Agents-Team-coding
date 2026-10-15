@@ -125,11 +125,14 @@ Nếu installer báo trùng file, nó dừng mà không chép gì. Đọc tên f
 ## 5. Chạy check
 
 ```bash
-./scripts/check.sh                 # kit + hook + danh sách --fast (~1,5 phút trên laptop)
+./scripts/check.sh                 # kit + danh sách --fast (~1,5 phút trên laptop)
 CHECK_FULL=1 ./scripts/check.sh    # toàn bộ tests/, như trước khi mở PR
+KIT_SELFTEST=1 ./scripts/check.sh  # thêm test hành vi của hook (chạy một lần sau khi cài, hoặc khi sửa hook)
 ```
 
-Trên laptop có đủ thư viện, cả hai lệnh phải in `✔ check.sh XANH`. Nếu đỏ, ghi lại tên test đỏ trước khi đi tiếp. Đó là baseline của máy bạn.
+Trên laptop có đủ thư viện, cả ba lệnh phải in `✔ check.sh XANH`. Nếu đỏ, ghi lại tên test đỏ trước khi đi tiếp. Đó là baseline của máy bạn.
+
+Test hành vi của hook (khoảng 200 ca) chạy khá chậm trên Windows, nên `check.sh` chỉ chạy nó khi file của kit thay đổi, khi chạy trên CI, hoặc khi đặt `KIT_SELFTEST=1`. Các lần khác bạn sẽ thấy dòng `• hooks: bỏ qua test của kit vì hook không đổi`. Trong PowerShell, đặt biến bằng `$env:KIT_SELFTEST = "1"` trước khi chạy `& $bash scripts/check.sh`.
 
 ## 6. Commit và push branch thử
 
