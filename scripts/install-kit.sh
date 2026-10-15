@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# Cài bộ agent team vào một git repo khác.
+#   ./scripts/install-kit.sh <repo-đích> [--force]
+# - Chép agents, hooks, 3 skill của kit và scripts/{check,validate-kit,test-hooks}.sh.
+# - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
+# - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md.
+# - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore.
+# - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
+# Chạy lại nhiều lần vẫn cho cùng kết quả.
+set -uo pipefail
+
+kit="$(cd "$(dirname "$0")/.." && pwd)"
+target="${1:-}"
+force="${2:-}"
+if [ -z "$target" ] || [ ! -d "$target" ]; then
+  echo "Cách dùng: $0 <repo-đích> [--force]" >&2
+  exit 2
+fi
+target="$(cd "$target" && pwd)"
+if ! git -C "$target" rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo "✘ $target không phải git repo" >&2
+  exit 1
+fi
+if [ "$target" = "$kit" ]; then
+  echo "✘ repo đích trùng với kit" >&2
+  exit 1
+fi
+
+py=""
+for c in python3 python py; do
+  if "$c" -c 'import json' >/dev/null 2>&1; then
+    py="$c"
+    break
+  fi
+done
+
+files=()
+while IFS= read -r f; do
+  files+=("$f")
+done < <(
+  cd "$kit" && find .claude/agents .claude/hooks \
+    .claude/skills/team-lead .claude/skills/create-verify-skill .claude/skills/correct \
+    -type f | sort
+  printf '%s\n' scripts/check.sh scripts/validate-kit.sh scripts/test-hooks.sh
+)
+
+conflicts=0
+for f in "${files[@]}"; do
+  if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
+    echo "✘ $f đã tồn tại và khác bản của kit" >&2
+    conflicts=$((conflicts + 1))
+  fi
+done
+if [ "$conflicts" -gt 0 ] && [ "$force" != "--force" ]; then
+  echo "✘ dừng: $conflicts file trùng. Đổi tên file của bạn, hoặc chạy lại với --force để ghi đè." >&2
+  exit 1
+fi
+
+for f in "${files[@]}"; do
+  mkdir -p "$target/$(dirname "$f")"
+  cp "$kit/$f" "$target/$f"
+  case "$f" in *.sh) chmod +x "$target/$f" ;; esac
+done
+echo "✔ đã chép ${#files[@]} file của kit"
+
+settings="$target/.claude/settings.json"
+if [ ! -f "$settings" ]; then
+  cp "$kit/.claude/settings.json" "$settings"
+  echo "✔ tạo .claude/settings.json"
+elif [ -n "$py" ]; then
+  if "$py" - "$kit/.claude/settings.json" "$settings" <<'PYEOF'
+import json, sys
+kit = json.load(open(sys.argv[1], encoding="utf-8"))
+path = sys.argv[2]
+cur = json.load(open(path, encoding="utf-8"))
+perm = cur.setdefault("permissions", {})
+for key in ("allow", "deny"):
+    rules = perm.setdefault(key, [])
+    for rule in kit["permissions"][key]:
+        if rule not in rules:
+            rules.append(rule)
+hooks = cur.setdefault("hooks", {})
+for event, groups in kit["hooks"].items():
+    existing = hooks.setdefault(event, [])
+    commands = {h.get("command") for g in existing for h in g.get("hooks", [])}
+    for group in groups:
+        if not any(h.get("command") in commands for h in group["hooks"]):
+            existing.append(group)
+out = {"$schema": cur.pop("$schema", kit.get("$schema"))}
+out.update(cur)
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(out, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+PYEOF
+  then
+    echo "✔ gộp permissions + hooks vào .claude/settings.json"
+  else
+    echo "✘ không gộp được .claude/settings.json (JSON hỏng?). Gộp tay theo $kit/.claude/settings.json" >&2
+    exit 1
+  fi
+else
+  echo "⚠ không có Python: hãy gộp tay phần permissions + hooks từ $kit/.claude/settings.json" >&2
+fi
+
+if [ -f "$target/CLAUDE.md" ]; then
+  mkdir -p "$target/.claude/rules"
+  cp "$kit/templates/agent-team-rules.md" "$target/.claude/rules/agent-team.md"
+  echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
+else
+  cp "$kit/CLAUDE.md" "$target/CLAUDE.md"
+  echo "✔ tạo CLAUDE.md (điền các mục TODO)"
+fi
+
+attrs="$target/.gitattributes"
+if ! grep -qsxF '*.sh text eol=lf' "$attrs"; then
+  [ -s "$attrs" ] && [ -n "$(tail -c 1 "$attrs")" ] && echo >> "$attrs"
+  echo '*.sh text eol=lf' >> "$attrs"
+  echo "✔ .gitattributes: giữ LF cho *.sh (Windows)"
+fi
+
+ignored=()
+for probe in .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/skills/team-lead/SKILL.md \
+             .claude/rules/agent-team.md .claude/settings.json scripts/check.sh; do
+  [ -e "$target/$probe" ] || continue
+  git -C "$target" check-ignore -q "$probe" && ignored+=("$probe")
+done
+if [ "${#ignored[@]}" -gt 0 ]; then
+  {
+    echo
+    echo "# Bộ agent team (Agents-Team-coding)"
+    # Git không bật lại được file nằm trong thư mục cha đã bị ignore, nên mở từ thư mục cấp cao nhất.
+    for p in "${ignored[@]}"; do
+      case "$p" in
+        .claude/settings.json) echo "!.claude/settings.json" ;;
+        .claude/*) d="${p#.claude/}"; d=".claude/${d%%/*}"; printf '!%s/\n!%s/**\n' "$d" "$d" ;;
+        *) d="${p%%/*}"; printf '!%s/\n!%s/**\n' "$d" "$d" ;;
+      esac
+    done
+  } >> "$target/.gitignore"
+  still=()
+  for p in "${ignored[@]}"; do
+    git -C "$target" check-ignore -q "$p" && still+=("$p")
+  done
+  if [ "${#still[@]}" -gt 0 ]; then
+    echo "✘ .gitignore vẫn bỏ qua: ${still[*]} (thư mục cha bị ignore cả cụm; sửa tay .gitignore)" >&2
+    exit 1
+  fi
+  echo "✔ .gitignore: thêm ngoại lệ cho ${ignored[*]}"
+fi
+
+echo
+echo "Bước tiếp theo trong $target:"
+[ -f "$target/scripts/check.local.sh" ] || echo "  1. Tạo scripts/check.local.sh (lint + test nhanh của dự án)"
+echo "  2. ./scripts/check.sh"
+echo "  3. git add -A && git commit -m \"chore: cài bộ agent team\""
