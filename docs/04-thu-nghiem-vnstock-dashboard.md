@@ -23,6 +23,21 @@ Các bước 2–6 bên dưới giữ lại để bạn cài kit vào dự án k
 Không bắt buộc phải clone. Có hai cách khác:
 
 **Worktree từ `C:\vnstock`** (nhẹ, không tải lại repo, vẫn tách khỏi kho dữ liệu và `.env`):
+
+Trong **PowerShell** (đường dẫn ghi kiểu `C:\...`; script `.sh` phải chạy bằng `bash.exe` của Git, ghi đủ đường dẫn để không gọi nhầm bash của WSL):
+```powershell
+cd C:\vnstock
+git fetch origin trial/agent-team
+git worktree add C:\vnstock-trial trial/agent-team
+git worktree list                     # C:/vnstock [main] và C:/vnstock-trial [trial/agent-team]
+cd C:\vnstock-trial
+& "C:\Users\Administrator\.venv\Scripts\Activate.ps1"
+& "C:\Program Files\Git\bin\bash.exe" scripts/check.sh
+claude
+# xong việc: cd C:\vnstock; git worktree remove C:\vnstock-trial
+```
+
+Trong **Git Bash** (đường dẫn ghi kiểu `/c/...`):
 ```bash
 cd /c/vnstock
 git fetch origin trial/agent-team
