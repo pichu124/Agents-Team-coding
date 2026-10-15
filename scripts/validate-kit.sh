@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Kiểm tra bộ agent team còn hợp lệ: frontmatter của agents và skills, link tương đối trong
-# markdown, settings.json, các hook được tham chiếu, và cú pháp shell.
+# Kiểm tra bộ agent team còn hợp lệ. Chỉ kiểm file CỦA KIT (agents, skills, hooks, scripts của kit),
+# không đụng tới skill hay tài liệu riêng của dự án đã cài kit.
+#   ./scripts/validate-kit.sh [file.md ...]   kiểm thêm link nội bộ trong các file markdown được nêu
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+
+KIT_AGENTS="architect implementer verifier reviewer gardener"
+KIT_SKILLS="team-lead create-verify-skill correct"
+KIT_HOOKS="lib.sh guard-irreversible.sh stop-gate.sh post-edit-format.sh"
+KIT_SCRIPTS="check.sh validate-kit.sh test-hooks.sh install-kit.sh test-install.sh"
 
 errors=0
 err() {
@@ -28,22 +34,20 @@ in_list() {
   return 1
 }
 
-agent_count=0
-seen_names=" "
-for f in .claude/agents/*.md; do
-  [ -e "$f" ] || continue
-  agent_count=$((agent_count + 1))
+md_files=()
+for name in $KIT_AGENTS; do
+  f=".claude/agents/$name.md"
+  if [ ! -f "$f" ]; then
+    err "$f: thiếu agent của kit"
+    continue
+  fi
+  md_files+=("$f")
   if ! has_frontmatter "$f"; then
     err "$f: thiếu frontmatter (--- ... ---)"
     continue
   fi
-  name="$(fm_value "$f" name)"
-  [ -n "$name" ] || err "$f: thiếu 'name'"
+  [ "$(fm_value "$f" name)" = "$name" ] || err "$f: name phải là '$name'"
   [ -n "$(fm_value "$f" description)" ] || err "$f: thiếu 'description'"
-  [ "$name" = "$(basename "$f" .md)" ] || err "$f: name '$name' phải trùng tên file"
-  case "$name" in *:*) err "$f: name không được chứa ':'" ;; esac
-  case "$seen_names" in *" $name "*) err "$f: trùng name '$name'" ;; esac
-  seen_names="$seen_names$name "
   model="$(fm_value "$f" model)"
   if [ -n "$model" ] && ! in_list "$model" sonnet opus haiku fable inherit && [ "${model#claude-}" = "$model" ]; then
     err "$f: model '$model' không hợp lệ (sonnet|opus|haiku|fable|inherit|claude-...)"
@@ -58,21 +62,19 @@ for f in .claude/agents/*.md; do
   fi
 done
 
-skill_count=0
-for d in .claude/skills/*/; do
-  [ -d "$d" ] || continue
-  skill_count=$((skill_count + 1))
-  f="${d}SKILL.md"
+for name in $KIT_SKILLS; do
+  d=".claude/skills/$name"
+  f="$d/SKILL.md"
   if [ ! -f "$f" ]; then
-    err "$d: thiếu SKILL.md"
+    err "$f: thiếu skill của kit"
     continue
   fi
+  while IFS= read -r m; do md_files+=("$m"); done < <(find "$d" -type f -name '*.md' | sort)
   if ! has_frontmatter "$f"; then
     err "$f: thiếu frontmatter"
     continue
   fi
-  name="$(fm_value "$f" name)"
-  [ -z "$name" ] || [ "$name" = "$(basename "$d")" ] || err "$f: name '$name' phải trùng tên thư mục"
+  [ "$(fm_value "$f" name)" = "$name" ] || err "$f: name phải là '$name'"
   desc="$(fm_value "$f" description)"
   [ -n "$desc" ] || err "$f: thiếu 'description'"
   [ "${#desc}" -le 1536 ] || err "$f: description dài hơn 1536 ký tự"
@@ -80,8 +82,12 @@ for d in .claude/skills/*/; do
   [ "$lines" -le 500 ] || err "$f: $lines dòng (nên dưới 500, tách phần tham khảo ra file riêng)"
 done
 
+for extra in "$@"; do
+  if [ -f "$extra" ]; then md_files+=("$extra"); else err "không có file: $extra"; fi
+done
+
 link_count=0
-while IFS= read -r md; do
+for md in "${md_files[@]}"; do
   base="$(dirname "$md")"
   while IFS= read -r target; do
     target="${target%%#*}"
@@ -90,35 +96,49 @@ while IFS= read -r md; do
     link_count=$((link_count + 1))
     [ -e "$base/$target" ] || err "$md: link gãy → $target"
   done < <(grep -o '\]([^)]*)' "$md" | sed -e 's/^](//' -e 's/)$//')
-done < <(git ls-files --cached --others --exclude-standard -- '*.md')
+done
 
 settings=.claude/settings.json
 hook_count=0
 if [ -f "$settings" ]; then
+  py=""
+  for c in python3 python py; do
+    if "$c" -c 'import json' >/dev/null 2>&1; then
+      py="$c"
+      break
+    fi
+  done
   if command -v jq >/dev/null 2>&1; then
     jq empty "$settings" 2>/dev/null || err "$settings: JSON không hợp lệ"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -m json.tool "$settings" >/dev/null 2>&1 || err "$settings: JSON không hợp lệ"
+  elif [ -n "$py" ]; then
+    "$py" -m json.tool "$settings" >/dev/null 2>&1 || err "$settings: JSON không hợp lệ"
   elif command -v node >/dev/null 2>&1; then
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$settings" 2>/dev/null \
       || err "$settings: JSON không hợp lệ"
   else
-    printf '⚠ không có jq/python3/node để kiểm tra JSON của %s\n' "$settings"
+    printf '⚠ không có jq/python/node để kiểm tra JSON của %s\n' "$settings"
   fi
   while IFS= read -r hook; do
     hook_count=$((hook_count + 1))
     [ -f "$hook" ] || { err "$settings: hook không tồn tại → $hook"; continue; }
     [ -x "$hook" ] || err "$hook: chưa có quyền chạy (chmod +x)"
   done < <(grep -o '\.claude/hooks/[A-Za-z0-9_.-]*' "$settings" | sort -u)
+else
+  err "$settings: không tồn tại (hook của kit chưa được đăng ký)"
 fi
 
-for sh in scripts/*.sh .claude/hooks/*.sh; do
-  [ -e "$sh" ] || continue
+shell_files=()
+for h in $KIT_HOOKS; do
+  [ -f ".claude/hooks/$h" ] && shell_files+=(".claude/hooks/$h")
+done
+for s in $KIT_SCRIPTS; do
+  [ -f "scripts/$s" ] && shell_files+=("scripts/$s")
+done
+for sh in "${shell_files[@]}"; do
   bash -n "$sh" 2>/dev/null || err "$sh: lỗi cú pháp bash"
 done
 if command -v shellcheck >/dev/null 2>&1; then
-  # shellcheck disable=SC2046
-  shellcheck -x -S warning $(ls scripts/*.sh .claude/hooks/*.sh 2>/dev/null) || err "shellcheck báo lỗi"
+  shellcheck -x -S warning "${shell_files[@]}" || err "shellcheck báo lỗi"
 fi
 
 if [ "$errors" -gt 0 ]; then
@@ -126,4 +146,4 @@ if [ "$errors" -gt 0 ]; then
   exit 1
 fi
 printf '✔ kit hợp lệ: %s agents, %s skills, %s hooks, %s link nội bộ\n' \
-  "$agent_count" "$skill_count" "$hook_count" "$link_count"
+  "$(echo "$KIT_AGENTS" | wc -w | tr -d " ")" "$(echo "$KIT_SKILLS" | wc -w | tr -d " ")" "$hook_count" "$link_count"
