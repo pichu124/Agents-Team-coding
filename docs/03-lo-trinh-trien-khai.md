@@ -46,16 +46,21 @@ Phần lớn đội nên ở cấp **1–2** trong vài tuần đầu. Cấp 1 l
 ## 3. Cài kit vào dự án của bạn
 
 ```bash
-# trong thư mục gốc dự án của bạn (là git repo)
-KIT=/đường/dẫn/tới/Agents-Team-coding
-mkdir -p .claude scripts
-cp -r "$KIT/.claude/agents" "$KIT/.claude/skills" "$KIT/.claude/hooks" .claude/
-cp "$KIT/.claude/settings.json" .claude/settings.json   # nếu đã có settings.json: gộp tay phần hooks + permissions
-cp "$KIT/scripts/check.sh" "$KIT/scripts/validate-kit.sh" "$KIT/scripts/test-hooks.sh" scripts/
-cp "$KIT/CLAUDE.md" CLAUDE.md                            # nếu đã có CLAUDE.md: gộp tay
-chmod +x .claude/hooks/*.sh scripts/*.sh
-./scripts/check.sh                                       # phải chạy được và in ra các check đã nhận diện
+git clone https://github.com/pichu124/Agents-Team-coding.git /đường/dẫn/tới/Agents-Team-coding
+cd /đường/dẫn/tới/dự-án            # git repo của bạn, nên làm trên một branch mới
+git switch -c chore/agent-team
+/đường/dẫn/tới/Agents-Team-coding/scripts/install-kit.sh .
+./scripts/check.sh
 ```
+
+`install-kit.sh` làm những việc sau và có test tự động ([`scripts/test-install.sh`](../scripts/test-install.sh)):
+- Chép agents, hooks, 3 skill và các script check của kit. Nếu có file trùng tên mà khác nội dung, nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
+- Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
+- Nếu dự án chưa có CLAUDE.md thì tạo mới. Nếu đã có thì giữ nguyên, và đặt quy ước của đội vào `.claude/rules/agent-team.md`.
+- Thêm `*.sh text eol=lf` vào `.gitattributes`, để script không bị đổi sang CRLF trên Windows.
+- Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ.
+
+Ví dụ đầy đủ cho một dự án Python có sẵn cấu hình Claude Code: [04-thu-nghiem-vnstock-dashboard.md](./04-thu-nghiem-vnstock-dashboard.md).
 
 Sau đó:
 - **Khai báo check thật** của dự án trong `scripts/check.local.sh`. Nếu file này tồn tại, `check.sh` dùng nó thay cho phần tự nhận diện:
@@ -70,7 +75,7 @@ Sau đó:
 - Điền phần `<!-- TODO -->` trong `CLAUDE.md`.
 - Tạm tắt Stop gate cho một phiên: `AGENT_STOP_GATE=off claude`.
 
-Yêu cầu: `bash` và `git`. `jq` hoặc `python3` giúp hook đọc JSON chính xác hơn. Không có hai công cụ này thì hook dùng cách đọc đơn giản hơn.
+Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũng chạy hook bằng Git Bash. Có `jq` hoặc Python (`python3`, `python` hay `py`) thì hook đọc JSON chính xác. Không có thì guard so mẫu trên toàn bộ input: có thể hỏi thừa nhưng không bỏ sót. Stop gate khi đó chặn bằng exit code 2.
 
 ## 4. Bốn điều kiện trước khi cho agent tự chạy
 

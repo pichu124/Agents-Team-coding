@@ -9,6 +9,7 @@ Bộ khởi động để xây dựng **đội AI agent hỗ trợ lập trình*
 1. [docs/01-nghien-cuu-agentic-engineering.md](docs/01-nghien-cuu-agentic-engineering.md): nghiên cứu chi tiết hai diễn giả, điểm hội tụ, 10 nguyên tắc, nguồn trích dẫn.
 2. [docs/02-kien-truc-agent-team.md](docs/02-kien-truc-agent-team.md): kiến trúc đội, các vai, luồng chuẩn, lớp kiểm soát, ma trận tự chủ.
 3. [docs/03-lo-trinh-trien-khai.md](docs/03-lo-trinh-trien-khai.md): 6 cấp độ trưởng thành, kế hoạch 30 ngày, cách cài, prompt mẫu, chỉ số.
+4. [docs/04-thu-nghiem-vnstock-dashboard.md](docs/04-thu-nghiem-vnstock-dashboard.md): triển khai thử vào một dự án Python thật trên Windows, từng bước.
 
 ## Trong bộ kit có gì
 
@@ -32,15 +33,22 @@ CLAUDE.md                         quy ước ngắn + bảng Rule ↔ Thứ th�
     post-edit-format.sh           PostToolUse: format bằng formatter dự án đã cấu hình
 scripts/
   check.sh                        THE check: một lệnh cho agent, hook và CI
-  validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell
+  validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell (chỉ file của kit)
   test-hooks.sh                   test hành vi của 3 hook
+  install-kit.sh                  cài kit vào một repo khác bằng một lệnh
+  test-install.sh                 test của installer
+  check.local.sh                  check riêng của repo kit (không chép sang dự án khác)
+templates/agent-team-rules.md     quy ước đội, dùng khi dự án đã có CLAUDE.md
+examples/vnstock-dashboard/       check.local.sh mẫu cho dự án Python + pytest
 .github/workflows/check.yml       CI chạy ./scripts/check.sh
 ```
 
 ## Bắt đầu nhanh
 
 ```bash
-# 1. Cài kit vào dự án của bạn (chi tiết: docs/03, mục 3)
+# 1. Cài kit vào dự án của bạn, trên một branch mới (chi tiết: docs/03, mục 3)
+cd /đường/dẫn/tới/dự-án && git switch -c chore/agent-team
+/đường/dẫn/tới/Agents-Team-coding/scripts/install-kit.sh .
 # 2. Khai báo check thật của dự án
 cat > scripts/check.local.sh <<'EOF'
 #!/usr/bin/env bash

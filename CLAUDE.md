@@ -11,7 +11,8 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 ## Lệnh
 
 - `./scripts/check.sh` là THE check: kiểm tra bộ kit cộng với check của dự án (`scripts/check.local.sh` nếu có). Chạy trước khi báo xong. CI chạy đúng lệnh này.
-- `./scripts/validate-kit.sh` chỉ kiểm tra `.claude/`: frontmatter, link, hook, cú pháp shell.
+- `./scripts/validate-kit.sh` chỉ kiểm tra file của kit: frontmatter, link, hook, cú pháp shell.
+- `./scripts/test-hooks.sh`, `./scripts/test-install.sh` là test hành vi của hook và installer. Sửa hook hoặc installer thì thêm ca test tái hiện lỗi trước.
 <!-- TODO: lệnh chạy app local, lệnh chạy một test đơn lẻ, biến môi trường bắt buộc. -->
 
 ## Cách làm việc
