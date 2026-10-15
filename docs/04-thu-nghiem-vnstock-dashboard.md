@@ -193,7 +193,7 @@ Prompt nhiều dòng mà dán nguyên khối (kể cả `/team-lead`) thì Claud
 ```text
 /hooks
 ```
-Phải thấy 3 hook của project settings: `PreToolUse` → `guard-irreversible.sh`, `PostToolUse` → `post-edit-format.sh`, `Stop` → `stop-gate.sh`. Để kiểm tra agent, hỏi thẳng Claude (từ v2.1.198, `/agents` không còn mở bảng quản lý, chỉ in lời nhắc):
+Phải thấy 3 hook của project settings: `PreToolUse` (`Bash|PowerShell`) → `guard-irreversible.sh`, `PostToolUse` → `post-edit-format.sh`, `Stop` → `stop-gate.sh`. Để kiểm tra agent, hỏi thẳng Claude (từ v2.1.198, `/agents` không còn mở bảng quản lý, chỉ in lời nhắc):
 ```text
 liệt kê các subagent bạn đang có từ .claude/agents của dự án này, kèm model. chỉ liệt kê, không làm gì khác.
 ```
@@ -260,4 +260,5 @@ Chạy sau vài phiên làm việc, khi bạn đã phải sửa agent cùng mộ
 | `$'\r': command not found` khi hook chạy | File `.sh` bị đổi sang CRLF. Kiểm tra `.gitattributes` có dòng `*.sh text eol=lf`, rồi chạy `git add --renormalize . && git checkout -- .claude/hooks scripts` |
 | `/hooks` không thấy hook | Chưa trust thư mục, hoặc `settings.json` hỏng. Kiểm tra bằng `python -c "import json; json.load(open('.claude/settings.json', encoding='utf-8-sig'))"` |
 | Hook báo không tìm thấy `python3` | Dùng Python thật, không dùng bản giả của Microsoft Store: kích hoạt venv trước khi mở `claude`, hoặc tắt "App execution aliases" cho python trong Windows Settings |
+| Claude chạy lệnh nguy hiểm mà không hỏi | Trên Windows, Claude chạy lệnh qua PowerShell tool. Matcher của guard trong `.claude/settings.json` phải là `Bash\|PowerShell`, và `./scripts/validate-kit.sh` sẽ báo nếu thiếu |
 | Check quá chậm khi chỉ làm việc nhỏ | Mở phiên với `AGENT_STOP_GATE=off claude`, rồi tự chạy `./scripts/check.sh` trước khi commit |

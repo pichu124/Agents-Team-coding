@@ -131,6 +131,34 @@ assert "E: settings.json không đọc được thì phải exit khác 0" [ $? -
 assert "E: không được chép file nào khi settings.json hỏng" [ ! -e "$e/.claude/agents/architect.md" ]
 assert "E: không được tạo .gitattributes khi dừng" [ ! -e "$e/.gitattributes" ]
 
+# F. Cài lại lên bản kit cũ có matcher "Bash" (thiếu PowerShell): nới matcher, giữ matcher riêng, không nhân đôi.
+guard_matcher() {
+  "$py" -c 'import json, sys
+for g in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]:
+    if any("guard-irreversible.sh" in h.get("command", "") for h in g.get("hooks", [])):
+        print(g.get("matcher", ""))' "$1" | tr -d '\r'
+}
+f="$tmp/old kit"
+new_repo "$f"
+install "$f"
+"$py" - "$f/.claude/settings.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+for g in d["hooks"]["PreToolUse"]:
+    g["matcher"] = "Bash|Monitor"
+json.dump(d, open(p, "w"), indent=2)
+PYEOF
+(cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "F: validate-kit phải đỏ khi guard không khớp PowerShell" [ $? -ne 0 ]
+install "$f"
+assert "F: cài lại phải exit 0" [ $? -eq 0 ]
+assert "F: matcher phải thêm PowerShell và giữ phần riêng → $(guard_matcher "$f/.claude/settings.json")" \
+  [ "$(guard_matcher "$f/.claude/settings.json")" = "Bash|Monitor|PowerShell" ]
+assert "F: không được nhân đôi PreToolUse" [ "$(hook_groups "$f/.claude/settings.json" PreToolUse)" = 1 ]
+(cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "F: validate-kit phải xanh sau khi cài lại" [ $? -eq 0 ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

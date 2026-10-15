@@ -78,10 +78,19 @@ for key in ("allow", "deny"):
 hooks = cur.setdefault("hooks", {})
 for event, groups in kit["hooks"].items():
     existing = hooks.setdefault(event, [])
-    commands = {h.get("command") for g in existing for h in g.get("hooks", [])}
     for group in groups:
-        if not any(h.get("command") in commands for h in group["hooks"]):
+        kit_cmds = {h.get("command") for h in group["hooks"]}
+        same = [g for g in existing if any(h.get("command") in kit_cmds for h in g.get("hooks", []))]
+        if not same:
             existing.append(group)
+            continue
+        # Đã có hook của kit (bản cũ): thêm vào matcher những tool kit mới cần (vd PowerShell), giữ phần riêng.
+        if "matcher" in group:
+            for g in same:
+                if g.get("matcher", "") in ("", "*"):
+                    continue  # đã khớp mọi tool
+                have = [t for t in g["matcher"].split("|") if t]
+                g["matcher"] = "|".join(have + [t for t in group["matcher"].split("|") if t not in have])
 out = {"$schema": cur.pop("$schema", kit.get("$schema"))}
 out.update(cur)
 with open(sys.argv[3], "w", encoding="utf-8") as fh:

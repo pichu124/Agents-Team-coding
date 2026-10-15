@@ -82,6 +82,20 @@ Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũn
 
 Guard cố ý hỏi thừa hơn là bỏ sót. Ví dụ, khi đang đứng trên nhánh chính thì **mọi** `git push` đều phải hỏi, kể cả push một nhánh khác.
 
+Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (mặc định với tài khoản claude.ai khi đã có Git Bash). Vì vậy guard đăng ký với matcher `Bash|PowerShell` và có thêm mẫu cho `Remove-Item -Recurse`, `rd /s`. `validate-kit.sh` báo đỏ nếu matcher thiếu PowerShell, và `install-kit.sh` tự nới matcher khi cài lại lên bản cũ.
+
+### Kit chạy được ở đâu
+
+Kit là file trong repo, nên mọi nơi chạy Claude Code **trên máy bạn** đều nạp nó, vì chúng đọc cùng các file settings.
+
+| Nơi dùng | Kit có tác dụng | Ghi chú |
+|---|---|---|
+| `claude` trong terminal | Có | Đã thử trên Windows: hook, agent, `/team-lead`, hộp hỏi của guard |
+| App Claude trên máy, tab Code, phiên Local | Có | Tài liệu không ghi rõ phần agent và `/hooks`. Kiểm bằng cách hỏi Claude danh sách agent type, và thử guard |
+| Extension VS Code | Có | Xem hook ở Customize > Hooks |
+| Remote Control | Có | Là phiên `claude` trên máy bạn, chỉ điều khiển từ điện thoại hoặc web. Máy phải bật |
+| Cloud (claude.ai/code, phiên cloud mở từ app) | Có, nếu kit đã được push | Chạy trên máy ảo Linux clone từ GitHub: không có `.env`, không có dữ liệu local, không có thư viện ngoài PyPI. Nếu check của dự án cần những thứ đó thì Stop gate sẽ chặn vì check đỏ |
+
 ## 4. Bốn điều kiện trước khi cho agent tự chạy
 
 Theo Lauren Tan:

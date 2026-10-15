@@ -29,7 +29,7 @@ CLAUDE.md                         quy ước ngắn + bảng Rule ↔ Thứ th�
     correct/                      /correct: mã hoá bài học vào type, lint, hook, test
   hooks/
     stop-gate.sh                  Stop: chưa được "báo xong" khi check còn đỏ
-    guard-irreversible.sh         PreToolUse: hỏi người trước force-push, deploy, xoá dữ liệu...
+    guard-irreversible.sh         PreToolUse(Bash|PowerShell): hỏi người trước force-push, deploy, xoá dữ liệu...
     post-edit-format.sh           PostToolUse: format bằng formatter dự án đã cấu hình
 scripts/
   check.sh                        THE check: một lệnh cho agent, hook và CI
