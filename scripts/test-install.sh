@@ -38,7 +38,7 @@ new_repo() {
 }
 install() { "$kit/scripts/install-kit.sh" "$@" >/dev/null 2>&1; }
 hook_groups() { # hook_groups <settings.json> <event>
-  "$py" -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["hooks"].get(sys.argv[2], [])))' "$1" "$2"
+  "$py" -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["hooks"].get(sys.argv[2], [])))' "$1" "$2" | tr -d '\r'
 }
 json_has() { # json_has <settings.json> <khoá cấp 1>
   "$py" -c 'import json, sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])) else 1)' "$1" "$2"
@@ -67,7 +67,7 @@ printf '{\n  "enabledPlugins": {"x@y": true}\n}\n' > "$b/.claude/settings.json"
 printf '.claude/*\n!.claude/settings.json\n!.claude/skills/\n!.claude/skills/**\n' > "$b/.gitignore"
 { echo "---"; echo "name: khac-ten"; echo "---"; for _ in $(seq 600); do echo "dòng"; done; } > "$b/.claude/skills/big/SKILL.md"
 echo "[gãy](khong-ton-tai.md)" > "$b/docs/note.md"
-git -C "$b" add -A
+git -C "$b" -c core.autocrlf=false add -A
 git -C "$b" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
 install "$b"
 assert "B: install phải exit 0" [ $? -eq 0 ]
