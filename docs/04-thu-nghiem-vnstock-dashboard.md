@@ -4,6 +4,20 @@ Hướng dẫn từng bước để mở một branch thử nghiệm, cài bộ 
 
 Mọi bước dưới đây đã được chạy thử trên một bản sao của repo (commit `de5a9b4`, nhánh `main`).
 
+## Đường tắt: branch `trial/agent-team` đã có sẵn
+
+Branch [`trial/agent-team`](https://github.com/pichu124/vnstock-dashboard/tree/trial/agent-team) (commit `cba19b3`, tách từ `main` tại `de5a9b4`) đã được cài sẵn bằng đúng các bước 2–6 bên dưới. Bạn chỉ cần:
+
+```bash
+git clone -b trial/agent-team https://github.com/pichu124/vnstock-dashboard.git /c/vnstock-trial
+cd /c/vnstock-trial
+source /c/Users/Administrator/.venv/Scripts/activate
+./scripts/check.sh      # phải in ✔ check.sh XANH trên laptop có đủ thư viện
+claude                  # rồi làm mục 7
+```
+
+Các bước 2–6 bên dưới giữ lại để bạn cài kit vào dự án khác, hoặc tự cài lại từ đầu.
+
 ## 0. Những gì đã kiểm tra trước
 
 | Phát hiện | Cách xử lý trong hướng dẫn |
