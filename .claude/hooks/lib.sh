@@ -1,16 +1,35 @@
 #!/usr/bin/env bash
 # Hàm dùng chung cho các hook. File này được source, không chạy trực tiếp.
 
+# hook_python: in tên Python thật đầu tiên chạy được. Bỏ qua bản giả "python3" của
+# Microsoft Store trên Windows (có trong PATH nhưng không chạy được).
+# KIT_NO_JSON_TOOLS=1 giả lập máy không có jq/Python (dùng trong test của kit).
+have_jq() {
+  [ "${KIT_NO_JSON_TOOLS:-0}" != 1 ] && command -v jq >/dev/null 2>&1
+}
+
+hook_python() {
+  local c
+  [ "${KIT_NO_JSON_TOOLS:-0}" = 1 ] && return 1
+  for c in python3 python py; do
+    if "$c" -c 'import json' >/dev/null 2>&1; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # json_get <json> <khoá.lồng.nhau>: in giá trị chuỗi, số hoặc bool; in rỗng nếu không có.
-# Ưu tiên jq, sau đó python3. Nếu không có cả hai, dùng sed thô (chỉ đúng với giá trị đơn giản).
+# Ưu tiên jq, sau đó Python. Nếu không có cả hai, dùng sed thô (chỉ đúng với giá trị đơn giản).
 json_get() {
-  local json="$1" path="$2"
-  if command -v jq >/dev/null 2>&1; then
+  local json="$1" path="$2" py
+  if have_jq; then
     printf '%s' "$json" | jq -r --arg p "$path" 'getpath($p | split(".")) // empty | tostring' 2>/dev/null
     return 0
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    printf '%s' "$json" | python3 -c '
+  if py="$(hook_python)"; then
+    printf '%s' "$json" | "$py" -c '
 import json, sys
 try:
     d = json.load(sys.stdin)

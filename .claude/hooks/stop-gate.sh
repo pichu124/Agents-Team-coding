@@ -17,22 +17,30 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "$root" || exit 0
 [ -x scripts/check.sh ] || exit 0
 
-changed="$(
-  {
-    git diff --name-only
-    git diff --cached --name-only
-    git ls-files --others --exclude-standard
-    if git rev-parse --verify -q '@{upstream}' >/dev/null; then
-      git diff --name-only '@{upstream}...HEAD'
-    fi
-  } 2>/dev/null | grep -Ev '\.(md|mdx|txt|rst)$' | sort -u
-)"
-[ -n "$changed" ] || exit 0
-
 session="$(json_get "$input" session_id)"
 state_dir="${TMPDIR:-/tmp}/agent-stop-gate"
 mkdir -p "$state_dir" 2>/dev/null
 state="$state_dir/${session:-unknown}.count"
+
+# Thay đổi = chưa commit + commit chưa có trên remote (có upstream thì so với upstream,
+# không có thì lấy commit chưa nằm trên remote nào). quotePath=false để tên file có dấu
+# không bị in thành "\303\272..." rồi lọt qua bộ lọc đuôi .md.
+changed="$(
+  {
+    git -c core.quotePath=false diff --name-only
+    git -c core.quotePath=false diff --cached --name-only
+    git -c core.quotePath=false ls-files --others --exclude-standard
+    if git rev-parse --verify -q '@{upstream}' >/dev/null; then
+      git -c core.quotePath=false diff --name-only '@{upstream}...HEAD'
+    elif [ -n "$(git remote)" ]; then
+      git -c core.quotePath=false log --name-only --format= HEAD --not --remotes
+    fi
+  } 2>/dev/null | grep -v '^$' | grep -Ev '\.(md|mdx|txt|rst)$' | sort -u
+)"
+if [ -z "$changed" ]; then
+  rm -f "$state"
+  exit 0
+fi
 
 out="$(./scripts/check.sh 2>&1)"
 status=$?
@@ -58,12 +66,12 @@ reason="$(
   printf '%s\n' "$out" | tail -n 40
 )"
 
-# Ưu tiên JSON {"decision":"block"} (hiển thị gọn hơn); không có jq/python3 thì dùng exit 2 + stderr.
-if command -v jq >/dev/null 2>&1; then
+# Ưu tiên JSON {"decision":"block"} (hiển thị gọn hơn); không có jq/Python thì dùng exit 2 + stderr.
+if have_jq; then
   jq -cn --arg r "$reason" '{decision: "block", reason: $r}'
   exit 0
-elif command -v python3 >/dev/null 2>&1; then
-  python3 -c 'import json, sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}, ensure_ascii=False))' "$reason"
+elif py="$(hook_python)"; then
+  "$py" -c 'import json, sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}, ensure_ascii=False))' "$reason"
   exit 0
 fi
 printf '%s\n' "$reason" >&2
