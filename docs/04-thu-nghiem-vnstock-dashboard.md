@@ -18,11 +18,36 @@ claude                  # rồi làm mục 7
 
 Các bước 2–6 bên dưới giữ lại để bạn cài kit vào dự án khác, hoặc tự cài lại từ đầu.
 
+### Muốn dùng thư mục có sẵn thay vì clone mới?
+
+Không bắt buộc phải clone. Có hai cách khác:
+
+**Worktree từ `C:\vnstock`** (nhẹ, không tải lại repo, vẫn tách khỏi kho dữ liệu và `.env`):
+```bash
+cd /c/vnstock
+git fetch origin trial/agent-team
+git worktree add /c/vnstock-trial trial/agent-team
+cd /c/vnstock-trial && ./scripts/check.sh
+# xong việc: git -C /c/vnstock worktree remove /c/vnstock-trial
+```
+
+**Làm thẳng trong `C:\vnstock`** (chỉ nên làm trên 💻 laptop):
+```bash
+cd /c/vnstock
+git status                         # phải sạch trước khi đổi branch
+git fetch origin trial/agent-team
+git switch trial/agent-team        # quay lại: git switch main
+```
+Khi làm thẳng ở đây, cần nhớ:
+- `data_warehouse` là kho dùng chung qua Dropbox. Nếu agent chạy `python run.py sync`, `brief`, `telegram`... thì kết quả ghi vào kho chung, và máy kia cũng thấy. Guard của kit **chưa** chặn các lệnh này.
+- `.env` thật nằm ở thư mục gốc. Permission của kit cấm agent đọc trực tiếp file này, nhưng chương trình Python vẫn tự đọc nó khi chạy.
+- Không làm trên 🖥️ desktop: task 18:00 chạy code đang có trong `C:\vnstock`, kể cả những thay đổi agent chưa commit.
+
 ## 0. Những gì đã kiểm tra trước
 
 | Phát hiện | Cách xử lý trong hướng dẫn |
 |---|---|
-| `C:\vnstock` được Dropbox đồng bộ giữa hai máy, và desktop chạy lịch tự động từ đó | **Không** đổi branch trong `C:\vnstock`. Thử trong một bản clone riêng, nằm ngoài Dropbox |
+| `C:\vnstock\data_warehouse` là junction sang Dropbox, dùng chung giữa hai máy (code thì đi bằng git, không đồng bộ). Thư mục gốc có `.env` thật, mà pytest từng đọc nhầm `.env` | Lần thử đầu nên dùng thư mục riêng (clone hoặc worktree), vì ở đó không có `data_warehouse` chung và `.env`. Làm thẳng trong `C:\vnstock` vẫn được, xem mục "Làm thẳng trong C:\vnstock" |
 | `.gitignore` có dòng `.claude/*` nên chặn `.claude/agents` và `.claude/hooks` | `install-kit.sh` tự thêm ngoại lệ |
 | `.claude/settings.json` đã có `enabledPlugins` | `install-kit.sh` gộp `permissions` và `hooks` vào, giữ nguyên các khoá khác |
 | CLAUDE.md dài 32KB | Không sửa. Quy ước của đội nằm ở `.claude/rules/agent-team.md`, và Claude Code tự nạp thư mục này |
