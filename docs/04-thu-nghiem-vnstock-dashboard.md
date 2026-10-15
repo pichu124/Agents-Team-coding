@@ -149,6 +149,8 @@ CI (`tests.yml`) sẽ đỏ giống `main`. Đó là lỗi có sẵn, không ph�
 
 Mở Claude Code trong `/c/vnstock-trial` (`cd /c/vnstock-trial && claude`). Lần đầu mở, chọn **trust** thư mục, nếu không thì hook và permissions của dự án sẽ không được nạp.
 
+Prompt nhiều dòng mà dán nguyên khối (kể cả `/team-lead`) thì Claude Code coi cả tin là văn bản dán: lệnh `/team-lead` không chạy, và Claude không tự làm các bước đưa ra ngoài như push mà hỏi lại. Khi đó gõ tay một câu ngắn: `/team-lead làm theo đúng khối yêu cầu ở tin nhắn trước của tôi`.
+
 **Task 1: kit đã được nạp chưa** (khoảng 2 phút)
 ```text
 /hooks
