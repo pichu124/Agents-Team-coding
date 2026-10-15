@@ -66,6 +66,44 @@ Khi làm thẳng ở đây, cần nhớ:
 - `.env` thật nằm ở thư mục gốc. Permission của kit cấm agent đọc trực tiếp file này, nhưng chương trình Python vẫn tự đọc nó khi chạy.
 - Không làm trên 🖥️ desktop: task 18:00 chạy code đang có trong `C:\vnstock`, kể cả những thay đổi agent chưa commit.
 
+## Làm trên 🖥️ desktop `PICHU`
+
+Desktop khác laptop ở hai điểm. Thứ nhất, task lịch chạy pipeline từ `C:\vnstock`. Thứ hai, bước brief và cảnh báo tin của pipeline dùng chung tài khoản Claude với bạn. Vì vậy chỉ làm trong worktree `C:\vnstock-trial`, và làm việc nặng khi pipeline không chạy.
+
+**Bước 0: đúng máy, đúng giờ** (PowerShell)
+```powershell
+$env:COMPUTERNAME                                                        # phải là PICHU
+Get-ScheduledTask -TaskName 'VnStock *' | Select-Object TaskName, State  # ≥2 task; Daily phải Ready, không Running
+Get-Content C:\vnstock\run_daily.log -Tail 3 -Encoding UTF8              # lượt hôm nay đã in "⏱ TỔNG" chưa
+```
+Task Daily chạy lúc 18:00 ngày làm việc. Nếu lúc đó máy tắt, nó chạy bù **ngay khi bật máy** và kéo dài 1–4 giờ. Trong lúc Daily còn `Running`, chỉ làm bước 1, còn `check.sh` và Task 3 thì đợi tới khi log in `⏱ TỔNG`. Lý do: pytest và các subagent tranh CPU với pipeline (trần 240 phút), và Task 3 tiêu hạn mức của chính tài khoản Claude mà bước brief đang dùng.
+
+**Bước 1: tạo worktree** (không đụng file trong `C:\vnstock`)
+```powershell
+cd C:\vnstock
+git fetch origin trial/agent-team
+git worktree add C:\vnstock-trial trial/agent-team
+cd C:\vnstock-trial
+git log --oneline -1        # 502f8ea hoặc mới hơn
+```
+Trong worktree, `data_warehouse` là đường dẫn tương đối nên trỏ vào `C:\vnstock-trial\data_warehouse`, không phải junction sang Dropbox. Worktree cũng không có `.env`. Vì vậy test và agent ở đây không đụng kho chung, và không dùng được các key trong `.env` (Telegram, API).
+
+**Bước 2: venv, bash, check lần đầu kèm test hook**
+```powershell
+& "$env:USERPROFILE\.venv\Scripts\Activate.ps1"   # venv theo tài khoản đăng nhập; không có thì dùng venv bạn vẫn dùng cho C:\vnstock
+# tìm $bash bằng đúng đoạn lệnh ở mục "Worktree từ C:\vnstock" phía trên
+$env:KIT_SELFTEST = "1"; & $bash scripts/check.sh; Remove-Item Env:KIT_SELFTEST
+```
+Phải thấy `✔ hooks` và `✔ check.sh XANH`. `KIT_SELFTEST=1` chỉ cần ở lần đầu trên mỗi máy.
+
+**Bước 3: Claude Code**
+```powershell
+claude
+```
+Chọn trust thư mục. Gõ `/hooks` và kiểm tra có 3 hook nhãn `[Project]`. Thử guard bằng `git push --force` như Task 1, rồi làm Task 3. Prompt Task 3 dán nguyên khối sẽ bị coi là văn bản dán (xem đầu mục 7).
+
+**Hai máy, một branch:** Task 3 push lên `trial/agent-team`, nên đừng chạy nó ở hai máy cùng lúc. Laptop muốn lấy kết quả thì chạy `cd C:\vnstock-trial; git pull`.
+
 ## 0. Những gì đã kiểm tra trước
 
 | Phát hiện | Cách xử lý trong hướng dẫn |
