@@ -24,7 +24,7 @@ Không bắt buộc phải clone. Có hai cách khác:
 
 **Worktree từ `C:\vnstock`** (nhẹ, không tải lại repo, vẫn tách khỏi kho dữ liệu và `.env`):
 
-Trong **PowerShell** (đường dẫn ghi kiểu `C:\...`; script `.sh` phải chạy bằng `bash.exe` của Git, ghi đủ đường dẫn để không gọi nhầm bash của WSL):
+Trong **PowerShell** (đường dẫn ghi kiểu `C:\...`; script `.sh` phải chạy bằng `bash.exe` của Git for Windows, không dùng bash của WSL ở `C:\Windows\System32`):
 ```powershell
 cd C:\vnstock
 git fetch origin trial/agent-team
@@ -32,7 +32,15 @@ git worktree add C:\vnstock-trial trial/agent-team
 git worktree list                     # C:/vnstock [main] và C:/vnstock-trial [trial/agent-team]
 cd C:\vnstock-trial
 & "C:\Users\Administrator\.venv\Scripts\Activate.ps1"
-& "C:\Program Files\Git\bin\bash.exe" scripts/check.sh
+# tìm bash.exe của Git (Git có thể không nằm ở C:\Program Files\Git)
+$gitExe = (Get-Command git -ErrorAction SilentlyContinue).Source
+$cands = @($env:CLAUDE_CODE_GIT_BASH_PATH, "C:\Program Files\Git\bin\bash.exe",
+  "C:\Program Files (x86)\Git\bin\bash.exe", "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe",
+  "$env:USERPROFILE\scoop\apps\git\current\bin\bash.exe")
+if ($gitExe) { $cands += Join-Path (Split-Path (Split-Path $gitExe)) "bin\bash.exe" }
+$bash = $cands | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$bash                                  # trống = chưa có Git for Windows: winget install --id Git.Git -e
+& $bash scripts/check.sh
 claude
 # xong việc: cd C:\vnstock; git worktree remove C:\vnstock-trial
 ```
