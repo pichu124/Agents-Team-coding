@@ -174,6 +174,8 @@ PYEOF
 assert "G: guard ở hai nhóm Bash và PowerShell phải được coi là đủ" [ $? -eq 0 ]
 install "$f"
 assert "G: matcher null không được làm hỏng việc gộp" [ $? -eq 0 ]
+(cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "G: validate-kit phải xanh sau khi cài lại lên guard hai nhóm" [ $? -eq 0 ]
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
