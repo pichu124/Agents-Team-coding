@@ -1,0 +1,14 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Khi dự án có dependency, thêm bước cài đặt ở đây (vd: actions/setup-node + npm ci).
+      - name: Chạy đúng lệnh mà agent và Stop hook dùng
+        run: ./scripts/check.sh

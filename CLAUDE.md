@@ -1,0 +1,40 @@
+# CLAUDE.md
+
+<!-- Giữ file này NGẮN. Với mỗi dòng, hỏi: "bỏ dòng này thì agent có làm sai không?" Không thì xoá.
+     Rule nào biến được thành check hay hook thì chuyển sang đó và ghi vào bảng cuối file. -->
+
+## Dự án
+
+Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agents`, `.claude/skills`, `.claude/hooks`) kèm tài liệu nghiên cứu trong `docs/`.
+<!-- TODO khi cài vào dự án thật: 2–3 dòng về sản phẩm, stack chính, các thư mục quan trọng. -->
+
+## Lệnh
+
+- `./scripts/check.sh` là THE check: kiểm tra bộ kit cộng với check của dự án (`scripts/check.local.sh` nếu có). Chạy trước khi báo xong. CI chạy đúng lệnh này.
+- `./scripts/validate-kit.sh` chỉ kiểm tra `.claude/`: frontmatter, link, hook, cú pháp shell.
+<!-- TODO: lệnh chạy app local, lệnh chạy một test đơn lẻ, biến môi trường bắt buộc. -->
+
+## Cách làm việc
+
+- Task không tầm thường thì dùng `/team-lead <task>`. Luôn chốt điều kiện xong dạng pass/fail trước khi làm.
+- Bug: tái hiện trước (test fail hoặc bằng chứng), rồi mới sửa. Sửa nguyên nhân gốc.
+- "Xong" nghĩa là `./scripts/check.sh` exit 0 cộng bằng chứng hành vi. Không chạy được check thì nói "inconclusive".
+- Người viết không tự kiểm: verify và review bằng subagent mới (`verifier`, `reviewer`).
+- Commit nhỏ, có thứ tự, theo Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
+- Bị người dùng sửa cùng một lỗi lần thứ hai thì đề xuất `/correct`.
+
+## Quyền tự chủ
+
+- Cứ làm: đọc, sửa trong branch hoặc worktree, commit cục bộ, chạy test, mở PR nháp.
+- Luôn hỏi người: force-push, push hoặc merge vào nhánh chính, xoá dữ liệu, deploy, publish.
+
+## Rule ↔ Thứ thực thi
+
+| Rule | Thực thi bởi |
+|---|---|
+| Không kết thúc lượt khi check đỏ | `.claude/hooks/stop-gate.sh` (Stop) |
+| Hỏi người trước hành động không đảo ngược được | `.claude/hooks/guard-irreversible.sh` (PreToolUse) |
+| Không đọc file bí mật (`.env`, `*.pem`, `secrets/`) | `permissions.deny` trong `.claude/settings.json` |
+| Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
+| Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
+| Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |
