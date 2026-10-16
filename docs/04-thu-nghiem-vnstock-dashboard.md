@@ -291,13 +291,13 @@ Claude Code lưu mỗi phiên ở `~/.claude/projects/<thư mục dự án>/*.js
 & $bash scripts/audit-agent.sh --since 2          # in báo cáo
 & $bash scripts/audit-agent.sh --since 7 --out bao-cao.md
 ```
-Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bạn từ chối mà guard không hỏi; **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
+Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bạn từ chối mà guard không hỏi; **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
 
 `/agent-audit [số ngày]` trong Claude chạy báo cáo đó rồi xử lý từng mục theo playbook bug-fix: viết ca test đỏ, sửa guard, check xanh, `reviewer` soát, mở **PR nháp**. Bạn đọc PR và merge. Hai chốt chặn để agent không tự nới guard:
 - `scripts/guard-ask-floor`: số ca "phải hỏi" trong test chỉ được tăng. Bớt ca thì test đỏ, trừ khi sửa cả file sàn, và thay đổi đó hiện rõ trong PR.
 - Thay đổi nới lỏng (bớt hỏi) phải nằm ở commit riêng tên `guard: NỚI LỎNG …`.
 
-Gợi ý nhịp: cuối mỗi ngày thử nghiệm chạy `& $bash scripts/audit-agent.sh --since 1`; có mục A, B hoặc F thì gõ `/agent-audit 1`.
+Gợi ý nhịp: cuối mỗi ngày thử nghiệm chạy `& $bash scripts/audit-agent.sh --since 1`; có mục A, B, H hoặc F thì gõ `/agent-audit 1`.
 
 ### Gửi sự cố cho người hỗ trợ
 ```text
