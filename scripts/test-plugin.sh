@@ -39,6 +39,7 @@ cp -R plugin "$plug/plugin"
 spy="$tmp/spy plugin"
 mkdir -p "$spy/.claude/hooks"
 cp -R plugin "$spy/plugin"
+cp .claude/hooks/lib.sh "$spy/.claude/hooks/lib.sh"
 for h in guard-irreversible stop-gate post-edit-format; do
   printf '#!/usr/bin/env bash\ncat >/dev/null\necho "$0" >> "%s/ran"\n' "$tmp" > "$spy/.claude/hooks/$h.sh"
 done
@@ -48,22 +49,30 @@ run() {
   out="$(printf '%s' "$3" | CLAUDE_PROJECT_DIR="$2" bash "${PLUG:-$plug}/plugin/run-hook.sh" "$1" 2>"$tmp/err")"
   rc=$?
 }
-# spied <tên hook> <thư mục dự án>: chạy bản gián điệp, $ran = 1 nếu hook của plugin đã chạy.
+# event_input <tên hook> [tool]: input giống Claude Code gửi cho hook đó.
+event_input() {
+  case "$1" in
+    guard-irreversible) printf '{"hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"ls"}}' "${2:-Bash}" ;;
+    post-edit-format) printf '{"hook_event_name":"PostToolUse","tool_name":"%s","tool_input":{"file_path":"/khong/co"}}' "${2:-Edit}" ;;
+    stop-gate) printf '{"hook_event_name":"Stop","session_id":"spy"}' ;;
+  esac
+}
+# spied <tên hook> <thư mục dự án> [tool]: chạy bản gián điệp, $ran = 1 nếu hook của plugin đã chạy.
 spied() {
   rm -f "$tmp/ran"
-  PLUG="$spy" run "$1" "$2" '{}'
+  PLUG="$spy" run "$1" "$2" "$(event_input "$1" "${3:-}")"
   if [ -s "$tmp/ran" ]; then ran=1; else ran=0; fi
 }
 expect_defer() {
-  spied "$1" "$2"
+  spied "$1" "$2" "${4:-}"
   if [ "$rc" -eq 0 ] && [ "$ran" = 0 ]; then ok; else bad "$3 (exit $rc, hook của plugin đã chạy: $ran)"; fi
 }
 expect_run() {
-  spied "$1" "$2"
+  spied "$1" "$2" "${4:-}"
   if [ "$rc" -eq 0 ] && [ "$ran" = 1 ]; then ok; else bad "$3 (exit $rc, hook của plugin đã chạy: $ran)"; fi
 }
 push_input() {
-  "$py" -c 'import json, sys; print(json.dumps({"hook_event_name": "PreToolUse", "cwd": sys.argv[1], "tool_name": "Bash", "tool_input": {"command": "git push --force origin feat/x"}}))' "$1"
+  "$py" -c 'import json, sys; print(json.dumps({"hook_event_name": "PreToolUse", "cwd": sys.argv[1], "tool_name": sys.argv[2], "tool_input": {"command": "git push --force origin feat/x"}}))' "$1" "${TOOL:-Bash}"
 }
 expect_ask() {
   run guard-irreversible "$1" "$(push_input "$1")"
@@ -97,6 +106,33 @@ mkdir -p "$loc/.claude"
 cp -R .claude/hooks "$loc/.claude/hooks"
 cp .claude/settings.json "$loc/.claude/settings.local.json"
 expect_defer guard-irreversible "$loc" "guard đăng ký trong settings.local.json: plugin phải nhường"
+expect_defer guard-irreversible "$kit" "dự án đăng ký guard cho PowerShell: plugin nhường lệnh PowerShell" PowerShell
+expect_run guard-irreversible "$kit" "lệnh không khớp matcher của dự án (Read): plugin phải tự chạy" Read
+
+# Đăng ký mà không có hiệu lực thì không nhường: không ai canh còn tệ hơn hỏi hai lần.
+broken="$tmp/broken"
+new_repo "$broken"
+mkdir -p "$broken/.claude"
+cp -R .claude/hooks "$broken/.claude/hooks"
+sed 's/"permissions": {/"permissions": {,/' .claude/settings.json > "$broken/.claude/settings.json"
+expect_run guard-irreversible "$broken" "settings.json của dự án hỏng (Claude Code bỏ qua cả file): plugin phải chạy guard"
+expect_ask "$broken" "settings.json của dự án hỏng: guard của plugin phải hỏi force-push"
+old="$tmp/old matcher"
+new_repo "$old"
+mkdir -p "$old/.claude"
+cp -R .claude/hooks "$old/.claude/hooks"
+sed 's/"Bash|PowerShell"/"Bash"/' .claude/settings.json > "$old/.claude/settings.json"
+expect_defer guard-irreversible "$old" "matcher cũ chỉ có Bash: plugin nhường lệnh Bash" Bash
+expect_run guard-irreversible "$old" "matcher cũ chỉ có Bash: plugin phải canh lệnh PowerShell" PowerShell
+TOOL=PowerShell expect_ask "$old" "matcher cũ chỉ có Bash: guard của plugin phải hỏi force-push qua PowerShell"
+# Không có Python để đọc settings: không đoán, cứ chạy (thà hỏi thừa).
+spied_nojson() {
+  rm -f "$tmp/ran"
+  out="$(event_input guard-irreversible | KIT_JSON_TOOL=sed CLAUDE_PROJECT_DIR="$kit" bash "$spy/plugin/run-hook.sh" guard-irreversible 2>"$tmp/err")"
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$tmp/ran" ]; then ok; else bad "không đọc được JSON: plugin phải chạy guard thay vì nhường (exit $rc)"; fi
+}
+spied_nojson
 
 # 3. Có file hook mà không đăng ký (chép thiếu settings): plugin vẫn phải chạy, không ai canh thì nguy.
 half="$tmp/half"

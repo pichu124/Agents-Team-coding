@@ -75,6 +75,6 @@ Mục H sẽ có nhiều dòng nếu `--since` lùi về trước ngày cài plu
 ## Cơ chế (cho người bảo trì kit)
 
 - `.claude-plugin/marketplace.json` khai marketplace `agents-team-coding` với một plugin `agent-team`, nguồn là gốc repo. `.claude-plugin/plugin.json` trỏ thẳng vào `.claude/agents/*.md` và `.claude/skills/`, nên plugin và bản cài vào dự án dùng chung một bộ file.
-- Hook đi qua `plugin/run-hook.sh <tên>`. Script này nhường cho hook của dự án khi dự án có `.claude/hooks/<tên>.sh` **và** đăng ký nó trong `.claude/settings.json` hoặc `settings.local.json`. Claude Code không gộp hook trùng giữa plugin và settings, nên thiếu bước nhường thì guard hỏi hai lần và Stop gate chạy check hai lần.
+- Hook đi qua `plugin/run-hook.sh <tên>`. Script này nhường cho hook của dự án chỉ khi lần đăng ký đó có hiệu lực cho đúng lần gọi: dự án có `.claude/hooks/<tên>.sh`, `.claude/settings.json` hoặc `settings.local.json` đọc được, đăng ký hook đó ở đúng sự kiện, và matcher khớp tool (dự án cài kit cũ có matcher chỉ `Bash` thì plugin vẫn canh lệnh PowerShell). Không đọc được JSON (thiếu Python) thì không nhường. Claude Code không gộp hook trùng giữa plugin và settings, nên thiếu bước nhường thì guard hỏi hai lần và Stop gate chạy check hai lần.
 - Thêm agent mới thì phải thêm vào `agents` trong `plugin.json`, vì trường này không nhận thư mục. `scripts/validate-kit.sh` báo lỗi nếu quên, nếu `hooks.json` lệch với `settings.json`, hoặc nếu có ai ghim `version`.
 - `scripts/test-plugin.sh` test việc nhường, và chạy `claude plugin validate` khi máy có `claude`.
