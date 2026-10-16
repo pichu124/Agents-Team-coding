@@ -141,7 +141,8 @@ write("-plain", plain, [("p1", "git push --force origin feat/x"), ("p2", "danger
     {"type": "attachment", "attachment": {"type": "hook_non_blocking_error", "hookName": "PreToolUse:Bash",
      "command": PLUG + "guard-irreversible", "exitCode": 127, "stderr": "bash: line 1: python3: command not found"}},
     {"type": "system", "subtype": "stop_hook_summary", "timestamp": NOW,
-     "hookInfos": [{"command": PLUG + "stop-gate", "durationMs": 4000}], "hookErrors": []}])
+     "hookInfos": [{"command": PLUG + "stop-gate", "durationMs": 12},
+                   {"command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh", "durationMs": 4000}], "hookErrors": []}])
 write("-main", main, [("q1", "danger-cmd later"), ("q2", "git reset --hard HEAD~1")])
 PYEOF
 other="$tmp/other.json"
@@ -205,7 +206,7 @@ check(o["replay"], "dự án chưa cài kit: phải chạy lại bằng guard c�
 check({i["command"] for i in o["H_ran_unguarded"]} == {"git push --force origin feat/x"}, f"force-push chạy khi chưa có guard phải vào H: {o['H_ran_unguarded']}")
 check({i["command"] for i in o["A_possible_misses"]} == {"danger-cmd now"}, f"mẫu riêng của dự án (.claude/audit-watch.txt) phải áp dụng: {o['A_possible_misses']}")
 check(len(o["hook_errors"]) == 1 and "python3" in o["hook_errors"][0]["stderr"], f"lỗi hook của plugin (run-hook.sh) phải vào F: {o['hook_errors']}")
-check(o["stop_gate"]["runs"] == 1, f"Stop gate chạy qua plugin phải được đếm: {o['stop_gate']}")
+check(o["stop_gate"]["runs"] == 1 and o["stop_gate"]["max_s"] == 4.0, f"một lần Stop có cả bản dự án lẫn bản plugin (nhường) chỉ tính một lần chạy, lấy thời gian lâu nhất: {o['stop_gate']}")
 # --all: đọc mọi dự án, mẫu riêng chỉ áp cho dự án khai báo nó.
 al = json.load(open(sys.argv[6], encoding="utf-8"))
 check(al["files"] == 2, f"--all phải đọc file phiên của mọi dự án: {al['files']}")

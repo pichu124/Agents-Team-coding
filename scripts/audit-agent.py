@@ -310,9 +310,11 @@ def parse_entry(e, s, path, who, cutoff, only_under):
                 s.hook_errors.append({"hook": a.get("hookName") or cmd, "stderr": (a.get("stderr") or "").strip(),
                                       "exit": a.get("exitCode"), "ts": e.get("timestamp") or "", "file": str(path)})
     elif t == "system" and e.get("subtype") == "stop_hook_summary":
-        for h in e.get("hookInfos") or []:
-            if "stop-gate" in (h.get("command") or "") and isinstance(h.get("durationMs"), (int, float)):
-                s.stop_runs.append(h["durationMs"])
+        # Dự án tự cài kit mà máy có plugin: một lần Stop có cả bản dự án lẫn bản plugin (nhường, vài ms). Tính một lần.
+        runs = [h["durationMs"] for h in e.get("hookInfos") or []
+                if "stop-gate" in (h.get("command") or "") and isinstance(h.get("durationMs"), (int, float))]
+        if runs:
+            s.stop_runs.append(max(runs))
         # Mỗi lần chặn có cả user isMeta "Stop hook feedback" lẫn hookErrors: chỉ đếm hookErrors.
         for err in e.get("hookErrors") or []:
             if isinstance(err, str):
