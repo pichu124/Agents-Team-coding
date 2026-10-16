@@ -13,10 +13,11 @@ Task: $ARGUMENTS
 
 ## Bước 0: Hợp đồng (luôn làm, ngắn)
 
-Viết ra 4 dòng trước mọi hành động khác:
+Viết ra 5 dòng trước mọi hành động khác:
 - **Mục tiêu:** kết quả người dùng thấy được.
 - **Xong khi:** các check pass/fail, ví dụ test X pass, `./scripts/check.sh` exit 0, verifier PASS trên hành trình Y. Người dùng không nêu thì tự đề xuất điều kiện kiểm tra được và làm tiếp, không chờ.
 - **Không được đổi:** hành vi hoặc API hoặc file phải giữ nguyên.
+- **Lệnh check:** `./scripts/check.sh` nếu dự án có. Chưa có thì lấy lệnh lint + test trong CLAUDE.md, README hoặc CI và ghi rõ ở đây. Từ đây trở xuống (cả trong playbook và brief cho subagent), `./scripts/check.sh` nghĩa là lệnh này. Không tìm được lệnh nào thì nói thẳng phần đó sẽ là INCONCLUSIVE, và đề xuất tạo `scripts/check.sh`.
 - **Tự chủ:** mặc định là làm mọi việc đảo ngược được. Các câu như "tôi đi ngủ", "chạy tới khi xong" hay "đừng hỏi" là lệnh làm tiếp không dừng.
 
 ## Bước 1: Chọn playbook
@@ -33,7 +34,7 @@ Mở playbook, chép các bước của nó vào todo list nguyên văn, rồi l
 
 ## Bước 2: Giao việc
 
-Các vai: `architect` (thiết kế, chỉ đọc), `implementer` (code), `verifier` (kiểm chứng độc lập), `reviewer` (review đối kháng), `Explore` (tìm kiếm rộng, built-in), `gardener` (mã hoá lỗi lặp lại).
+Các vai: `architect` (thiết kế, chỉ đọc), `implementer` (code), `verifier` (kiểm chứng độc lập), `reviewer` (review đối kháng), `Explore` (tìm kiếm rộng, built-in), `gardener` (mã hoá lỗi lặp lại). Kit cài dạng plugin thì tên agent có tiền tố `agent-team:` (vd `agent-team:verifier`); dự án tự cài kit thì dùng tên không tiền tố.
 
 - **Brief tự đứng được.** Subagent không thấy hội thoại của bạn. Dùng mẫu sau, truyền *đường dẫn file* chứ không dán nội dung:
   ```
@@ -46,7 +47,7 @@ Các vai: `architect` (thiết kế, chỉ đọc), `implementer` (code), `verif
 
 ## Bước 3: Cổng kiểm chứng (bắt buộc trước khi báo xong)
 
-1. `./scripts/check.sh` exit 0. Stop hook cũng chặn nếu đỏ.
+1. Lệnh check (Bước 0) exit 0. Ở dự án có `scripts/check.sh`, Stop hook cũng chặn nếu đỏ.
 2. **verifier mới** (không phải agent đã viết code) trả về PASS. Nếu kết quả là INCONCLUSIVE, nêu rõ thiếu gì. Không được đổi thành PASS.
 3. **reviewer** trả về KHÔNG CHẶN, hoặc mọi vấn đề chặn đã được sửa và verifier chạy lại.
 4. Tự đọc diff cuối (`git diff <base>...HEAD`). Bạn chịu trách nhiệm cho nó, không phải subagent.
