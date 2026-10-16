@@ -8,7 +8,7 @@ Cài kit vào từng repo (`install-kit.sh`) chỉ có tác dụng trong repo đ
 |---|---|---|
 | 5 agent | Có, tên có tiền tố: `agent-team:architect`, `agent-team:implementer`, `agent-team:verifier`, `agent-team:reviewer`, `agent-team:gardener` | Có cả hai bản. `/team-lead` của dự án gọi bản không tiền tố |
 | 4 skill | `/agent-team:team-lead`, `/agent-team:correct`, `/agent-team:create-verify-skill`, `/agent-team:agent-audit` | Có cả `/team-lead` (của dự án) lẫn `/agent-team:team-lead`. Dùng `/team-lead` |
-| Guard hỏi trước hành động không đảo ngược được | Có | Hook của dự án chạy, plugin **nhường** nên bạn chỉ thấy **một** hộp hỏi |
+| Guard hỏi trước hành động không đảo ngược được | Có | Cả hai cùng chạy (plugin cố ý không nhường guard). Claude Code gộp hai câu "ask" thành **một** hộp hỏi |
 | Stop gate | Chỉ ở dự án có `scripts/check.sh` | Hook của dự án chạy, plugin nhường |
 | Format sau khi sửa file | Chỉ khi dự án đã cấu hình formatter | Hook của dự án chạy, plugin nhường |
 | Chặn đọc `.env`, `*.pem`, `secrets/` | **Không**: plugin không được mang luật quyền | Có (luật trong `.claude/settings.json` của dự án) |
@@ -37,7 +37,7 @@ Mở Claude ở một repo **chưa cài kit**, ví dụ `C:\vnstock` (nhánh `ma
 1. Gõ: `Không chạy lệnh nào. Liệt kê tên các agent type bạn có.` Danh sách phải có 5 dòng bắt đầu bằng `agent-team:`.
 2. Gõ `/agent-team:`. Ô gợi ý phải hiện 4 skill.
 3. Gõ: `Chạy đúng lệnh này: git push --force origin khong-co-nhanh-nay`. Phải hiện hộp hỏi "Hành động không đảo ngược được (force-push hoặc xoá nhánh remote)". Chọn từ chối. Lỡ bấm duyệt cũng vô hại, vì nhánh này không tồn tại.
-4. Làm lại bước 3 trong `C:\vnstock-trial`. Phải hiện **đúng một** hộp hỏi.
+4. Làm lại bước 3 trong `C:\vnstock-trial`. Ở đây guard của dự án và của plugin cùng chạy, nhưng phải hiện **đúng một** hộp hỏi. Hiện hai hộp liên tiếp thì báo lại.
 
 Bước nào sai thì chụp màn hình gửi cho người hỗ trợ, kèm output của `claude plugin list`.
 
@@ -75,6 +75,6 @@ Mục H sẽ có nhiều dòng nếu `--since` lùi về trước ngày cài plu
 ## Cơ chế (cho người bảo trì kit)
 
 - `.claude-plugin/marketplace.json` khai marketplace `agents-team-coding` với một plugin `agent-team`, nguồn là gốc repo. `.claude-plugin/plugin.json` trỏ thẳng vào `.claude/agents/*.md` và `.claude/skills/`, nên plugin và bản cài vào dự án dùng chung một bộ file.
-- Hook đi qua `plugin/run-hook.sh <tên>`. Script này nhường cho hook của dự án chỉ khi lần đăng ký đó có hiệu lực cho đúng lần gọi: dự án có `.claude/hooks/<tên>.sh`, `.claude/settings.json` hoặc `settings.local.json` đọc được, đăng ký hook đó ở đúng sự kiện, và matcher khớp tool (dự án cài kit cũ có matcher chỉ `Bash` thì plugin vẫn canh lệnh PowerShell). Không đọc được JSON (thiếu Python) thì không nhường. Claude Code không gộp hook trùng giữa plugin và settings, nên thiếu bước nhường thì guard hỏi hai lần và Stop gate chạy check hai lần.
+- Hook đi qua `plugin/run-hook.sh <tên>`. Guard **không bao giờ nhường**: settings của dự án sai schema thì Claude Code bỏ cả file, hook của dự án không chạy mà plugin không biết được; hai hook cùng trả "ask" thì Claude Code gộp thành một câu hỏi. Stop gate và format thì nhường cho bản của dự án (chạy hai lần song song nghĩa là check chạy hai lần trên cùng repo), khi dự án có `.claude/hooks/<tên>.sh` và `.claude/settings.json` hoặc `settings.local.json` đăng ký nó ở đúng sự kiện, matcher khớp tool. Không có Python thì dựa vào tên hook có trong settings. Claude Code không gộp hook trùng giữa plugin và settings.
 - Thêm agent mới thì phải thêm vào `agents` trong `plugin.json`, vì trường này không nhận thư mục. `scripts/validate-kit.sh` báo lỗi nếu quên, nếu `hooks.json` lệch với `settings.json`, hoặc nếu có ai ghim `version`.
 - `scripts/test-plugin.sh` test việc nhường, và chạy `claude plugin validate` khi máy có `claude`.

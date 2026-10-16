@@ -89,14 +89,17 @@ new_repo "$plain"
 expect_ask "$plain" "dự án chưa cài kit: guard của plugin phải hỏi force-push"
 expect_ask "" "không có CLAUDE_PROJECT_DIR: guard của plugin vẫn phải chạy"
 
-# 2. Dự án đã cài kit và đăng ký hook: nhường, không hỏi lần hai.
+# 2. Dự án đã cài kit. Guard KHÔNG bao giờ nhường: settings đúng cú pháp mà sai schema thì Claude Code bỏ
+#    cả file, hook của dự án không chạy mà plugin không biết. Hai hook cùng "ask" được gộp thành một câu hỏi.
+#    Stop gate và format thì nhường (chạy hai lần song song tốn kém, nhường sai thì hậu quả nhẹ).
 kit="$tmp/kit proj"
 new_repo "$kit"
 mkdir -p "$kit/.claude"
 cp -R .claude/hooks "$kit/.claude/hooks"
 cp .claude/settings.json "$kit/.claude/settings.json"
-expect_silent "$kit" "dự án đã đăng ký guard của kit: plugin phải nhường"
-for h in guard-irreversible stop-gate post-edit-format; do
+expect_ask "$kit" "dự án đã cài kit: guard của plugin vẫn hỏi (không nhường)"
+expect_run guard-irreversible "$kit" "dự án đã cài kit: guard của plugin vẫn chạy"
+for h in stop-gate post-edit-format; do
   expect_defer "$h" "$kit" "dự án đã đăng ký $h: plugin không được chạy bản của mình"
 done
 expect_run guard-irreversible "$plain" "dự án chưa cài kit: plugin phải chạy guard của mình"
@@ -105,9 +108,9 @@ new_repo "$loc"
 mkdir -p "$loc/.claude"
 cp -R .claude/hooks "$loc/.claude/hooks"
 cp .claude/settings.json "$loc/.claude/settings.local.json"
-expect_defer guard-irreversible "$loc" "guard đăng ký trong settings.local.json: plugin phải nhường"
-expect_defer guard-irreversible "$kit" "dự án đăng ký guard cho PowerShell: plugin nhường lệnh PowerShell" PowerShell
-expect_run guard-irreversible "$kit" "lệnh không khớp matcher của dự án (Read): plugin phải tự chạy" Read
+expect_defer stop-gate "$loc" "stop-gate đăng ký trong settings.local.json: plugin phải nhường"
+expect_defer post-edit-format "$kit" "dự án đăng ký format cho Write: plugin nhường" Write
+expect_run post-edit-format "$kit" "tool không khớp matcher format của dự án: plugin phải tự chạy" NotebookEdit
 
 # Đăng ký mà không có hiệu lực thì không nhường: không ai canh còn tệ hơn hỏi hai lần.
 broken="$tmp/broken"
@@ -115,24 +118,40 @@ new_repo "$broken"
 mkdir -p "$broken/.claude"
 cp -R .claude/hooks "$broken/.claude/hooks"
 sed 's/"permissions": {/"permissions": {,/' .claude/settings.json > "$broken/.claude/settings.json"
-expect_run guard-irreversible "$broken" "settings.json của dự án hỏng (Claude Code bỏ qua cả file): plugin phải chạy guard"
+expect_run stop-gate "$broken" "settings.json của dự án hỏng (Claude Code bỏ qua cả file): plugin phải chạy Stop gate"
 expect_ask "$broken" "settings.json của dự án hỏng: guard của plugin phải hỏi force-push"
+schema="$tmp/schema"
+new_repo "$schema"
+mkdir -p "$schema/.claude"
+cp -R .claude/hooks "$schema/.claude/hooks"
+"$py" - "$schema/.claude/settings.json" <<'PYEOF'
+import json, sys
+d = json.load(open(".claude/settings.json", encoding="utf-8"))
+d["hooks"]["PostToolUse"].append({"matcher": "Edit", "hooks": [{"type": "cmd", "command": "npm run lint"}]})
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PYEOF
+expect_ask "$schema" "settings đúng cú pháp mà sai schema (Claude Code bỏ cả file): guard của plugin phải hỏi force-push"
 old="$tmp/old matcher"
 new_repo "$old"
 mkdir -p "$old/.claude"
 cp -R .claude/hooks "$old/.claude/hooks"
 sed 's/"Bash|PowerShell"/"Bash"/' .claude/settings.json > "$old/.claude/settings.json"
-expect_defer guard-irreversible "$old" "matcher cũ chỉ có Bash: plugin nhường lệnh Bash" Bash
 expect_run guard-irreversible "$old" "matcher cũ chỉ có Bash: plugin phải canh lệnh PowerShell" PowerShell
 TOOL=PowerShell expect_ask "$old" "matcher cũ chỉ có Bash: guard của plugin phải hỏi force-push qua PowerShell"
-# Không có Python để đọc settings: không đoán, cứ chạy (thà hỏi thừa).
-spied_nojson() {
+# Không có Python: Stop gate vẫn nhường theo cách cũ (tìm tên hook trong settings), để check không chạy
+# hai lần song song trên cùng repo; guard thì vẫn chạy.
+nojson() {
   rm -f "$tmp/ran"
-  out="$(event_input guard-irreversible | KIT_JSON_TOOL=sed CLAUDE_PROJECT_DIR="$kit" bash "$spy/plugin/run-hook.sh" guard-irreversible 2>"$tmp/err")"
+  out="$(event_input "$1" | KIT_JSON_TOOL=sed CLAUDE_PROJECT_DIR="$2" bash "$spy/plugin/run-hook.sh" "$1" 2>"$tmp/err")"
   rc=$?
-  if [ "$rc" -eq 0 ] && [ -s "$tmp/ran" ]; then ok; else bad "không đọc được JSON: plugin phải chạy guard thay vì nhường (exit $rc)"; fi
+  if [ -s "$tmp/ran" ]; then ran=1; else ran=0; fi
 }
-spied_nojson
+nojson stop-gate "$kit"
+if [ "$rc" -eq 0 ] && [ "$ran" = 0 ]; then ok; else bad "không có Python: plugin vẫn phải nhường Stop gate cho dự án đã đăng ký (ran=$ran)"; fi
+nojson stop-gate "$plain"
+if [ "$rc" -eq 0 ] && [ "$ran" = 1 ]; then ok; else bad "không có Python, dự án chưa cài kit: plugin phải chạy Stop gate (ran=$ran)"; fi
+nojson guard-irreversible "$kit"
+if [ "$rc" -eq 0 ] && [ "$ran" = 1 ]; then ok; else bad "không có Python: guard của plugin vẫn phải chạy (ran=$ran)"; fi
 
 # 3. Có file hook mà không đăng ký (chép thiếu settings): plugin vẫn phải chạy, không ai canh thì nguy.
 half="$tmp/half"
@@ -146,6 +165,7 @@ expect_run guard-irreversible "$half" "hook có file nhưng chưa đăng ký: pl
 printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": ".claude/hooks/stop-gate.sh"}]}]}}\n' > "$half/.claude/settings.json"
 expect_ask "$half" "dự án chỉ đăng ký stop-gate: guard của plugin vẫn phải hỏi"
 expect_defer stop-gate "$half" "dự án đăng ký stop-gate: plugin nhường stop-gate"
+expect_run post-edit-format "$half" "dự án chỉ đăng ký stop-gate: plugin vẫn chạy format"
 
 # 4. Tên hook sai: báo lỗi, không im lặng cho qua.
 run khong-co "$plain" '{}'
