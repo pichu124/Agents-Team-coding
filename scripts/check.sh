@@ -105,7 +105,7 @@ fi
 kit_changed() {
   git status --porcelain -- .claude/hooks scripts/check.sh scripts/test-hooks.sh scripts/validate-kit.sh \
     scripts/guard-ask-floor scripts/audit-agent.sh scripts/audit-agent.py scripts/test-audit.sh \
-    scripts/test-plugin.sh plugin .claude-plugin 2>/dev/null | grep -q .
+    scripts/test-plugin.sh plugin/run-hook.sh plugin/hooks.json .claude-plugin 2>/dev/null | grep -q .
 }
 if [ -x scripts/test-hooks.sh ]; then
   if [ -n "${CI:-}" ] || [ "${KIT_SELFTEST:-0}" = 1 ] || kit_changed; then

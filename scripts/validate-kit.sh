@@ -172,7 +172,7 @@ if [ -f scripts/audit-agent.py ] && [ -n "${py:-}" ]; then
     || err "scripts/audit-agent.py: lỗi cú pháp Python"
 fi
 # Bản plugin (repo kit): manifest phải khớp agent, hook và settings.json, không thì người cài plugin thiếu đồ.
-if [ -f .claude-plugin/plugin.json ]; then
+if [ -f .claude-plugin/plugin.json ] && [ -f plugin/run-hook.sh ]; then
   if [ -n "${py:-}" ]; then
     "$py" - <<'PYEOF' || err ".claude-plugin: manifest của plugin lệch với file của kit (xem lỗi ở trên)"
 import glob, json, re, sys
@@ -191,7 +191,11 @@ if "version" in plugin or any("version" in p for p in market["plugins"]):
 if set(hooks) != set(settings):
     errs.append(f"hooks.json phải có cùng sự kiện với settings.json: {sorted(hooks)} vs {sorted(settings)}")
 for event, groups in hooks.items():
+    if len(groups) != len(settings.get(event, [])):
+        errs.append(f"{event}: hooks.json có {len(groups)} nhóm hook, settings.json có {len(settings.get(event, []))}")
     for g, sg in zip(groups, settings.get(event, [])):
+        if len(g["hooks"]) != len(sg["hooks"]):
+            errs.append(f"{event}: nhóm matcher {g.get('matcher')!r} có {len(g['hooks'])} hook, settings.json có {len(sg['hooks'])}")
         if g.get("matcher") != sg.get("matcher"):
             errs.append(f"{event}: matcher {g.get('matcher')!r} khác settings.json {sg.get('matcher')!r}")
         for h, sh in zip(g["hooks"], sg["hooks"]):
