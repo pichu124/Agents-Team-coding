@@ -38,7 +38,7 @@ Các vai: `architect` (thiết kế, chỉ đọc), `implementer` (code), `verif
 
 - **Brief tự đứng được.** Subagent không thấy hội thoại của bạn. Dùng mẫu sau, truyền *đường dẫn file* chứ không dán nội dung:
   ```
-  MỤC TIÊU / ĐIỀU KIỆN XONG / PHẠM VI (file được sửa, file không được đụng) / NGỮ CẢNH (đường dẫn, quyết định trước đó) / BÀN GIAO
+  MỤC TIÊU / ĐIỀU KIỆN XONG / LỆNH CHECK / PHẠM VI (file được sửa, file không được đụng) / NGỮ CẢNH (đường dẫn, quyết định trước đó) / BÀN GIAO
   ```
 - **Mỗi việc một agent mới.** Vòng sửa hay retry cũng vậy: giao cho agent mới, kèm brief gốc, chỉ thị sau đó và báo cáo của agent trước. Chỉ tiếp tục agent cũ khi cần state đắt để chuyển, như dev server đang chạy hay thay đổi chưa commit.
 - **Song song chỉ khi độc lập.** Các đơn vị không chung file thì giao cùng lúc, mỗi implementer với `isolation: "worktree"`. Tối đa 3–5 cùng lúc. Gộp kết quả từ các worktree theo thứ tự trong plan, chạy `./scripts/check.sh` sau mỗi lần gộp.
