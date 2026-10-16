@@ -4,7 +4,7 @@
 # - Chép agents, hooks, 4 skill của kit, scripts/{check,validate-kit,test-hooks,audit-agent,test-audit}.sh, audit-agent.py, guard-ask-floor.
 # - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
 # - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md.
-# - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore.
+# - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
 # - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
 set -uo pipefail
@@ -167,6 +167,17 @@ if [ "${#ignored[@]}" -gt 0 ]; then
     exit 1
   fi
   echo "✔ .gitignore: thêm ngoại lệ cho ${ignored[*]}"
+fi
+
+# Bằng chứng của verifier (artifacts/verify/<slug>/) không thuộc mã nguồn. Không ignore thì Stop gate
+# coi là thay đổi và chạy check ở mọi lượt, và agent có thể lỡ commit nó.
+if ! git -C "$target" check-ignore -q artifacts/verify/probe.txt; then
+  {
+    echo
+    echo "# Bằng chứng của verifier (Agents-Team-coding)"
+    echo "artifacts/"
+  } >> "$target/.gitignore"
+  echo "✔ .gitignore: bỏ qua artifacts/ (bằng chứng của verifier)"
 fi
 
 sh_files=()

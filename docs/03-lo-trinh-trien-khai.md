@@ -62,6 +62,7 @@ git switch -c chore/agent-team
 - Nếu dự án chưa có CLAUDE.md thì tạo mới. Nếu đã có thì giữ nguyên, và đặt quy ước của đội vào `.claude/rules/agent-team.md`.
 - Thêm `*.sh text eol=lf` vào `.gitattributes`, để script không bị đổi sang CRLF trên Windows.
 - Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ dạng `!thư-mục/`. Các luật như `.env` hay `*.log` vẫn giữ hiệu lực.
+- Thêm `artifacts/` vào `.gitignore`: đó là nơi verifier lưu bằng chứng. Không ignore thì Stop gate coi đó là thay đổi và chạy check ở mọi lượt.
 
 Ví dụ đầy đủ cho một dự án Python có sẵn cấu hình Claude Code: [04-thu-nghiem-vnstock-dashboard.md](./04-thu-nghiem-vnstock-dashboard.md).
 

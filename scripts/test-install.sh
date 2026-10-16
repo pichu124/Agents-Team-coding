@@ -57,6 +57,8 @@ assert "A: settings thiếu Stop hook" [ "$(hook_groups "$a/.claude/settings.jso
 assert "A: thiếu skill /agent-audit" [ -f "$a/.claude/skills/agent-audit/SKILL.md" ]
 assert "A: script dò sự cố phải có quyền chạy" [ -x "$a/scripts/audit-agent.sh" ]
 assert "A: thiếu sàn số ca phải hỏi" [ -f "$a/scripts/guard-ask-floor" ]
+# Bằng chứng verifier lưu ở artifacts/: phải bị ignore, không thì Stop gate chạy check ở mọi lượt.
+assert "A: artifacts/ (bằng chứng của verifier) phải bị .gitignore bỏ qua" git -C "$a" check-ignore -q artifacts/verify/x/out.txt
 (cd "$a" && ./scripts/test-hooks.sh >/dev/null 2>&1)
 assert "A: test hook trong repo đích phải xanh (sàn số ca đúng)" [ $? -eq 0 ]
 (cd "$a" && ./scripts/validate-kit.sh >/dev/null 2>&1)
@@ -90,6 +92,8 @@ for ev in PreToolUse PostToolUse Stop; do
 done
 (cd "$b" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "B: validate-kit chỉ được kiểm file của kit, bỏ qua skill/tài liệu của dự án" [ $? -eq 0 ]
+assert "B: artifacts/ phải bị ignore ở repo đã có .gitignore" git -C "$b" check-ignore -q artifacts/verify/x/out.txt
+assert "B: chạy lại install không được thêm trùng dòng artifacts/" [ "$(grep -c '^artifacts/$' "$b/.gitignore")" = 1 ]
 
 # C. Trùng tên agent: dừng, không chép gì.
 c="$tmp/conflict"
