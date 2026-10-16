@@ -53,6 +53,9 @@ new_repo "$on_main" main
 # Repo ở nhánh chính, đường dẫn có chữ git và push.
 odd="$tmp/my git/github/pushy-main"
 new_repo "$odd" main
+# Repo ở nhánh chính có tên kết thúc bằng \ (giả lập C:\vnstock\ của PowerShell trên Linux).
+bsm="$tmp/w\\"
+new_repo "$bsm" main
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
@@ -278,8 +281,23 @@ EOF
   expect_guard ask 'git -C "$REPO" push'
   TOOL=PowerShell expect_guard ask "Set-Location -Path:\"$on_main\"; git push"
   TOOL=PowerShell expect_guard ask "Set-Location -PassThru \"$on_main\"; git push"
+  # PowerShell không escape bằng \: C:\x\; và C:\x\ push là đường dẫn rồi tới lệnh khác.
+  TOOL=PowerShell expect_guard ask "Set-Location $bsm; git push"
+  TOOL=PowerShell expect_guard ask "cd $bsm ; git push"
+  TOOL=PowerShell expect_guard ask "cd $bsm&& git push"
+  TOOL=PowerShell expect_guard ask "git -C $bsm push"
+  TOOL=PowerShell expect_guard ask "git -C $bsm push origin HEAD"
+  TOOL=Unknown expect_guard ask "Set-Location $bsm; git push"
+  TOOL=PowerShell expect_guard ask 'git -C \ push -f'
   expect_guard allow "cd -- \"$work\" && git push"
   expect_guard allow "bash -c 'cd \"$work\" && git push'"
+  # Biến quen thuộc thì biết thư mục: $PWD là thư mục của phiên, $CLAUDE_PROJECT_DIR có trong môi trường hook.
+  # shellcheck disable=SC2016
+  expect_guard allow 'git -C "$PWD" push'
+  # shellcheck disable=SC2016
+  CLAUDE_PROJECT_DIR="$work" expect_guard allow 'cd "$CLAUDE_PROJECT_DIR" && git push'
+  # shellcheck disable=SC2016
+  CLAUDE_PROJECT_DIR="$on_main" expect_guard ask 'cd "$CLAUDE_PROJECT_DIR" && git push'
   # \\ cuối dòng là dấu \ thật, không phải dấu nối; PowerShell lồng trong Bash vẫn nối bằng `.
   expect_guard ask $'echo \\\\\nrm -rf \\\n  ~'
   expect_guard ask $'echo \\\\\nnpm \\\n run deploy'
