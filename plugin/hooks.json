@@ -1,5 +1,5 @@
 {
-  "description": "Hook của bộ kit, gọi qua plugin/run-hook.sh để nhường cho bản của dự án khi dự án đã cài kit.",
+  "description": "Hook của bộ kit, gọi qua plugin/run-hook.sh: guard luôn chạy; Stop gate và format nhường cho bản của dự án khi dự án đã cài kit.",
   "hooks": {
     "PreToolUse": [
       {

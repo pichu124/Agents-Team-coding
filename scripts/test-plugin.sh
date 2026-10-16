@@ -167,6 +167,13 @@ expect_ask "$half" "dự án chỉ đăng ký stop-gate: guard của plugin vẫ
 expect_defer stop-gate "$half" "dự án đăng ký stop-gate: plugin nhường stop-gate"
 expect_run post-edit-format "$half" "dự án chỉ đăng ký stop-gate: plugin vẫn chạy format"
 
+# Settings đăng ký Stop gate mà thiếu file hook (chép thiếu): hook của dự án lỗi, plugin phải tự chạy.
+nofile="$tmp/no hook file"
+new_repo "$nofile"
+mkdir -p "$nofile/.claude"
+cp .claude/settings.json "$nofile/.claude/settings.json"
+expect_run stop-gate "$nofile" "settings đăng ký stop-gate mà thiếu .claude/hooks/stop-gate.sh: plugin phải tự chạy"
+
 # 4. Tên hook sai: báo lỗi, không im lặng cho qua.
 run khong-co "$plain" '{}'
 if [ "$rc" -ne 0 ] && grep -q "không có hook" "$tmp/err"; then ok; else bad "hook không tồn tại phải exit khác 0 kèm thông báo (exit $rc)"; fi

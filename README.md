@@ -17,7 +17,7 @@ Bộ khởi động để xây dựng **đội AI agent hỗ trợ lập trình*
 ```
 CLAUDE.md                         quy ước ngắn + bảng Rule ↔ Thứ thực thi
 .claude-plugin/                   marketplace.json + plugin.json: cài kit dạng plugin cho mọi dự án
-plugin/                           hooks.json + run-hook.sh: hook của plugin, nhường cho bản của dự án
+plugin/                           hooks.json + run-hook.sh: hook của plugin (Stop gate, format nhường cho bản của dự án)
 .claude/
   settings.json                   permissions + 3 hook
   agents/
