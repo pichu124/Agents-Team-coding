@@ -87,7 +87,7 @@ Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (m�
 
 ### Kit chạy được ở đâu
 
-Kit là file trong repo, nên mọi nơi chạy Claude Code **trên máy bạn** đều nạp nó, vì chúng đọc cùng các file settings.
+Kit là file trong repo, nên mọi nơi chạy Claude Code **trên máy bạn** đều nạp nó, vì chúng đọc cùng các file settings. Bản plugin (cài một lần cho mọi dự án, xem [docs/05](05-cai-cho-moi-du-an.md)) cũng vậy, trừ cloud.
 
 | Nơi dùng | Kit có tác dụng | Ghi chú |
 |---|---|---|

@@ -290,6 +290,7 @@ Claude Code lưu mỗi phiên ở `~/.claude/projects/<thư mục dự án>/*.js
 ```powershell
 & $bash scripts/audit-agent.sh --since 2          # in báo cáo
 & $bash scripts/audit-agent.sh --since 7 --out bao-cao.md
+& $bash scripts/audit-agent.sh --all --since 1   # mọi dự án trên máy (khi đã cài plugin, docs/05)
 ```
 Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bạn từ chối mà guard không hỏi; **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
 
@@ -311,13 +312,13 @@ Kết quả tự kiểm hoặc mục báo cáo audit liên quan
 ```
 
 ## 12. Việc hằng ngày trong đợt thử
-Làm trên **từng máy có mở Claude ở `C:\vnstock-trial` trong ngày**. File phiên nằm riêng ở mỗi máy (`~/.claude/projects`, không đi qua Dropbox), nên máy nào dùng thì dò ở máy đó. Mở PowerShell đã kích hoạt venv, lấy `$bash` như ở mục "Tự kiểm một lệnh nghi ngờ".
+Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, hoặc ở dự án bất kỳ khi đã cài plugin). File phiên nằm riêng ở mỗi máy (`~/.claude/projects`, không đi qua Dropbox), nên máy nào dùng thì dò ở máy đó. Mở PowerShell đã kích hoạt venv, lấy `$bash` như ở mục "Tự kiểm một lệnh nghi ngờ".
 
 | Lúc | Việc | Lệnh |
 |---|---|---|
-| Đầu buổi | Lấy bản sửa mới nhất của kit | `cd C:\vnstock-trial; git pull` |
+| Đầu buổi | Lấy bản sửa mới nhất của kit | `cd C:\vnstock-trial; git pull`. Đã cài plugin ([docs/05](05-cai-cho-moi-du-an.md)) thì thêm `claude plugin marketplace update agents-team-coding; claude plugin update agent-team@agents-team-coding` |
 | Trong buổi | Giao việc không tầm thường cho đội | `/team-lead <việc>` |
-| Cuối buổi | Dò sự cố của ngày | `& $bash scripts/audit-agent.sh --since 1` |
+| Cuối buổi | Dò sự cố của ngày, mọi dự án trên máy | `& $bash scripts/audit-agent.sh --all --since 1` |
 | Có dòng ở A, B, H hoặc F | Để agent tự sửa, hoặc gửi người hỗ trợ | `/agent-audit 1`, hoặc dán báo cáo |
 | Chỉ có C, D, E | Xem lướt | Báo khi C lặp với lệnh vô hại, hoặc E có lần chặn hay trung vị trên 5 phút |
 

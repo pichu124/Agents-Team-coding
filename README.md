@@ -10,11 +10,14 @@ Bộ khởi động để xây dựng **đội AI agent hỗ trợ lập trình*
 2. [docs/02-kien-truc-agent-team.md](docs/02-kien-truc-agent-team.md): kiến trúc đội, các vai, luồng chuẩn, lớp kiểm soát, ma trận tự chủ.
 3. [docs/03-lo-trinh-trien-khai.md](docs/03-lo-trinh-trien-khai.md): 6 cấp độ trưởng thành, kế hoạch 30 ngày, cách cài, prompt mẫu, chỉ số.
 4. [docs/04-thu-nghiem-vnstock-dashboard.md](docs/04-thu-nghiem-vnstock-dashboard.md): triển khai thử vào một dự án Python thật trên Windows, từng bước.
+5. [docs/05-cai-cho-moi-du-an.md](docs/05-cai-cho-moi-du-an.md): cài dạng plugin một lần cho mọi dự án trên máy (CLI và app).
 
 ## Trong bộ kit có gì
 
 ```
 CLAUDE.md                         quy ước ngắn + bảng Rule ↔ Thứ thực thi
+.claude-plugin/                   marketplace.json + plugin.json: cài kit dạng plugin cho mọi dự án
+plugin/                           hooks.json + run-hook.sh: hook của plugin, nhường cho bản của dự án
 .claude/
   settings.json                   permissions + 3 hook
   agents/
@@ -39,6 +42,7 @@ scripts/
   guard-ask-floor                 sàn số ca "phải hỏi" của guard: được tăng, không được giảm
   audit-agent.sh / .py            dò sự cố từ file phiên Claude Code (chỉ đọc)
   test-audit.sh                   test của script dò sự cố
+  test-plugin.sh                  test của bản plugin (nhường hook cho dự án đã cài kit)
   install-kit.sh                  cài kit vào một repo khác bằng một lệnh
   test-install.sh                 test của installer
   check.local.sh                  check riêng của repo kit (không chép sang dự án khác)
@@ -48,6 +52,15 @@ examples/vnstock-dashboard/       check.local.sh mẫu cho dự án Python + pyt
 ```
 
 ## Bắt đầu nhanh
+
+Muốn đội agent có ở **mọi dự án** trên máy thì cài dạng plugin, xem [docs/05](docs/05-cai-cho-moi-du-an.md):
+
+```bash
+claude plugin marketplace add pichu124/Agents-Team-coding
+claude plugin install agent-team@agents-team-coding --scope user
+```
+
+Muốn cài vào một dự án, kèm Stop gate, check riêng và luật chặn đọc `.env`:
 
 ```bash
 # 1. Cài kit vào dự án của bạn, trên một branch mới (chi tiết: docs/03, mục 3)
