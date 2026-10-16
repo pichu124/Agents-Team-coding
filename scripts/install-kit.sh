@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cài bộ agent team vào một git repo khác.
 #   ./scripts/install-kit.sh <repo-đích> [--force]
-# - Chép agents, hooks, 3 skill của kit và scripts/{check,validate-kit,test-hooks}.sh.
+# - Chép agents, hooks, 4 skill của kit, scripts/{check,validate-kit,test-hooks,audit-agent,test-audit}.sh, audit-agent.py, guard-ask-floor.
 # - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
 # - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore.
@@ -39,9 +39,10 @@ while IFS= read -r f; do
   files+=("$f")
 done < <(
   cd "$kit" && find .claude/agents .claude/hooks \
-    .claude/skills/team-lead .claude/skills/create-verify-skill .claude/skills/correct \
+    .claude/skills/team-lead .claude/skills/create-verify-skill .claude/skills/correct .claude/skills/agent-audit \
     -type f | sort
-  printf '%s\n' scripts/check.sh scripts/validate-kit.sh scripts/test-hooks.sh
+  printf '%s\n' scripts/check.sh scripts/validate-kit.sh scripts/test-hooks.sh scripts/guard-ask-floor \
+    scripts/audit-agent.sh scripts/audit-agent.py scripts/test-audit.sh
 )
 
 conflicts=0

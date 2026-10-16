@@ -54,6 +54,11 @@ assert "A: hook phải có quyền chạy" [ -x "$a/.claude/hooks/stop-gate.sh" 
 assert "A: thiếu CLAUDE.md" [ -f "$a/CLAUDE.md" ]
 assert "A: thiếu .gitattributes LF" grep -qxF '*.sh text eol=lf' "$a/.gitattributes"
 assert "A: settings thiếu Stop hook" [ "$(hook_groups "$a/.claude/settings.json" Stop)" = 1 ]
+assert "A: thiếu skill /agent-audit" [ -f "$a/.claude/skills/agent-audit/SKILL.md" ]
+assert "A: script dò sự cố phải có quyền chạy" [ -x "$a/scripts/audit-agent.sh" ]
+assert "A: thiếu sàn số ca phải hỏi" [ -f "$a/scripts/guard-ask-floor" ]
+(cd "$a" && ./scripts/test-hooks.sh >/dev/null 2>&1)
+assert "A: test hook trong repo đích phải xanh (sàn số ca đúng)" [ $? -eq 0 ]
 (cd "$a" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "A: validate-kit trong repo đích phải xanh" [ $? -eq 0 ]
 

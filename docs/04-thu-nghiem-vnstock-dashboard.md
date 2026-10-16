@@ -262,3 +262,50 @@ Chạy sau vài phiên làm việc, khi bạn đã phải sửa agent cùng mộ
 | Hook báo không tìm thấy `python3` | Dùng Python thật, không dùng bản giả của Microsoft Store: kích hoạt venv trước khi mở `claude`, hoặc tắt "App execution aliases" cho python trong Windows Settings |
 | Claude chạy lệnh nguy hiểm mà không hỏi | Trên Windows, Claude chạy lệnh qua PowerShell tool. Matcher của guard trong `.claude/settings.json` phải là `Bash\|PowerShell`, và `./scripts/validate-kit.sh` sẽ báo nếu thiếu |
 | Check quá chậm khi chỉ làm việc nhỏ | Mở phiên với `AGENT_STOP_GATE=off claude`, rồi tự chạy `./scripts/check.sh` trước khi commit |
+
+## 11. Nhận biết sự cố và tự dò bằng `/agent-audit`
+
+### Năm loại sự cố
+| Loại | Dấu hiệu |
+|---|---|
+| 1. Guard bỏ sót (quan trọng nhất) | Một lệnh nguy hiểm đã chạy mà không có hộp xin phép: force-push, push lên `main`, `reset --hard`, `clean -f`, `rm -rf` hay `Remove-Item -Recurse` thư mục rộng, deploy, publish, `DROP TABLE`, merge PR |
+| 2. Guard hỏi thừa | Hộp "Hành động không đảo ngược được (…)" hiện ra với lệnh rõ ràng vô hại |
+| 3. Stop gate sai | Bị chặn "check.sh đang đỏ" khi check thật ra xanh; agent báo xong mà tự chạy check thấy đỏ; mỗi lần chờ quá khoảng 5 phút |
+| 4. Hook lỗi | `hook error`, `Failed with non-blocking status code`, `$'\r': command not found`, chữ tiếng Việt vỡ |
+| 5. Agent làm sai cách | Không nêu điều kiện xong, sửa bug không tái hiện, báo xong không bằng chứng, chạy `run.py sync/brief/telegram/test`. Lặp lần thứ hai thì chạy `/correct` |
+
+Bấm `>` ở dòng lệnh trong cuộc hội thoại để thấy tên tool (Bash hay PowerShell) và nguyên văn lệnh.
+
+### Tự kiểm một lệnh nghi ngờ
+Trong PowerShell, ở thư mục dự án:
+```powershell
+$bash = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) "bin\bash.exe"
+$cmd  = 'Remove-Item -Recurse -Force C:\'   # dán lệnh nghi ngờ vào đây
+@{tool_name='PowerShell'; cwd=(Get-Location).Path; tool_input=@{command=$cmd}} | ConvertTo-Json -Compress | & $bash .claude/hooks/guard-irreversible.sh
+```
+Không in gì là guard cho qua; in ra `"permissionDecision":"ask"` là guard hỏi. Lệnh Claude chạy bằng Bash thì đổi `'PowerShell'` thành `'Bash'`.
+
+### Dò tự động
+Claude Code lưu mỗi phiên ở `~/.claude/projects/<thư mục dự án>/*.jsonl`: lệnh đã chạy, ai duyệt (auto mode, luật, hay bạn), lệnh bị bạn từ chối, kết quả của guard, thời gian Stop gate, lỗi hook. `scripts/audit-agent.sh` đọc các file đó (chỉ đọc) và chạy lại từng lệnh qua guard hiện tại:
+```powershell
+& $bash scripts/audit-agent.sh --since 2          # in báo cáo
+& $bash scripts/audit-agent.sh --since 7 --out bao-cao.md
+```
+Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bạn từ chối mà guard không hỏi; **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
+
+`/agent-audit [số ngày]` trong Claude chạy báo cáo đó rồi xử lý từng mục theo playbook bug-fix: viết ca test đỏ, sửa guard, check xanh, `reviewer` soát, mở **PR nháp**. Bạn đọc PR và merge. Hai chốt chặn để agent không tự nới guard:
+- `scripts/guard-ask-floor`: số ca "phải hỏi" trong test chỉ được tăng. Bớt ca thì test đỏ, trừ khi sửa cả file sàn, và thay đổi đó hiện rõ trong PR.
+- Thay đổi nới lỏng (bớt hỏi) phải nằm ở commit riêng tên `guard: NỚI LỎNG …`.
+
+Gợi ý nhịp: cuối mỗi ngày thử nghiệm chạy `& $bash scripts/audit-agent.sh --since 1`; có mục A, B hoặc F thì gõ `/agent-audit 1`.
+
+### Gửi sự cố cho người hỗ trợ
+```text
+Máy: laptop / desktop · CLI / app · chế độ Auto / Manual
+Loại: 1 guard bỏ sót / 2 hỏi thừa / 3 stop gate / 4 hook lỗi / 5 agent sai
+Lệnh hoặc việc: (nguyên văn)
+Thấy gì: (thông báo nguyên văn hoặc ảnh)
+Mong đợi: (đáng lẽ thế nào)
+Phiên bản: (git log --oneline -1)
+Kết quả tự kiểm hoặc mục báo cáo audit liên quan
+```

@@ -13,6 +13,7 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 - `./scripts/check.sh` là THE check: kiểm tra bộ kit cộng với check của dự án (`scripts/check.local.sh` nếu có). Chạy trước khi báo xong. CI chạy đúng lệnh này.
 - `./scripts/validate-kit.sh` chỉ kiểm tra file của kit: frontmatter, link, hook, cú pháp shell.
 - `./scripts/test-hooks.sh`, `./scripts/test-install.sh` là test hành vi của hook và installer. Sửa hook hoặc installer thì thêm ca test tái hiện lỗi trước.
+- `./scripts/audit-agent.sh --since 7` dò sự cố từ file phiên (guard bỏ sót, hỏi thừa, Stop gate, lỗi hook). `/agent-audit` dò rồi sửa kèm test, mở PR nháp.
 <!-- TODO: lệnh chạy app local, lệnh chạy một test đơn lẻ, biến môi trường bắt buộc. -->
 
 ## Cách làm việc
@@ -38,4 +39,5 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Không đọc file bí mật (`.env`, `*.pem`, `secrets/`) | `permissions.deny` trong `.claude/settings.json` |
 | Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
 | Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
+| Không bớt ca "phải hỏi" của guard để cho dễ | `scripts/guard-ask-floor` (test-hooks đỏ khi số ca dưới sàn) |
 | Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |

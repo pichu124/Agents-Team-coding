@@ -27,6 +27,7 @@ CLAUDE.md                         quy ước ngắn + bảng Rule ↔ Thứ th�
     team-lead/                    /team-lead: điều phối đội + 5 playbook
     create-verify-skill/          /create-verify-skill: sinh skill verify-<app> kèm feature map
     correct/                      /correct: mã hoá bài học vào type, lint, hook, test
+    agent-audit/                  /agent-audit: dò sự cố từ file phiên, sửa kèm test, mở PR nháp
   hooks/
     stop-gate.sh                  Stop: chưa được "báo xong" khi check còn đỏ
     guard-irreversible.sh         PreToolUse(Bash|PowerShell): hỏi người trước force-push, deploy, xoá dữ liệu...
@@ -35,6 +36,9 @@ scripts/
   check.sh                        THE check: một lệnh cho agent, hook và CI
   validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell (chỉ file của kit)
   test-hooks.sh                   test hành vi của 3 hook
+  guard-ask-floor                 sàn số ca "phải hỏi" của guard: được tăng, không được giảm
+  audit-agent.sh / .py            dò sự cố từ file phiên Claude Code (chỉ đọc)
+  test-audit.sh                   test của script dò sự cố
   install-kit.sh                  cài kit vào một repo khác bằng một lệnh
   test-install.sh                 test của installer
   check.local.sh                  check riêng của repo kit (không chép sang dự án khác)
