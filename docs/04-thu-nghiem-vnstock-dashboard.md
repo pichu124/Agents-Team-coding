@@ -297,7 +297,7 @@ Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard kh
 - `scripts/guard-ask-floor`: số ca "phải hỏi" trong test chỉ được tăng. Bớt ca thì test đỏ, trừ khi sửa cả file sàn, và thay đổi đó hiện rõ trong PR.
 - Thay đổi nới lỏng (bớt hỏi) phải nằm ở commit riêng tên `guard: NỚI LỎNG …`.
 
-Gợi ý nhịp: cuối mỗi ngày thử nghiệm chạy `& $bash scripts/audit-agent.sh --since 1`; có mục A, B, H hoặc F thì gõ `/agent-audit 1`.
+Nhịp chạy hằng ngày: xem [mục 12](#12-việc-hằng-ngày-trong-đợt-thử).
 
 ### Gửi sự cố cho người hỗ trợ
 ```text
@@ -309,3 +309,16 @@ Mong đợi: (đáng lẽ thế nào)
 Phiên bản: (git log --oneline -1)
 Kết quả tự kiểm hoặc mục báo cáo audit liên quan
 ```
+
+## 12. Việc hằng ngày trong đợt thử
+Làm trên **từng máy có mở Claude ở `C:\vnstock-trial` trong ngày**. File phiên nằm riêng ở mỗi máy (`~/.claude/projects`, không đi qua Dropbox), nên máy nào dùng thì dò ở máy đó. Mở PowerShell đã kích hoạt venv, lấy `$bash` như ở mục "Tự kiểm một lệnh nghi ngờ".
+
+| Lúc | Việc | Lệnh |
+|---|---|---|
+| Đầu buổi | Lấy bản sửa mới nhất của kit | `cd C:\vnstock-trial; git pull` |
+| Trong buổi | Giao việc không tầm thường cho đội | `/team-lead <việc>` |
+| Cuối buổi | Dò sự cố của ngày | `& $bash scripts/audit-agent.sh --since 1` |
+| Có dòng ở A, B, H hoặc F | Để agent tự sửa, hoặc gửi người hỗ trợ | `/agent-audit 1`, hoặc dán báo cáo |
+| Chỉ có C, D, E | Xem lướt | Báo khi C lặp với lệnh vô hại, hoặc E có lần chặn hay trung vị trên 5 phút |
+
+Ghi một dòng mỗi ngày (máy, số việc đã giao, sự cố nếu có) để chấm điểm ở mục 8.
