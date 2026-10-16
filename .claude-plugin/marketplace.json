@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agents-team-coding",
+  "description": "Đội AI agent lập trình (architect, implementer, verifier, reviewer, gardener) kèm guard, Stop gate và audit.",
+  "owner": {
+    "name": "pichu124",
+    "url": "https://github.com/pichu124"
+  },
+  "plugins": [
+    {
+      "name": "agent-team",
+      "description": "Đội agent, /team-lead, /correct, /create-verify-skill, /agent-audit và 3 hook (guard hành động không đảo ngược được, Stop gate, format) cho mọi dự án.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

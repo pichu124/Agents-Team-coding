@@ -1,0 +1,40 @@
+{
+  "description": "Hook của bộ kit, gọi qua plugin/run-hook.sh để nhường cho bản của dự án khi dự án đã cài kit.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/plugin/run-hook.sh\" guard-irreversible",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/plugin/run-hook.sh\" post-edit-format",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/plugin/run-hook.sh\" stop-gate",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

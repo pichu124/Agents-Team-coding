@@ -1,0 +1,19 @@
+{
+  "name": "agent-team",
+  "description": "Đội AI agent lập trình cho mọi dự án: 5 agent, 4 skill, guard hỏi trước hành động không đảo ngược được, Stop gate chặn báo xong khi check đỏ, format theo cấu hình dự án. Dự án đã cài kit thì hook của dự án chạy thay.",
+  "author": {
+    "name": "pichu124",
+    "url": "https://github.com/pichu124"
+  },
+  "homepage": "https://github.com/pichu124/Agents-Team-coding",
+  "repository": "https://github.com/pichu124/Agents-Team-coding",
+  "agents": [
+    "./.claude/agents/architect.md",
+    "./.claude/agents/gardener.md",
+    "./.claude/agents/implementer.md",
+    "./.claude/agents/reviewer.md",
+    "./.claude/agents/verifier.md"
+  ],
+  "skills": "./.claude/skills/",
+  "hooks": "./plugin/hooks.json"
+}
