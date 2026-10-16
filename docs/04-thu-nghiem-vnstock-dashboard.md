@@ -292,7 +292,7 @@ Claude Code lưu mỗi phiên ở `~/.claude/projects/<thư mục dự án>/*.js
 & $bash scripts/audit-agent.sh --since 7 --out bao-cao.md
 & $bash scripts/audit-agent.sh --all --since 1   # mọi dự án trên máy (khi đã cài plugin, docs/05)
 ```
-Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bạn từ chối mà guard không hỏi; **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
+Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bị từ chối mà guard không hỏi (ghi rõ bạn từ chối hay auto mode/luật deny chặn); **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
 
 `/agent-audit [số ngày]` trong Claude chạy báo cáo đó rồi xử lý từng mục theo playbook bug-fix: viết ca test đỏ, sửa guard, check xanh, `reviewer` soát, mở **PR nháp**. Bạn đọc PR và merge. Hai chốt chặn để agent không tự nới guard:
 - `scripts/guard-ask-floor`: số ca "phải hỏi" trong test chỉ được tăng. Bớt ca thì test đỏ, trừ khi sửa cả file sàn, và thay đổi đó hiện rõ trong PR.
