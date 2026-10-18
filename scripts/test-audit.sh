@@ -163,7 +163,107 @@ all="$tmp/all.json"
 (cd "$tmp" && CLAUDE_CONFIG_DIR="$tmp/cfg" "$root/scripts/audit-agent.sh" --all --since 1 --json > "$all")
 allmd="$(cd "$tmp" && CLAUDE_CONFIG_DIR="$tmp/cfg" "$root/scripts/audit-agent.sh" --all --since 1)"
 
-"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" <<'PYEOF'
+# Mục I (bạn phải sửa agent) và J (chỉ số tuần): thư mục phiên riêng, để các assert đếm file ở trên không đổi.
+learnrepo="$tmp/learnrepo"
+git init -q -b feat/x "$learnrepo" && mkdir -p "$learnrepo/sub"
+"$py" - "$tmp/learn" "$learnrepo" "$tmp/learn-expect.json" <<'PYEOF'
+import json, os, sys, time
+from datetime import datetime
+d, repo, expect = sys.argv[1:4]
+sub = os.path.join(repo, "sub")
+T2 = int(time.time())
+T1 = T2 - 8 * 86400  # luôn rơi vào tuần ISO khác T2
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+week = lambda t: "%d-W%02d" % tuple(datetime.fromtimestamp(t).isocalendar()[:2])
+HUMAN = {"kind": "human"}
+def write(name, rows):
+    os.makedirs(os.path.dirname(f"{d}/{name}"), exist_ok=True)
+    with open(f"{d}/{name}", "w", encoding="utf-8") as f:
+        for e in rows:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+def user(t, cwd, content, **kw):
+    return dict({"type": "user", "timestamp": iso(t), "cwd": cwd, "message": {"role": "user", "content": content}}, **kw)
+def asst(t, cwd, *blocks):
+    return {"type": "assistant", "timestamp": iso(t), "cwd": cwd, "message": {"role": "assistant", "content": list(blocks)}}
+def tool(i, name, inp):
+    return {"type": "tool_use", "id": i, "name": name, "input": inp}
+def text(s):
+    return {"type": "text", "text": s}
+def result(t, cwd, i, txt, err=False):
+    return user(t, cwd, [{"type": "tool_result", "tool_use_id": i, "content": txt, "is_error": err}])
+REJ = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file)."
+BLOCK = "[\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh]: ./scripts/check.sh đang đỏ (exit 1), chưa được kết thúc lượt (lần chặn 1/3).\n"
+def stop(t, cwd):
+    return {"type": "system", "subtype": "stop_hook_summary", "timestamp": iso(t), "cwd": cwd,
+            "hookInfos": [{"command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh", "durationMs": 900}], "hookErrors": [BLOCK]}
+# Tuần trước. Tên file xếp sau cùng: thứ tự trong mục I phải theo giờ, không theo file.
+write("z-w1.jsonl", [
+    user(T1, repo, "vẫn lỗi từ hôm qua, xem giúp", origin=HUMAN),  # đầu file, chưa có agent nào để sửa: không phải câu sửa
+    asst(T1, repo, tool("e1", "Edit", {"file_path": "/x/a.py", "old_string": "a", "new_string": "b"})),
+    result(T1, repo, "e1", REJ + " To tell you how to proceed, the user said:\n  đừng đụng file này,\nsửa test trước  ", err=True),
+    asst(T1, repo, text("Đã dừng.")),
+    user(T1, repo, [text("có đúng không?")]),  # dạng list, không có origin (bản cũ)
+    user(T1, repo, "Nắp hộp vẫn bịt kín chứ?", origin=HUMAN),  # "vẫn bị" chỉ khớp trọn từ
+    stop(T1, repo),
+])
+# Tuần này, cwd là thư mục con của repo.
+write("w2.jsonl", [
+    user(T2, sub, "Làm mục J", origin=HUMAN),
+    asst(T2, sub, tool("b1", "Bash", {"command": "pytest -q"})),
+    result(T2, sub, "b1", "ok"),
+    asst(T2, sub, tool("b2", "Bash", {"command": "git push origin feat/x"})),
+    result(T2, sub, "b2", REJ + " STOP what you are doing and wait for the user to tell you how to proceed.", err=True),  # không kèm lời
+    user(T2, sub, [text("[Request interrupted by user for tool use]")]),
+    user(T2, sub, [text("vẫn lỗi khi\nchạy   check")], origin=HUMAN),
+    user(T2, sub, "Stop hook feedback:\nsai rồi", isMeta=True),
+    user(T2, sub, "This session is being continued... sai rồi", isCompactSummary=True, isVisibleInTranscriptOnly=True),
+    user(T2, sub, "Another Claude session sent a message: vẫn lỗi", origin={"kind": "peer", "name": "reviewer"}),
+    user(T2, sub, "<command-message>team-lead</command-message>\n<command-name>/team-lead</command-name>\n"
+                  "<command-args>bạn quên chạy test rồi</command-args>", origin=HUMAN),
+    user(T2, sub, "<local-command-stdout>sai rồi</local-command-stdout>"),
+    user(T2, sub, "sửa lỗi sai chính tả trong README", origin=HUMAN),
+    stop(T2, "/khong-co-tren-may/otherproj"),
+])
+# Phiên Windows đọc trên máy khác: dự án là tên thư mục cuối của cwd.
+WIN = "C:\\Users\\Ten Nguoi\\winproj"
+write("win.jsonl", [
+    user(T2, WIN, "Đọc file cấu hình giúp tôi", origin=HUMAN),
+    asst(T2, WIN, tool("r1", "Read", {"file_path": WIN + "\\cfg.json"})),
+    result(T2, WIN, "r1", "{}"),
+    user(T2, WIN, "That's WRONG, I told you to use utf-8", origin=HUMAN),
+])
+def agent(name, typ, rows):
+    write(f"w2/subagents/agent-{name}.jsonl", rows)
+    with open(f"{d}/w2/subagents/agent-{name}.meta.json", "w", encoding="utf-8") as f:
+        json.dump({"agentType": typ}, f)
+agent("v1", "agent-team:verifier", [
+    user(T2, sub, "Kiểm chứng mục J. Lần trước vẫn lỗi."),
+    asst(T2, sub, text("Đang chạy check.")),
+    user(T2, sub, "sai rồi, làm lại"),  # lead gửi subagent, không phải bạn gõ
+    asst(T2, sub, text("Xong.\n\n**KẾT LUẬN: PASS**")),
+])
+agent("r1", "reviewer", [
+    user(T2, sub, "Review diff"),
+    asst(T2, sub, text("KẾT LUẬN: CHẶN\nđể xem lại")),
+    asst(T2, sub, tool("h1", "SubagentHandback", {"message": "Đã xem lại.\n**KẾT LUẬN: KHÔNG CHẶN**"})),
+])
+agent("r2", "reviewer", [
+    user(T2, sub, "Review diff 2"),
+    asst(T2, sub, tool("h2", "SubagentHandback", {"message": "KẾT LUẬN: CHẶN (một lỗi, mức trung bình)"})),
+])
+agent("i1", "implementer", [
+    user(T2, sub, "Làm việc X"),
+    asst(T2, sub, text("Verifier sẽ ghi KẾT LUẬN: FAIL nếu đỏ.")),
+])
+with open(expect, "w", encoding="utf-8") as f:
+    json.dump({"w1": week(T1), "w2": week(T2), "w2_local": datetime.fromtimestamp(T2).strftime("%Y-%m-%d %H:%M"), "sub": sub}, f)
+PYEOF
+learn="$tmp/learn.json"
+./scripts/audit-agent.sh --transcripts "$tmp/learn" --since 30 --no-replay --json > "$learn"
+learncode=$?
+learnmd="$(./scripts/audit-agent.sh --all --transcripts "$tmp/learn" --since 30 --no-replay)"
+
+"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" <<'PYEOF'
 import importlib.util, json, os, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 code, nofile, md = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
@@ -237,6 +337,59 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
+# Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
+import collections
+lr = json.load(open(sys.argv[9], encoding="utf-8"))
+lcode, lmd, ex = int(sys.argv[10]), sys.argv[11], json.load(open(sys.argv[12], encoding="utf-8"))
+check(lcode == 0, f"audit thư mục mục I/J phải exit 0, được {lcode}")
+I = lr.get("I_user_corrections") or []
+kinds = collections.Counter(i.get("kind") for i in I)
+check(kinds == {"interrupt": 1, "reject_note": 1, "correction": 3}, f"I phải có 1 ngắt, 1 từ chối kèm lời, 3 câu sửa: {dict(kinds)}")
+check(bool(I) and I[0].get("kind") == "reject_note", f"I sắp theo giờ: lần từ chối tuần trước đứng đầu: {[i.get('kind') for i in I]}")
+ints = [i for i in I if i.get("kind") == "interrupt"]
+check(len(ints) == 1 and ints[0].get("doing") == "Bash: git push origin feat/x", f"ngắt phải ghi tool vừa gọi: {ints}")
+rej = [i for i in I if i.get("kind") == "reject_note"]
+check(len(rej) == 1 and rej[0].get("doing") == "Edit: /x/a.py" and rej[0].get("text") == "đừng đụng file này, sửa test trước",
+      f"từ chối kèm lời phải ghi tool bị từ chối và lời của bạn: {rej}")
+fix = {i.get("text") for i in I if i.get("kind") == "correction"}
+check(fix == {"vẫn lỗi khi chạy check", "bạn quên chạy test rồi", "That's WRONG, I told you to use utf-8"},
+      f"câu sửa: chỉ tin bạn gõ sau khi agent đã trả lời (kể cả <command-args>), không tin máy chèn, không câu hỏi thường: {fix}")
+rows = lr.get("weekly") or []
+W = {(w.get("week"), w.get("project")): w for w in rows}
+ZERO = dict(prompts=0, interrupt=0, reject_note=0, correction=0, fixes=0, fixes_per_10=None, stop_blocks=0,
+            verifier_pass=0, verifier_fail=0, verifier_inconclusive=0, reviewer_blocked=0, reviewer_total=0)
+def row(week, proj, **want):
+    want = dict(ZERO, **want)
+    got = W.get((week, proj)) or {}
+    bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
+    check(not bad, f"J dòng {week} {proj}: (được, cần) {bad}")
+row(ex["w1"], "learnrepo", prompts=3, reject_note=1, fixes=1, fixes_per_10=3.3, stop_blocks=1)
+row(ex["w2"], "learnrepo", prompts=4, interrupt=1, correction=2, fixes=3, fixes_per_10=7.5, verifier_pass=1, reviewer_blocked=1, reviewer_total=2)
+row(ex["w2"], "winproj", prompts=2, correction=1, fixes=1, fixes_per_10=5.0)
+row(ex["w2"], "otherproj", stop_blocks=1)
+order = [(w.get("week"), w.get("project")) for w in rows]
+check(order == [(ex["w1"], "learnrepo"), (ex["w2"], "learnrepo"), (ex["w2"], "otherproj"), (ex["w2"], "winproj")],
+      f"J phải có 4 dòng, tuần cũ trước, trong tuần xếp theo tên dự án: {order}")
+check("## I. Bạn phải sửa agent: 5" in lmd and "## J. Chỉ số theo tuần" in lmd, "markdown thiếu mục I hoặc J")
+check(-1 < lmd.find("## F.") < lmd.find("## I.") < lmd.find("## J."), "mục I và J phải đứng sau F")
+lines = lmd.splitlines()
+first = lambda p: next((x for x in lines if x.startswith(p)), "")
+ng = first("- [ngắt] ")
+check(ex["w2_local"] in ng and "đang: " in ng and "Bash: git push origin feat/x" in ng and "@ " + ex["sub"] in ng,
+      f"dòng ngắt phải có giờ địa phương, việc đang làm và cwd (--all): {ng!r}")
+tc = first("- [từ chối kèm lời] ")
+check('"đừng đụng file này, sửa test trước"' in tc and "đang: " in tc and "Edit: /x/a.py" in tc, f"dòng từ chối kèm lời: {tc!r}")
+cs = [x for x in lines if x.startswith("- [câu sửa] ")]
+check(len(cs) == 3 and any('"vẫn lỗi khi chạy check"' in x for x in cs), f"dòng câu sửa: {cs}")
+check("| Tuần | Dự án | Lượt hỏi | Bạn sửa (ngắt/lời/câu) | Sửa trên 10 lượt | Stop gate chặn | Verifier P/F/I | Reviewer chặn/tổng |" in lmd,
+      "J thiếu tiêu đề bảng")
+for want in (f"| {ex['w1']} | learnrepo | 3 | 1 (0/1/0) | 3.3 | 1 | 0/0/0 | 0/0 |",
+             f"| {ex['w2']} | learnrepo | 4 | 3 (1/0/2) | 7.5 | 0 | 1/0/0 | 1/2 |",
+             f"| {ex['w2']} | otherproj | 0 | 0 (0/0/0) | - | 1 | 0/0/0 | 0/0 |",
+             f"| {ex['w2']} | winproj | 2 | 1 (0/0/1) | 5.0 | 0 | 0/0/0 | 0/0 |"):
+    check(want in lmd, f"J thiếu dòng: {want}")
+check(-1 < lmd.find(f"| {ex['w1']} |") < lmd.find(f"| {ex['w2']} |"), "J: tuần cũ phải đứng trước")
+check("## J." in sys.argv[8] and "Chưa có dữ liệu." in sys.argv[8].split("## J.")[-1], "J không có sự kiện nào thì in 'Chưa có dữ liệu.'")
 for f in fails:
     print("✘", f, file=sys.stderr)
 if fails:
