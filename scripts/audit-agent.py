@@ -103,7 +103,7 @@ def load_watch(root):
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
-SPLIT = re.compile(r"(\n|;|&&|\|\||\|)")  # giữ dấu nối: `a && b` khác `a; b`
+SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
                      r"|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b",
                      re.IGNORECASE)
@@ -111,24 +111,21 @@ QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng \ ("C:\x\" là một chuỗi trọn)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
-# Mọi dạng đổi thư mục mà CD không đọc được đích (sau if/then/do/builtin..., có cờ, popd, cd trần, cd -).
-CD_OTHER = re.compile(r"^((if|then|do|else|elif|while|until|builtin|command|exec|!)\s+)*"
-                      r"(cd|chdir|pushd|popd|sl|set-location|push-location|pop-location)(\s|$)", re.IGNORECASE)
 TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
-# hoặc trong worktree tạm của subagent.
+# hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
                 ".ruff_cache", ".cache", "coverage", ".coverage", "htmlcov", ".venv", "venv", ".tox", ".next",
                 ".turbo", ".parcel-cache", "scratchpad"}
 CMD_FLAG = re.compile(r"^/[a-z]$", re.IGNORECASE)
-# Worktree tạm của subagent: <repo>/.claude/worktrees/agent-<hex>, nhánh worktree-agent-<hex>. Worktree phiên
-# của app desktop (.claude/worktrees/<tên>-<hex>, nhánh claude/<tên>-<hex>) có thể chứa việc của bạn: không tính.
-AGENT_WORKTREE = re.compile(r"(^|[\\/])\.claude[\\/]+worktrees[\\/]+agent-[0-9a-f]+([\\/]|$)", re.IGNORECASE)
-AGENT_BRANCH = re.compile(r"^worktree-agent-[0-9a-f]+$", re.IGNORECASE)
-# Đích chưa biết khi đọc lệnh: biến, lệnh lồng, brace, extglob. Có thể thành `..` hay đường dẫn tuyệt đối.
-UNKNOWN_PART = re.compile(r"[$`{]|[*?+@!]\(")
-OTHER_REPO = re.compile(r"^(-C|--git-dir|--work-tree|GIT_DIR=|GIT_WORK_TREE=)")
-REDIRECT = re.compile(r"^(\d+|&)?(>>?|<)(.*)$")
+# Subagent dọn worktree tạm của chính nó. Vô hại chỉ khi đích ghi TRỌN là .claude/worktrees/agent-<hex>[/...] (chỉ chữ,
+# số, _./\:~-: không biến, glob, brace, dấu phẩy, khoảng trắng), hay cả đoạn lệnh chỉ xoá nhánh worktree-agent-<hex>.
+# Không dùng thư mục suy theo cd: shell có quá nhiều đường thoát (subshell, bash -c, eval, `&`...).
+AGENT_WORKTREE = re.compile(r"^(?:[A-Za-z]:)?[A-Za-z0-9_./\\:~-]*?[\\/]?\.claude[\\/]worktrees[\\/]agent-[0-9a-f]+"
+                            r"((?:[\\/][A-Za-z0-9_.-]+)*)[\\/]?$")
+AGENT_BRANCH_DELETE = re.compile(r"^git\s+branch\s+(?:-D|--delete\s+--force|-d\s+(?:-f|--force)|-f\s+-d)"
+                                 r"(?:\s+worktree-agent-[0-9a-f]+)+$")
+TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >/dev/null... ở cuối đoạn lệnh
 
 
 def expand(text, env):
@@ -148,11 +145,10 @@ def keep_shell_heredocs(cmd):
 
 
 def segments(cmd, tool="Bash"):
-    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, dấu nối với đoạn trước).
+    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
     giữ nguyên để biết đích thật. Biến gán trong lệnh (S=/tmp/x; rm -rf $S) được thay theo thứ tự.
-    Thư mục chỉ đến từ cd tường minh trong chính lệnh, không từ cwd của phiên: `rm -rf src` gọi trong worktree agent vẫn nghi.
     """
     body = keep_shell_heredocs(cmd)
     store = []
@@ -164,11 +160,8 @@ def segments(cmd, tool="Bash"):
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
-    out, ctx, env, sep = [], "", {}, ""
-    for i, seg in enumerate(SPLIT.split(marked)):
-        if i % 2:
-            sep = seg
-            continue
+    out, ctx, env = [], "", {}
+    for seg in SPLIT.split(marked):
         seg = seg.strip()
         if not seg:
             continue
@@ -180,17 +173,12 @@ def segments(cmd, tool="Bash"):
             env[name] = val.strip("\"'")
         head = full.lstrip("({ ")
         m = CD.match(head)
-        target = m.group(2).strip().strip("\"'") if m else ""
-        if target and not target.startswith("-"):
-            if is_absolute(target):
-                ctx = target
-            elif re.search(r"[$`]", target):
-                ctx = ""  # cd vào biến chưa biết hay lệnh lồng: không còn biết thư mục
-            else:
-                ctx = ctx + "/" + target
-        elif full[:1] in "({" or CD_OTHER.match(head):
-            ctx = ""  # subshell, hay cd mà không đọc được đích: không còn biết thư mục
-        out.append((plain, full, ctx, sep))
+        if m and m.group(2).strip().strip("\"'") not in ("-", ""):
+            target = m.group(2).strip().strip("\"'")
+            ctx = target if is_absolute(target) else (ctx + "/" + target)
+        elif full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
+            ctx = ""  # cd không tham số, cd -, popd, subshell: không còn biết thư mục
+        out.append((plain, full, ctx))
     return out
 
 
@@ -207,13 +195,16 @@ def under_temp(p):
     return any(t in low + "/" for t in temps)
 
 
-def in_agent_worktree(p):
-    return ".." not in re.split(r"[\\/]+", p) and not UNKNOWN_PART.search(p) and bool(AGENT_WORKTREE.search(p))
-
-
 def benign_path(p):
     parts = [x.lower() for x in re.split(r"[\\/]+", p) if x]
     return under_temp(p) or any(x in BENIGN_NAMES for x in parts)
+
+
+def agent_worktree(p):
+    """p là đường ghi trọn trong worktree tạm của subagent, sau agent-<hex> không có thành phần `.`
+    (`..` ở đâu cũng bị benign_delete chặn trước)."""
+    m = AGENT_WORKTREE.search(p)
+    return bool(m) and "." not in re.split(r"[\\/]", m.group(1))
 
 
 def benign_delete(full, ctx):
@@ -229,63 +220,24 @@ def benign_delete(full, ctx):
     for t in targets:
         if ".." in re.split(r"[\\/]+", t):
             return False
-        if benign_path(t) or in_agent_worktree(t):
+        if benign_path(t) or agent_worktree(t):
             continue
         rel = not is_absolute(t)
-        if rel and ctx and (benign_path(ctx) or (in_agent_worktree(ctx) and not UNKNOWN_PART.search(t))):
+        if rel and ctx and benign_path(ctx):
             continue
         return False
     return True
 
 
-def words_after(full, word):
-    """Đối số sau `word` đầu tiên trong một đoạn lệnh, đã bỏ nháy và chuyển hướng (2>&1, > f)."""
-    toks = [t.strip("\"'") for t in TOKEN.findall(full)]
-    if word not in toks:
-        return []
-    out, skip = [], False
-    for t in toks[toks.index(word) + 1:]:
-        m = REDIRECT.match(t)
-        if skip or m:
-            skip = bool(m) and not m.group(3)  # `>` đứng riêng: từ kế tiếp là tên file
-            continue
-        out.append(t)
-    return out
-
-
-def ref_name(t):
-    return t[len("refs/heads/"):] if t.startswith("refs/heads/") else t
-
-
-def benign_branch_delete(full, prev):
-    """git branch -D vô hại khi mọi nhánh bị xoá là nhánh worktree tạm của agent, hoặc đoạn ngay trước (prev,
-    nối bằng &&) là git merge-base --is-ancestor <đúng nhánh đó> <gốc khác nó>, cùng repo với lệnh xoá:
-    nhánh đã gộp hết vào gốc."""
-    names = [ref_name(t) for t in words_after(full, "branch") if not t.startswith("-")]
-    if not names:
-        return False
-    if all(AGENT_BRANCH.match(n) for n in names):
-        return True
-    toks = TOKEN.findall(prev.lstrip("({ "))
-    if toks[:1] in (["do"], ["then"], ["else"]):
-        toks = toks[1:]
-    args = words_after(prev, "merge-base") if toks[:1] == ["git"] else []  # `! git merge-base` thì ngược nghĩa
-    if any(OTHER_REPO.match(t.strip("\"'")) for t in TOKEN.findall(prev) + TOKEN.findall(full)):
-        return False  # kiểm ở repo này, xoá ở repo khác (hay ngược lại)
-    return len(args) == 3 and args[0] == "--is-ancestor" and ref_name(args[1]) != ref_name(args[2]) and \
-        all(n == ref_name(args[1]) for n in names)
-
-
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
-    segs = segments(cmd, tool)
-    for i, (plain, full, ctx, sep) in enumerate(segs):
+    for plain, full, ctx in segments(cmd, tool):
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             if label == "xoá đệ quy" and benign_delete(full, ctx):
                 continue
-            if label == "xoá nhánh local (-D)" and benign_branch_delete(full, segs[i - 1][1] if i and sep == "&&" else ""):
+            if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
                 continue
             labels.append(label)
     return labels

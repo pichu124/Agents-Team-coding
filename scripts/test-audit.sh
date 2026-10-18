@@ -91,7 +91,7 @@ call("w4", 'echo "# drift" >> skill/agent-audit/mode.md ; cat skill/agent-audit/
 call("w5", "rm -rf src", where=WT)  # chỉ vô hại nhờ cwd của phiên: nay vẫn nghi (xem assert)
 call("w6", "cd .claude/worktrees/agent-abc && rm -rf src")
 call("w7", 'Remove-Item -Recurse -Force "C:\\Users\\Ten Nguoi\\repo\\.claude\\worktrees\\agent-abc"', tool="PowerShell")
-# Vẫn nghi: nhánh thường, worktree phiên của app (có thể chứa việc của bạn), thoát khỏi worktree, chưa kiểm gộp đúng nhánh.
+# Vẫn nghi: nhánh thường, worktree phiên của app (có thể chứa việc của bạn), thoát khỏi worktree, merge-base trước khi xoá.
 call("x1", "git branch -D feature-x")
 call("x2", "git branch -D worktree-agent-abc feature-x")
 call("x3", "rm -rf .claude/worktrees")
@@ -116,7 +116,7 @@ call("y7", "for d in /home/u/proj; do cd $d; rm -rf src; done", where=WT)
 call("y8", "builtin cd /home/u/proj && rm -rf src", where=WT)
 call("y9", "ls /home/u/proj | xargs rm -rf", where=WT)
 call("y10", "rm -rf $SP/rv6", where=WT)
-# Cùng các ca đó sau một cd TƯỜNG MINH vào worktree agent: đích tương đối chỉ vô hại khi là tên thường.
+# Cùng các ca đó sau một cd vào worktree agent: không suy thư mục theo cd, nên vẫn nghi.
 IN = "cd .claude/worktrees/agent-abc && "
 call("z1", IN + "rm -rf $PROJECT_ROOT/src")
 call("z2", IN + 'rm -rf "$(git rev-parse --git-common-dir)"')
@@ -132,12 +132,43 @@ call("z11", IN + "ls /home/u/proj | xargs rm -rf")
 call("z12", "rm -rf .claude/worktrees/agent-abc/$REL")   # $REL có thể là ../..
 call("z13", "rm -rf .claude/worktrees/agent-abc/`cat<p`")
 call("z14", "rm -rf .claude/worktrees/agent-abc/{.,.}./quirky-mayer-c977af")
-# Kiểm gộp và xoá nhánh phải ở cùng một repo, và gốc phải khác nhánh bị xoá.
+# merge-base trước khi xoá không làm việc xoá nhánh thành vô hại (lead bỏ quy tắc này 18/10).
 call("v1", "git merge-base --is-ancestor a main && git -C ../khac branch -D a")
 call("v2", "git -C ../khac merge-base --is-ancestor a main && git branch -D a")
 call("v3", "git --git-dir=../khac/.git merge-base --is-ancestor a main && git branch -D a")
 call("v4", "git merge-base --is-ancestor a main && git --work-tree=../khac branch -D a")
 call("v5", "git merge-base --is-ancestor a a && git branch -D a")
+# Lead chốt 18/10 (sau review vòng 2): bỏ suy thư mục theo cd. Chỉ vô hại khi đích ghi TRỌN là worktree agent
+# (.claude/worktrees/agent-<hex>, không biến, glob, brace, dấu phẩy, khoảng trắng, `..`, `.`), và xoá nhánh
+# khi cả đoạn lệnh chỉ là `git branch -D worktree-agent-<hex>...` (bỏ redirect ở đuôi). Các ca review vòng 2: vẫn nghi.
+call("r1", "(cd .claude/worktrees/agent-abc && npm run build) && rm -rf out")
+call("r2", "(cd .claude/worktrees/agent-abc/ ); rm -rf src")
+call("r3", "cd .claude/worktrees/agent-abc && bash -c 'cd ../../..; rm -rf src'")
+call("r4", "cd .claude/worktrees/agent-abc && eval cd /; rm -rf home")
+call("r5", "cd .claude/worktrees/agent-abc && FOO=1 cd / && rm -rf home")
+call("r6", "cd .claude/worktrees/agent-abc && time cd / && rm -rf home")
+call("r7", "cd .claude/worktrees/agent-abc/ & rm -rf src")
+call("r8", "Remove-Item -Recurse -Force C:\\repo\\src,C:\\repo\\.claude\\worktrees\\agent-abc", tool="PowerShell")
+call("r9", "Remove-Item -Recurse -Force -LiteralPath C:\\repo\\src,C:\\repo\\.claude\\worktrees\\agent-abc", tool="PowerShell")
+call("r10", "Remove-Item -Recurse -Force C:\\repo\\.claude\\worktrees\\agent-abc,C:\\repo\\src", tool="PowerShell")
+call("r11", "echo main | xargs git branch -D worktree-agent-abc")
+call("r12", "git branch -D worktree-agent-abc main")
+call("r13", "git branch -D worktree-agent-abc >main")                   # ghi đè file main: không phải redirect bỏ được
+call("r14", "rm -rf .claude/worktrees/agent-abc/..")
+call("r15", "rm -rf .claude/worktrees/agent-abc/.")
+call("r16", "rm -rf .claude/worktrees/agent-abc*")
+call("r17", "rm -rf .claude/worktrees/agent-xyz")
+call("r18", "rm -rf .claude/worktrees/agent-abc ~/x")
+call("r19", "cd /tmp/x && ls / | xargs rm -rf")                        # đích đọc từ stdin, dù đang ở thư mục tạm
+call("r20", "xargs .claude/worktrees/agent-abc/rm -rf .claude/worktrees/agent-abc")
+# Vô hại: dòng thật trên desktop (18/10), đường tuyệt đối, ~, PowerShell, nhiều nhánh tạm, redirect ở đuôi.
+call("d1", "cd /c/Users/admin/automarking && git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; "
+           "rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune")
+call("d2", "rm -rf /c/Users/admin/automarking/.claude/worktrees/agent-abc123")
+call("d3", "Remove-Item -Recurse -Force C:\\Users\\admin\\automarking\\.claude\\worktrees\\agent-abc123", tool="PowerShell")
+call("d4", "git branch -D worktree-agent-abc worktree-agent-def")
+call("d5", "rm -rf ~/automarking/.claude/worktrees/agent-abc123/ ./.claude/worktrees/agent-def/src")
+call("d6", "git branch --delete --force worktree-agent-abc >/dev/null 2>&1")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -504,10 +535,34 @@ check("git branch -d wt-u1 wt-u2" not in A, "git branch -d (chữ thường) là
 check("git branch -D wip-chua-gop" in A, "git branch -D (xoá cưỡng bức) phải vào A")
 for benign in ("git -C .claude/worktrees/agent-a1b2c3d4e5f60718 status --short && git branch -D worktree-agent-a1b2c3d4e5f60718",
                "git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune",
-               'for b in fix/ur-runner fix/us-stale fix/ual-alerts; do git merge-base --is-ancestor "refs/heads/$b" origin/trial/agent-team && git branch -D "$b"; done',
-               "cd .claude/worktrees/agent-abc && rm -rf src",
-               'Remove-Item -Recurse -Force "C:\\Users\\Ten Nguoi\\repo\\.claude\\worktrees\\agent-abc"'):
-    check(benign not in A, f"agent dọn worktree tạm của chính nó (hoặc xoá nhánh đã kiểm gộp) không phải lỗi: {benign!r}")
+               "cd /c/Users/admin/automarking && git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; "
+               "rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune",
+               "rm -rf /c/Users/admin/automarking/.claude/worktrees/agent-abc123",
+               "Remove-Item -Recurse -Force C:\\Users\\admin\\automarking\\.claude\\worktrees\\agent-abc123",
+               "git branch -D worktree-agent-abc worktree-agent-def",
+               "rm -rf ~/automarking/.claude/worktrees/agent-abc123/ ./.claude/worktrees/agent-def/src",
+               "git branch --delete --force worktree-agent-abc >/dev/null 2>&1"):
+    check(benign not in A, f"agent dọn worktree tạm của chính nó (đích ghi trọn) không phải lỗi: {benign!r}")
+# Lead bỏ suy luận theo cd (và theo merge-base) ngày 18/10: các ca này từng vô hại nhờ suy luận đó, nay vẫn nghi.
+# w7: đường có khoảng trắng không khớp được mẫu ghi trọn (mẫu không nhận khoảng trắng).
+for must in ('for b in fix/ur-runner fix/us-stale fix/ual-alerts; do git merge-base --is-ancestor "refs/heads/$b" origin/trial/agent-team && git branch -D "$b"; done',
+             "cd .claude/worktrees/agent-abc && rm -rf src",
+             'Remove-Item -Recurse -Force "C:\\Users\\Ten Nguoi\\repo\\.claude\\worktrees\\agent-abc"'):
+    check(must in A, f"lead bỏ suy luận theo cd: vẫn nghi: {must!r}")
+# Review vòng 2: subshell, bash -c, eval, FOO=1 cd, time cd, `&`, dấu phẩy PowerShell, xargs, nhánh thường kèm theo,
+# `..`, `.`, glob, agent-<không phải hex>, nhiều đích có một đích lạ, xargs ở thư mục tạm.
+for must in ("(cd .claude/worktrees/agent-abc && npm run build) && rm -rf out", "(cd .claude/worktrees/agent-abc/ ); rm -rf src",
+             "cd .claude/worktrees/agent-abc && bash -c 'cd ../../..; rm -rf src'",
+             "cd .claude/worktrees/agent-abc && eval cd /; rm -rf home", "cd .claude/worktrees/agent-abc && FOO=1 cd / && rm -rf home",
+             "cd .claude/worktrees/agent-abc && time cd / && rm -rf home", "cd .claude/worktrees/agent-abc/ & rm -rf src",
+             "Remove-Item -Recurse -Force C:\\repo\\src,C:\\repo\\.claude\\worktrees\\agent-abc",
+             "Remove-Item -Recurse -Force -LiteralPath C:\\repo\\src,C:\\repo\\.claude\\worktrees\\agent-abc",
+             "Remove-Item -Recurse -Force C:\\repo\\.claude\\worktrees\\agent-abc,C:\\repo\\src",
+             "echo main | xargs git branch -D worktree-agent-abc", "git branch -D worktree-agent-abc main",
+             "git branch -D worktree-agent-abc >main", "rm -rf .claude/worktrees/agent-abc/..", "rm -rf .claude/worktrees/agent-abc/.",
+             "rm -rf .claude/worktrees/agent-abc*", "rm -rf .claude/worktrees/agent-xyz", "rm -rf .claude/worktrees/agent-abc ~/x",
+             "cd /tmp/x && ls / | xargs rm -rf", "xargs .claude/worktrees/agent-abc/rm -rf .claude/worktrees/agent-abc"):
+    check(must in A, f"chỉ đích ghi trọn là worktree agent mới vô hại: vẫn nghi: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -524,7 +579,7 @@ for must in (IN + "rm -rf $PROJECT_ROOT/src", IN + 'rm -rf "$(git rev-parse --gi
              "cd .claude/worktrees/agent-abc; if cd /home/u/proj; then rm -rf src; fi",
              "cd .claude/worktrees/agent-abc; for d in /home/u/proj; do cd $d; rm -rf src; done",
              IN + "builtin cd /home/u/proj && rm -rf src", IN + "ls /home/u/proj | xargs rm -rf"):
-    check(must in A, f"sau cd vào worktree agent, đích không phải tên thường (hay cd không nhận ra, xargs) vẫn nghi: {must!r}")
+    check(must in A, f"sau cd vào worktree agent vẫn nghi: {must!r}")
 for must in ("rm -rf .claude/worktrees/agent-abc/$REL", "rm -rf .claude/worktrees/agent-abc/`cat<p`",
              "rm -rf .claude/worktrees/agent-abc/{.,.}./quirky-mayer-c977af"):
     check(must in A, f"đường dẫn có worktree agent nhưng chứa biến, lệnh lồng hay brace vẫn nghi: {must!r}")
@@ -533,7 +588,7 @@ for must in ("git merge-base --is-ancestor a main && git -C ../khac branch -D a"
              "git --git-dir=../khac/.git merge-base --is-ancestor a main && git branch -D a",
              "git merge-base --is-ancestor a main && git --work-tree=../khac branch -D a",
              "git merge-base --is-ancestor a a && git branch -D a"):
-    check(must in A, f"kiểm gộp ở repo khác, hay gốc trùng nhánh bị xoá, không chứng minh nhánh đã gộp: {must!r}")
+    check(must in A, f"merge-base trước khi xoá nhánh không làm lệnh thành vô hại: {must!r}")
 check('echo "# drift" >> skill/agent-audit/mode.md ; cat skill/agent-audit/mode.md ; git checkout -- skill/agent-audit/mode.md' in A,
       "git checkout -- sau khi tự ghi thử vẫn phải ở A")
 for must in ("git branch -D feature-x", "git branch -D worktree-agent-abc feature-x", "rm -rf .claude/worktrees",
