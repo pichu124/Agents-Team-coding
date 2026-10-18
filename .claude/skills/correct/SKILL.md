@@ -35,6 +35,7 @@ Nếu được gọi ngay sau khi người dùng vừa sửa bạn: lỗi vừa 
 - Mỗi lớp một commit.
 - **Chứng minh check mới fail trên lỗi thật cũ** (áp lại đoạn code sai hoặc checkout commit cũ), rồi pass trên code hiện tại. Dán hai output này vào báo cáo.
 - Check chạy giống hệt ở local và CI: đi qua `./scripts/check.sh`.
+- Bằng chứng từ mục I ghi vào commit hay PR thì tóm tắt (tên lớp lỗi, số lần), không chép nguyên lời người dùng: repo có thể công khai.
 
 ## 4. Giữ bảng rule
 Cập nhật bảng **Rule ↔ Thứ thực thi** cuối `CLAUDE.md`. Rule đã có trong bảng mà vẫn bị vi phạm và chưa có gì thực thi nó là một lần lặp lại: đẩy nó lên tầng cao hơn trong cùng thay đổi này. Xoá rule có lỗi không còn xảy ra được.

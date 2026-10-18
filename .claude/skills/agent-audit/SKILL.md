@@ -50,5 +50,7 @@ Tạo branch `fix/agent-audit-<YYYYMMDD>` từ branch hiện tại, commit, push
 - dòng "Thắt chặt" và dòng "Nới lỏng" tách riêng, để người duyệt biết chỗ nào cần đọc kỹ;
 - nhắc: file trong `.claude/hooks/` là bản chép từ bộ kit, nên đồng bộ bản sửa về repo kit.
 
+Không chép nguyên lời người dùng ở mục I vào mô tả PR hay commit, vì repo kit là repo công khai: chỉ ghi tên lớp lỗi và số lần.
+
 ## Trả lời
 Tóm tắt số mục từng loại, những gì đã sửa (kèm output đỏ rồi xanh), những gì để người quyết, và link PR nháp.

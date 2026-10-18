@@ -35,7 +35,11 @@ KIT_GUARD = Path(__file__).resolve().parent.parent / ".claude" / "hooks" / "guar
 REJECT_PREFIX = "The user doesn't want to proceed"
 REJECT_SAID = "the user said:"  # từ chối kèm lời: phần sau là lời bạn gõ
 INTERRUPT_PREFIX = "[Request interrupted by user"  # có biến thể "... for tool use]"
-COMMAND_TAG = re.compile(r"<command-(message|name)>")  # slash command; chuỗi khác mở bằng < là máy chèn
+COMMAND_TAG = re.compile(r"<command-(message|name)>")  # slash command: chữ dò lấy từ <command-args>
+# Ngữ cảnh máy chèn TRƯỚC lời bạn trong cùng tin (file đang mở trong IDE, system-reminder): bỏ đi, giữ phần sau.
+CONTEXT_PREFIX = re.compile(r"^(?:\s*<(ide_[\w-]+|system-reminder)>.*?</\1>)*\s*", re.DOTALL)
+# Tin mở bằng các thẻ này là máy ghi (lệnh ! và output, lệnh /local, báo task xong); mở bằng < khác là bạn dán vào.
+MACHINE_TAGS = ("<local-command-", "<bash-input>", "<bash-stdout>", "<bash-stderr>", "<task-notification>")
 # Báo cáo cuối của subagent (2.1.300+) đi qua tool này chứ không qua block text: dòng KẾT LUẬN nằm trong input.
 HANDBACK_TOOL = "SubagentHandback"
 VERDICT_RE = re.compile(r"KẾT LUẬN:\W*(PASS|FAIL|INCONCLUSIVE|KHÔNG CHẶN|CHẶN)\b")
@@ -43,7 +47,9 @@ VERDICT_RE = re.compile(r"KẾT LUẬN:\W*(PASS|FAIL|INCONCLUSIVE|KHÔNG CHẶN|
 # thường ("đúng không", "lỗi sai chính tả"). Chữ được chuẩn hoá NFC và gộp khoảng trắng trước khi so.
 CORRECTION_RE = re.compile(
     r"\b(sai rồi|bị sai|làm sai|vẫn sai|vẫn lỗi|vẫn còn lỗi|vẫn bị|lại lỗi|lại sai|chưa đúng|không đúng"
-    r"|không phải thế|không phải vậy|nhầm rồi|bạn nhầm|bạn quên|đã bảo|tôi bảo rồi|nói rồi mà|lần thứ hai"
+    r"|không phải thế|không phải vậy|nhầm rồi|bạn nhầm|bạn quên|đã bảo rồi|tôi đã bảo|đã bảo là|tôi bảo rồi|nói rồi mà"
+    r"|lần thứ hai|vẫn chưa được|vẫn không được|vẫn ko được|vẫn không chạy|vẫn chưa chạy"
+    r"|ko đúng|k đúng|ko phải thế|ko phải vậy"  # gõ tắt "ko"
     r"|sai roi|van loi|van sai|khong dung|chua dung|nham roi"  # gõ không dấu
     r"|wrong|incorrect|not what i|still (broken|failing|wrong)|you forgot|i told you)\b",
     re.IGNORECASE)
@@ -242,8 +248,8 @@ class Session:
         self.stop_releases = 0
         self.bad_lines = 0
         self.old_entries = 0
-        self.events = []       # mục I, J: dict {kind, ts, cwd, file, ...}
-        self.file_state = {}   # trong file đang đọc: agent đã trả lời chưa, tool gọi gần nhất, kết luận gần nhất
+        self.events = {}       # mục I, J: khoá khử trùng -> dict {kind, ts, cwd, file, ...}
+        self.file_state = {}   # trong file đang đọc: agent đã trả lời chưa, tool gọi gần nhất, kết luận gần nhất, dòng đang xét
 
 
 def agent_type(path):
@@ -295,7 +301,16 @@ def in_scope(cwd, only_under):
 def add_event(s, e, path, kind, **extra):
     if ts_of(e) is None:
         return  # không có giờ thì không xếp được vào tuần nào
-    s.events.append(dict(kind=kind, ts=e["timestamp"], cwd=e.get("cwd") or "", file=str(path), **extra))
+    st = s.file_state
+    if st.get("entry") is not e:
+        st["entry"], st["emitted"] = e, collections.Counter()
+    n = st["emitted"][kind]  # thứ tự trong dòng: một stop_hook_summary có thể có nhiều lần chặn
+    st["emitted"][kind] += 1
+    ev = dict(kind=kind, ts=e["timestamp"], cwd=e.get("cwd") or "", file=str(path), **extra)
+    key = (e["uuid"], kind, n) if e.get("uuid") else (kind, ev["ts"], ev["cwd"], tuple(sorted(extra.items())), n)
+    # Một dòng phiên có thể nằm ở nhiều file (bản chép khi worker khởi động lại hay resume, có khi ghi cwd mới):
+    # đếm một lần. Bản đọc sau ghi đè, như s.calls ở mục A–H, để cả báo cáo quy dòng đó về cùng một cwd.
+    s.events[key] = ev
 
 
 def clip(text, n=200):
@@ -329,21 +344,22 @@ def track_assistant(e, msg, s, fresh):
                 text = c["input"].get("message")
         found = VERDICT_RE.findall(unicodedata.normalize("NFC", text)) if fresh and isinstance(text, str) else []
         if found:
-            st["verdict"] = {"verdict": found[-1], "entry": {"timestamp": e.get("timestamp"), "cwd": e.get("cwd")}}
+            st["verdict"] = {"verdict": found[-1], "entry": {"timestamp": e.get("timestamp"), "cwd": e.get("cwd"), "uuid": e.get("uuid")}}
 
 
 def human_text(e, content):
-    """Chữ của một tin bạn gõ; None nếu do máy chèn (isMeta, tóm tắt compact, báo cáo subagent gửi về, ...)."""
+    """Chữ của một tin bạn gõ, đã bỏ ngữ cảnh máy chèn ở đầu từng block; None nếu cả tin do máy chèn (isMeta, tóm tắt compact, ...)."""
     if e.get("isMeta") or e.get("isCompactSummary") or e.get("isVisibleInTranscriptOnly"):
         return None
     origin = e.get("origin")  # bản cũ (Windows 2.1.296) không có origin: vẫn là tin người
     if isinstance(origin, dict) and origin.get("kind") != "human":
         return None
     if isinstance(content, str):
-        return content
+        return CONTEXT_PREFIX.sub("", content, count=1)
     if isinstance(content, list):
-        return "\n".join(c["text"] for c in content
-                         if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str))
+        parts = (CONTEXT_PREFIX.sub("", c["text"], count=1) for c in content
+                 if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str))
+        return "\n".join(p for p in parts if p)
     return None
 
 
@@ -367,15 +383,15 @@ def track_user(e, msg, s, path, who, only_under):
     if text.startswith(INTERRUPT_PREFIX):
         add_event(s, e, path, "interrupt", doing=st["doing"])
         return
-    if text.startswith("<"):
-        if not COMMAND_TAG.match(text):
-            return
+    if text.startswith(MACHINE_TAGS):
+        return
+    if COMMAND_TAG.match(text):
         m = re.search(r"<command-args>(.*?)</command-args>", text, re.DOTALL)
         text = m.group(1) if m else ""
     if who != "phiên chính":
         return  # tin "user" trong file subagent là lead gửi, không phải bạn gõ
-    add_event(s, e, path, "prompt")
     one = " ".join(text.split())
+    add_event(s, e, path, "prompt", text=clip(one))  # chữ để khử trùng dòng không có uuid
     if st["assistant"] and CORRECTION_RE.search(one):
         add_event(s, e, path, "correction", text=clip(one))
 
@@ -464,15 +480,22 @@ def repo_root(cwd):
 
 
 def project_name(cwd):
-    """Dự án của một sự kiện: thư mục repo chứa cwd. Cwd không có trên máy này (vd C:\\x\\y đọc trên Linux) thì tên thư mục cuối."""
+    """Dự án của một sự kiện: thư mục repo chứa cwd, worktree quy về repo chính. Cwd không có trên máy này
+    (vd C:\\x\\y đọc trên Linux) thì tên thư mục cuối."""
+    cwd = re.split(r"[\\/]\.claude[\\/]worktrees[\\/]", cwd or "", maxsplit=1)[0]  # worktree của Claude Code
     try:
         here = bool(cwd) and Path(cwd).is_absolute() and Path(cwd).exists()  # đường dẫn tương đối sẽ bị hiểu theo thư mục hiện tại
     except (OSError, ValueError):
         here = False
     r = repo_root(cwd) if here else None
     if r is not None:
-        return r.name
-    parts = [x for x in re.split(r"[\\/]+", cwd or "") if x]
+        try:  # worktree git: .git là file "gitdir: <repo chính>/.git/worktrees/<tên>" (đường dẫn có thể tương đối)
+            git = (r / ".git").read_text(encoding="utf-8", errors="replace") if (r / ".git").is_file() else ""
+        except OSError:
+            git = ""
+        m = re.match(r"gitdir:\s*(.+?)[\\/]\.git[\\/]worktrees[\\/]", git)
+        return (Path(os.path.normpath(r / m.group(1))).name if m else "") or r.name
+    parts = [x for x in re.split(r"[\\/]+", cwd) if x]
     return parts[-1] if parts else "(không rõ)"
 
 
@@ -692,9 +715,10 @@ def main():
             names[cwd] = project_name(cwd)  # repo_root dò hệ thống file: mỗi cwd một lần
         return names[cwd]
 
-    report["I_user_corrections"] = sorted((dict(ev, project=project(ev["cwd"])) for ev in s.events if ev["kind"] in FIX_KINDS),
+    events = list(s.events.values())
+    report["I_user_corrections"] = sorted((dict(ev, project=project(ev["cwd"])) for ev in events if ev["kind"] in FIX_KINDS),
                                           key=lambda ev: ts_of({"timestamp": ev["ts"]}))
-    report["weekly"] = weekly_rows(s.events, project)
+    report["weekly"] = weekly_rows(events, project)
     text = json.dumps(report, ensure_ascii=False, indent=2) if args.json else render(report)
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")

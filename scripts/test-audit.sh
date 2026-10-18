@@ -263,7 +263,91 @@ learn="$tmp/learn.json"
 learncode=$?
 learnmd="$(./scripts/audit-agent.sh --all --transcripts "$tmp/learn" --since 30 --no-replay)"
 
-"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" <<'PYEOF'
+# Ca reviewer tìm ra ở mục I/J. Mỗi ca một dự án riêng, để các dòng mục J không lẫn vào nhau.
+wtmain="$tmp/mainproj"
+git init -q -b main "$wtmain" && git -C "$wtmain" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m i
+git -C "$wtmain" worktree add -q --detach "$tmp/wt-elsewhere" && mkdir -p "$tmp/wt-elsewhere/pkg"
+git -C "$wtmain" worktree add -q --detach "$wtmain/.claude/worktrees/feat-c"
+"$py" - "$tmp/review" "$wtmain" "$tmp/wt-elsewhere" <<'PYEOF'
+import json, os, sys, time
+d, wtmain, elsewhere = sys.argv[1:4]
+T = int(time.time())
+NOW = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(T))
+HUMAN = {"kind": "human"}
+def write(name, rows):
+    os.makedirs(os.path.dirname(f"{d}/{name}"), exist_ok=True)
+    with open(f"{d}/{name}", "w", encoding="utf-8") as f:
+        for e in rows:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+def user(cwd, content, **kw):
+    return dict({"type": "user", "timestamp": NOW, "cwd": cwd, "message": {"role": "user", "content": content}}, **kw)
+def asst(cwd, *blocks, **kw):
+    return dict({"type": "assistant", "timestamp": NOW, "cwd": cwd, "message": {"role": "assistant", "content": list(blocks)}}, **kw)
+def text(s):
+    return {"type": "text", "text": s}
+# Tin gõ trong IDE: block ngữ cảnh máy chèn đứng trước lời bạn. Thẻ máy biết rõ thì bỏ cả tin; thẻ khác là bạn dán vào.
+IDE = "/khong-co-tren-may/ideproj"
+OPENED = "<ide_opened_file>The user opened the file /x/a.py in the IDE. This may or may not be related to the current task.</ide_opened_file>"
+write("ide.jsonl", [
+    user(IDE, "Sửa hàm parse", origin=HUMAN),
+    asst(IDE, text("Đã sửa.")),
+    user(IDE, [text(OPENED), text("sai rồi, đừng sửa file này")], origin=HUMAN),
+    user(IDE, "<system-reminder>\nNhắc: vẫn lỗi\n</system-reminder>\n<ide_selection>The user selected the lines 3 to 5 from /x/a.py:\nwrong\n</ide_selection>\n"
+              "bạn quên chạy test", origin=HUMAN),
+    user(IDE, [text(OPENED), text("<bash-input>git status sai rồi</bash-input>")], origin=HUMAN),
+    user(IDE, "<bash-stdout>sai rồi</bash-stdout><bash-stderr></bash-stderr>"),
+    user(IDE, "<bash-stderr>wrong</bash-stderr>"),
+    user(IDE, "<task-notification>\n<task-id>b1</task-id>\n<summary>vẫn lỗi</summary>\n</task-notification>"),
+    user(IDE, "<local-command-caveat>Caveat: sai rồi</local-command-caveat>"),
+    user(IDE, '<div class="err">Nút này vẫn sai màu</div> sửa giúp', origin=HUMAN),
+])
+# Một phiên có bản chép ở hai thư mục dự án (worker khởi động lại, resume): mỗi dòng chỉ được đếm một lần.
+DUP = "/khong-co-tren-may/dupproj"
+REJ = "The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said:\n  đừng push"
+BLOCK = "[\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh]: ./scripts/check.sh đang đỏ (exit 1), chưa được kết thúc lượt (lần chặn {}/3).\n"
+shared = [
+    user(DUP, "Làm việc Y", origin=HUMAN, uuid="d-u1"),
+    asst(DUP, {"type": "tool_use", "id": "dy1", "name": "Bash", "input": {"command": "git push origin feat/y"}}, uuid="d-a1"),
+    user(DUP, [{"type": "tool_result", "tool_use_id": "dy1", "is_error": True, "content": REJ}], uuid="d-u2"),
+    asst(DUP, text("Đã dừng."), uuid="d-a2"),
+    user(DUP, "vẫn sai, làm lại", origin=HUMAN, uuid="d-u3"),
+    user(DUP, [text("[Request interrupted by user]")], uuid="d-u4"),
+    {"type": "system", "subtype": "stop_hook_summary", "timestamp": NOW, "cwd": DUP, "uuid": "d-s1",
+     "hookInfos": [{"command": "stop-gate.sh", "durationMs": 10}], "hookErrors": [BLOCK.format(1), BLOCK.format(2)]},
+    user(DUP, "bạn nhầm rồi", origin=HUMAN),  # bản cũ không có uuid: khử trùng theo nội dung
+]
+write("-dup/s.jsonl", shared)
+write("-dup-dupproj/s.jsonl", shared + [user(DUP, "ok tiếp", origin=HUMAN, uuid="d-u5")])
+for proj in ("-dup", "-dup-dupproj"):
+    write(f"{proj}/s/subagents/agent-v.jsonl", [user(DUP, "Kiểm chứng việc Y", uuid="d-v0"),
+                                                asst(DUP, text("KẾT LUẬN: PASS"), uuid="d-v1")])
+    with open(f"{d}/{proj}/s/subagents/agent-v.meta.json", "w", encoding="utf-8") as f:
+        json.dump({"agentType": "verifier"}, f)
+# Bản chép khi worker khởi động lại ghi cwd mới vào dòng cũ: I/J phải quy dòng đó về cùng cwd mà mục G dùng.
+def copy_at(cwd):
+    return [user(cwd, "Làm việc W", origin=HUMAN, uuid="w-u1"),
+            asst(cwd, {"type": "tool_use", "id": "wr1", "name": "Bash", "input": {"command": "git push origin feat/w"}}, uuid="w-a1"),
+            user(cwd, [{"type": "tool_result", "tool_use_id": "wr1", "is_error": True, "content": REJ + " w"}], uuid="w-u2")]
+write("-wr/s.jsonl", copy_at("/khong-co-tren-may/wrcopy"))
+write("-wr-wrorig/s.jsonl", copy_at("/khong-co-tren-may/wrorig"))
+# Câu sửa: "bảo vệ" không phải "đã bảo"; người dùng hay gõ "ko".
+RX = "/khong-co-tren-may/rxproj"
+write("rx.jsonl", [
+    user(RX, "Thêm guard cho push", origin=HUMAN),
+    asst(RX, text("Đã thêm.")),
+    user(RX, "guard đã bảo vệ nhánh main chưa?", origin=HUMAN),
+    user(RX, "ko đúng, vẫn chưa được", origin=HUMAN),
+    user(RX, "đã bảo là chạy test trước", origin=HUMAN),
+])
+# Worktree quy về repo chính: theo đường dẫn .claude/worktrees (cả máy khác), hoặc theo file .git của worktree có trên máy.
+write("wt.jsonl", [user(cwd, "Làm việc trong worktree", origin=HUMAN) for cwd in (
+    "C:\\Users\\Ten Nguoi\\wtproj\\.claude\\worktrees\\feat-a", "/khong-co-tren-may/wtproj/.claude/worktrees/feat-b/src",
+    os.path.join(elsewhere, "pkg"), os.path.join(wtmain, ".claude", "worktrees", "feat-c"))])
+PYEOF
+review="$tmp/review.json"
+./scripts/audit-agent.sh --transcripts "$tmp/review" --since 30 --no-replay --json > "$review"
+
+"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" <<'PYEOF'
 import importlib.util, json, os, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 code, nofile, md = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
@@ -390,6 +474,32 @@ for want in (f"| {ex['w1']} | learnrepo | 3 | 1 (0/1/0) | 3.3 | 1 | 0/0/0 | 0/0 
     check(want in lmd, f"J thiếu dòng: {want}")
 check(-1 < lmd.find(f"| {ex['w1']} |") < lmd.find(f"| {ex['w2']} |"), "J: tuần cũ phải đứng trước")
 check("## J." in sys.argv[8] and "Chưa có dữ liệu." in sys.argv[8].split("## J.")[-1], "J không có sự kiện nào thì in 'Chưa có dữ liệu.'")
+# Ca reviewer tìm ra ở mục I/J: mỗi ca một dự án.
+rv = json.load(open(sys.argv[13], encoding="utf-8"))
+RW = {w.get("project"): w for w in rv.get("weekly") or []}
+said = lambda proj: sorted(i.get("text") for i in rv.get("I_user_corrections") or [] if i.get("kind") == "correction" and i.get("project") == proj)
+w = RW.get("ideproj") or {}
+check(w.get("prompts") == 4, f"tin gõ trong IDE (ngữ cảnh máy chèn đứng trước) và HTML dán vào vẫn là lượt hỏi; bash/task/local-command thì không: {w}")
+check(said("ideproj") == sorted(["sai rồi, đừng sửa file này", "bạn quên chạy test", '<div class="err">Nút này vẫn sai màu</div> sửa giúp']),
+      f"câu sửa trong tin IDE: bỏ ngữ cảnh máy chèn, giữ lời bạn: {said('ideproj')}")
+def rrow(proj, why, **want):
+    got = RW.get(proj) or {}
+    bad = {k: (got.get(k), v) for k, v in dict(ZERO, **want).items() if got.get(k) != v}
+    check(not bad, f"J dòng {proj} ({why}): (được, cần) {bad}")
+rrow("dupproj", "dòng có mặt ở hai file phiên, chung uuid hoặc trùng nội dung khi không có uuid, chỉ đếm một lần",
+     prompts=4, interrupt=1, reject_note=1, correction=2, fixes=4, fixes_per_10=10.0, stop_blocks=2, verifier_pass=1)
+dupI = collections.Counter((i.get("kind"), i.get("text")) for i in rv.get("I_user_corrections") or [] if i.get("project") == "dupproj")
+check(dupI == {("reject_note", "đừng push"): 1, ("interrupt", None): 1, ("correction", "vẫn sai, làm lại"): 1, ("correction", "bạn nhầm rồi"): 1},
+      f"I: mỗi lần sửa một dòng dù phiên có hai bản chép: {dict(dupI)}")
+g = [i.get("cwd") for i in rv.get("G_rejected_not_asked") or [] if i.get("command") == "git push origin feat/w"]
+wr = [(i.get("kind"), i.get("cwd")) for i in rv.get("I_user_corrections") or [] if i.get("text") == "đừng push w"]
+wrJ = sorted((w.get("project"), w.get("prompts"), w.get("reject_note")) for w in rv.get("weekly") or [] if w.get("project", "").startswith("wr"))
+check(len(g) == 1 and wr == [("reject_note", g[0])] and wrJ == [(g[0].rsplit("/", 1)[-1], 1, 1)],
+      f"hai bản chép khác cwd: I/J đếm một lần và quy về cùng cwd với mục G: G {g}, I {wr}, J {wrJ}")
+check(said("rxproj") == sorted(["ko đúng, vẫn chưa được", "đã bảo là chạy test trước"]),
+      f"câu sửa: 'đã bảo vệ' không khớp, 'ko đúng'/'vẫn chưa được' có khớp: {said('rxproj')}")
+wt = sorted((p, w.get("prompts")) for p, w in RW.items() if p in ("wtproj", "mainproj", "feat-a", "src", "pkg", "wt-elsewhere", "feat-c"))
+check(wt == [("mainproj", 2), ("wtproj", 2)], f"J: worktree (.claude/worktrees, hoặc .git là file trỏ về repo chính) quy về repo chính: {wt}")
 for f in fails:
     print("✘", f, file=sys.stderr)
 if fails:
