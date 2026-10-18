@@ -15,7 +15,7 @@ Chạy bằng Bash tool (trên Windows là Git Bash). Đường dẫn dưới đ
 ```bash
 bash "${CLAUDE_SKILL_DIR}/../../../scripts/audit-agent.sh" --all --since <số ngày> --out "${TMPDIR:-/tmp}/agent-audit.md"
 ```
-`--all` soát mọi dự án trên máy, mỗi dòng ghi thư mục của lệnh; bỏ `--all` thì chỉ soát dự án hiện tại. Biến `${CLAUDE_SKILL_DIR}` không được thay (bản Claude Code cũ) thì dùng `./scripts/audit-agent.sh` của dự án, hoặc `~/.claude/plugins/cache/agents-team-coding/agent-team/*/scripts/audit-agent.sh`. Đọc báo cáo. Exit 2 nghĩa là không thấy file phiên: thử `--transcripts <thư mục>` (file phiên nằm ở `~/.claude/projects/<tên thư mục dự án, ký tự đặc biệt thành ->/`). Không có gì ở mục A, B, H, F và Stop gate bình thường thì báo "không có sự cố" và dừng.
+`--all` soát mọi dự án trên máy, mỗi dòng ghi thư mục của lệnh; bỏ `--all` thì chỉ soát dự án hiện tại. Biến `${CLAUDE_SKILL_DIR}` không được thay (bản Claude Code cũ) thì dùng `./scripts/audit-agent.sh` của dự án, hoặc `~/.claude/plugins/cache/agents-team-coding/agent-team/*/scripts/audit-agent.sh`. Đọc báo cáo. Exit 2 nghĩa là không thấy file phiên: thử `--transcripts <thư mục>` (file phiên nằm ở `~/.claude/projects/<tên thư mục dự án, ký tự đặc biệt thành ->/`). Không có gì ở mục A, B, H, F và Stop gate bình thường thì tóm tắt mục I và J (xem bảng ở bước 2), báo "không có sự cố" và dừng.
 
 ## 2. Phân loại từng mục, theo thứ tự ưu tiên
 | Mục | Làm gì |
@@ -27,6 +27,8 @@ bash "${CLAUDE_SKILL_DIR}/../../../scripts/audit-agent.sh" --all --since <số n
 | **F. Lỗi hook** | Tái hiện bằng cách chạy hook với input tương tự, rồi sửa nguyên nhân gốc (CRLF, quyền chạy, Python, đường dẫn...). |
 | **E. Stop gate** | Chặn nhiều lần hoặc "nhả sau N lần": tìm vì sao check đỏ. Quá chậm (trung vị trên 5 phút): chỉ đề xuất cách làm nhanh, **không** nới Stop gate. |
 | **C. Hỏi rồi bạn duyệt** | Chỉ là **ứng viên** hỏi thừa. Lặp lại nhiều lần với cùng một kiểu lệnh rõ ràng vô hại thì mới đề xuất nới. |
+| **I. Bạn phải sửa agent** | Không sửa trong skill này, vì đây không phải lỗi guard hay hook. Gom thành lớp; lớp có từ 2 dòng trở lên thì ghi vào phần trả lời `đề xuất /correct: <lớp>`, kèm các dòng làm bằng chứng. |
+| **J. Chỉ số theo tuần** | Chỉ để xem xu hướng. Trả lời nêu con số tuần này so với tuần trước. |
 
 ## 3. Sửa theo playbook bug-fix, mỗi lỗi một commit
 Sửa ở đâu: lệnh nằm trong dự án tự cài kit (có `.claude/hooks/guard-irreversible.sh` riêng) thì sửa trong dự án đó. Lệnh nằm trong dự án không cài kit (guard đến từ plugin `agent-team`) thì bản sửa thuộc repo kit `pichu124/Agents-Team-coding`: clone vào thư mục tạm và làm các bước dưới trong bản clone.

@@ -246,7 +246,7 @@ Chạy sau vài phiên làm việc, khi bạn đã phải sửa agent cùng mộ
 | Stop gate | Agent không báo xong khi `check.sh` còn đỏ |
 | Guard | Claude Code hỏi trước force-push hoặc merge |
 | Thời gian chờ | Check khoảng 1,5 phút mỗi lượt có sửa code là chấp nhận được. Nếu không, xem mục 10 |
-| Số lần bạn phải sửa agent | Ghi lại để chạy `/correct` |
+| Số lần bạn phải sửa agent | Mục J của báo cáo audit đếm sẵn (sửa trên 10 lượt, theo tuần); lớp lặp từ 2 lần thì chạy `/correct` |
 
 ## 9. Gỡ bỏ, hoặc đưa vào `main`
 
@@ -292,11 +292,13 @@ Claude Code lưu mỗi phiên ở `~/.claude/projects/<thư mục dự án>/*.js
 & $bash scripts/audit-agent.sh --since 7 --out bao-cao.md
 & $bash scripts/audit-agent.sh --all --since 1   # mọi dự án trên máy (khi đã cài plugin, docs/05)
 ```
-Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bị từ chối mà guard không hỏi (ghi rõ bạn từ chối hay auto mode/luật deny chặn); **E** Stop gate; **F** lỗi hook. Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
+Báo cáo có các mục: **A** lệnh nghi nguy hiểm đã chạy mà guard không hỏi; **B** hồi quy (trước hỏi, nay cho qua); **H** lệnh nguy hiểm đã chạy lúc guard không hoạt động (chưa nạp, thư mục chưa trust, hook lỗi) mà bản hiện tại có hỏi; **C** guard hỏi và bạn duyệt (ứng viên hỏi thừa); **D** guard hỏi và bạn từ chối; **G** bị từ chối mà guard không hỏi (ghi rõ bạn từ chối hay auto mode/luật deny chặn); **E** Stop gate; **F** lỗi hook; **I** lần bạn phải sửa agent (ngắt agent, từ chối kèm lời nhắn, gõ câu sửa như "sai rồi"); **J** chỉ số theo tuần của từng dự án (số lần sửa trên 10 lượt, Stop gate, kết luận verifier, reviewer chặn). Mẫu nghi ngờ riêng của dự án đặt trong `.claude/audit-watch.txt`, mỗi dòng `regex<TAB>nhãn`.
 
 `/agent-audit [số ngày]` trong Claude chạy báo cáo đó rồi xử lý từng mục theo playbook bug-fix: viết ca test đỏ, sửa guard, check xanh, `reviewer` soát, mở **PR nháp**. Bạn đọc PR và merge. Hai chốt chặn để agent không tự nới guard:
 - `scripts/guard-ask-floor`: số ca "phải hỏi" trong test chỉ được tăng. Bớt ca thì test đỏ, trừ khi sửa cả file sàn, và thay đổi đó hiện rõ trong PR.
 - Thay đổi nới lỏng (bớt hỏi) phải nằm ở commit riêng tên `guard: NỚI LỎNG …`.
+
+Mục I và J thì `/agent-audit` không sửa: lớp lỗi ở mục I lặp từ 2 lần thì nó đề xuất `/correct`.
 
 Nhịp chạy hằng ngày: xem [mục 12](#12-việc-hằng-ngày-trong-đợt-thử).
 
@@ -321,5 +323,7 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
 | Cuối buổi | Dò sự cố của ngày, mọi dự án trên máy | `& $bash scripts/audit-agent.sh --all --since 1` |
 | Có dòng ở A, B, H hoặc F | Để agent tự sửa, hoặc gửi người hỗ trợ | `/agent-audit 1`, hoặc dán báo cáo |
 | Chỉ có C, D, E | Xem lướt | Báo khi C lặp với lệnh vô hại, hoặc E có lần chặn hay trung vị trên 5 phút |
+| Mục I có lớp lỗi lặp từ 2 lần | Đọc các dòng, mã hoá bài học vào cấu trúc | `/correct` |
+| Cuối tuần | Xem xu hướng ở mục J: số lần sửa trên 10 lượt có giảm không | `& $bash scripts/audit-agent.sh --all --since 28` |
 
 Ghi một dòng mỗi ngày (máy, số việc đã giao, sự cố nếu có) để chấm điểm ở mục 8.

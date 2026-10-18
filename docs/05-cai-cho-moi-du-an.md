@@ -68,7 +68,7 @@ claude plugin uninstall agent-team@agents-team-coding   # gỡ hẳn
 cd C:\vnstock-trial
 & $bash scripts/audit-agent.sh --all --since 1
 ```
-Hoặc trong Claude, ở bất kỳ dự án nào, gõ `/agent-team:agent-audit 1`. Skill này lập cùng báo cáo đó. Nếu mục A, B, H hoặc F có dòng, nó viết test, sửa, rồi mở PR nháp. Lỗi nằm ở dự án chưa cài kit thì bản sửa thuộc repo kit này.
+Hoặc trong Claude, ở bất kỳ dự án nào, gõ `/agent-team:agent-audit 1`. Skill này lập cùng báo cáo đó. Nếu mục A, B, H hoặc F có dòng, nó viết test, sửa, rồi mở PR nháp. Lỗi nằm ở dự án chưa cài kit thì bản sửa thuộc repo kit này. Mục I (những lần bạn phải sửa agent) và J (chỉ số theo tuần) thì nó không sửa: lớp lỗi ở mục I lặp từ 2 lần thì nó đề xuất `/agent-team:correct`.
 
 Mục H sẽ có nhiều dòng nếu `--since` lùi về trước ngày cài plugin: lúc đó các dự án khác chưa có guard. Sau khi cài, dùng `--since 1`.
 

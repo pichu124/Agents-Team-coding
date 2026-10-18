@@ -56,7 +56,7 @@ Vì sao lại là các vai này:
 6. **Kiểm chứng độc lập.** Verifier mới chạy app thật theo skill `verify-<app>` của dự án và trả về PASS / FAIL / INCONCLUSIVE kèm bằng chứng.
 7. **Review đối kháng.** Reviewer đọc diff kèm hợp đồng, chỉ báo lỗi correctness hoặc thiếu yêu cầu.
 8. **Bàn giao.** Commit nhỏ, có thứ tự. PR kèm bằng chứng. Báo cáo cho bạn theo format cố định: kết quả, bằng chứng, điều chưa kiểm chứng, quyết định cần bạn.
-9. **Học.** Nếu bạn phải sửa cùng một lỗi lần thứ hai, chạy `/correct` để mã hoá bài học vào cấu trúc.
+9. **Học.** Nếu bạn phải sửa cùng một lỗi lần thứ hai, chạy `/correct` để mã hoá bài học vào cấu trúc. Bạn tìm ra bug trong việc đội đã báo xong là **lỗi lọt lưới**: đội sửa cả cổng kiểm (thêm hành trình tái hiện vào feature map của `verify-<app>`, ghi "Vì sao lọt"), không chỉ sửa bug. Mục I của `scripts/audit-agent.sh` liệt kê những lần bạn phải sửa agent, là nguồn đầu tiên của `/correct`.
 
 ## 4. Subagents hay agent teams?
 

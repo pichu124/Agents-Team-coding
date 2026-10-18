@@ -40,7 +40,7 @@ scripts/
   validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell (chỉ file của kit)
   test-hooks.sh                   test hành vi của 3 hook
   guard-ask-floor                 sàn số ca "phải hỏi" của guard: được tăng, không được giảm
-  audit-agent.sh / .py            dò sự cố từ file phiên Claude Code (chỉ đọc)
+  audit-agent.sh / .py            dò sự cố, lần bạn phải sửa agent, chỉ số tuần từ file phiên Claude Code (chỉ đọc)
   test-audit.sh                   test của script dò sự cố
   test-plugin.sh                  test của bản plugin (nhường hook cho dự án đã cài kit)
   install-kit.sh                  cài kit vào một repo khác bằng một lệnh
