@@ -161,6 +161,18 @@ call("r17", "rm -rf .claude/worktrees/agent-xyz")
 call("r18", "rm -rf .claude/worktrees/agent-abc ~/x")
 call("r19", "cd /tmp/x && ls / | xargs rm -rf")                        # đích đọc từ stdin, dù đang ở thư mục tạm
 call("r20", "xargs .claude/worktrees/agent-abc/rm -rf .claude/worktrees/agent-abc")
+# Review vòng 3: với bash, `\` là ký tự thoát chứ không phải dấu phân cách. `\` cuối đích nối đích với phần sau nó (dòng kế,
+# `; x`, `| x`), `\` sau agent-<hex> dán tên kế tiếp vào thành thư mục khác nằm cạnh. Biến (gán tạm `D=x lệnh` không đổi
+# biến của shell), IFS, `-Tên:giá-trị` của PowerShell: đích thật khác đích ghi. Các ca này vẫn nghi.
+call("e1", "rm -rf .claude/worktrees/agent-abc\\\n  src")                 # bash xoá cả ./src
+call("e2", "rm -rf .claude/worktrees/agent-abc\\; /home")
+call("e3", "rm -rf .claude/worktrees/agent-abc\\| /home")
+call("e4", "rm -rf .claude/worktrees/agent-abc/sub\\\n /home/u/proj")
+call("e5", "rm -rf .claude/worktrees/agent-abc\\-old")                     # bash xoá .claude/worktrees/agent-abc-old
+call("e6", "X=.claude/worktrees/agent-abc/home; IFS=c; rm -rf $X")         # tách thành . laude/worktrees/agent-ab /home
+call("e7", "IFS=c; rm -rf .claude/worktrees/agent-abc/home")               # báo thừa có chủ ý: canh kiểm IFS độc lập với kiểm $
+call("e8", "Remove-Item -Path:C:\\proj\\* -Recurse -Force -Exclude C:\\proj\\.claude\\worktrees\\agent-abc", tool="PowerShell")
+call("e9", "D=/; D=.claude/worktrees/agent-abc true; rm -rf $D")           # bash xoá /
 # Vô hại: dòng thật trên desktop (18/10), đường tuyệt đối, ~, PowerShell, nhiều nhánh tạm, redirect ở đuôi.
 call("d1", "cd /c/Users/admin/automarking && git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; "
            "rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune")
@@ -563,6 +575,13 @@ for must in ("(cd .claude/worktrees/agent-abc && npm run build) && rm -rf out", 
              "rm -rf .claude/worktrees/agent-abc*", "rm -rf .claude/worktrees/agent-xyz", "rm -rf .claude/worktrees/agent-abc ~/x",
              "cd /tmp/x && ls / | xargs rm -rf", "xargs .claude/worktrees/agent-abc/rm -rf .claude/worktrees/agent-abc"):
     check(must in A, f"chỉ đích ghi trọn là worktree agent mới vô hại: vẫn nghi: {must!r}")
+for must in ("rm -rf .claude/worktrees/agent-abc\\\n  src", "rm -rf .claude/worktrees/agent-abc\\; /home",
+             "rm -rf .claude/worktrees/agent-abc\\| /home", "rm -rf .claude/worktrees/agent-abc/sub\\\n /home/u/proj",
+             "rm -rf .claude/worktrees/agent-abc\\-old",
+             "X=.claude/worktrees/agent-abc/home; IFS=c; rm -rf $X", "IFS=c; rm -rf .claude/worktrees/agent-abc/home",
+             "Remove-Item -Path:C:\\proj\\* -Recurse -Force -Exclude C:\\proj\\.claude\\worktrees\\agent-abc",
+             "D=/; D=.claude/worktrees/agent-abc true; rm -rf $D"):
+    check(must in A, f"`\\` của bash, biến, IFS hay -Tên:giá-trị làm đích thật khác đích ghi: vẫn nghi: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd

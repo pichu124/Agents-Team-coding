@@ -120,9 +120,12 @@ BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", "
 CMD_FLAG = re.compile(r"^/[a-z]$", re.IGNORECASE)
 # Subagent dọn worktree tạm của chính nó. Vô hại chỉ khi đích ghi TRỌN là .claude/worktrees/agent-<hex>[/...] (chỉ chữ,
 # số, _./\:~-: không biến, glob, brace, dấu phẩy, khoảng trắng), hay cả đoạn lệnh chỉ xoá nhánh worktree-agent-<hex>.
+# Sau agent-<hex> chỉ nhận `/`: với bash `\` là ký tự thoát, `agent-abc\` nối đích với dòng kế (hay `; x`, `| x`) và
+# `agent-abc\-old` là thư mục khác nằm cạnh. Đường Windows có `\` sau agent-<hex> vì thế bị báo thừa.
 # Không dùng thư mục suy theo cd: shell có quá nhiều đường thoát (subshell, bash -c, eval, `&`...).
 AGENT_WORKTREE = re.compile(r"^(?:[A-Za-z]:)?[A-Za-z0-9_./\\:~-]*?[\\/]?\.claude[\\/]worktrees[\\/]agent-[0-9a-f]+"
-                            r"((?:[\\/][A-Za-z0-9_.-]+)*)[\\/]?$")
+                            r"((?:/[A-Za-z0-9_.-]+)*)/?$")
+PS_NAMED = re.compile(r"^-[\w-]+:")  # -Path:C:\x của PowerShell: đích nằm trong một token trông như cờ
 AGENT_BRANCH_DELETE = re.compile(r"^git\s+branch\s+(?:-D|--delete\s+--force|-d\s+(?:-f|--force)|-f\s+-d)"
                                  r"(?:\s+worktree-agent-[0-9a-f]+)+$")
 TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >/dev/null... ở cuối đoạn lệnh
@@ -145,7 +148,7 @@ def keep_shell_heredocs(cmd):
 
 
 def segments(cmd, tool="Bash"):
-    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất).
+    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
     giữ nguyên để biết đích thật. Biến gán trong lệnh (S=/tmp/x; rm -rf $S) được thay theo thứ tự.
@@ -165,7 +168,8 @@ def segments(cmd, tool="Bash"):
         seg = seg.strip()
         if not seg:
             continue
-        full = expand(re.sub(r"\0(\d+)\0", lambda m: store[int(m.group(1))], seg), env)
+        raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m.group(1))], seg)
+        full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
@@ -178,7 +182,7 @@ def segments(cmd, tool="Bash"):
             ctx = target if is_absolute(target) else (ctx + "/" + target)
         elif full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
             ctx = ""  # cd không tham số, cd -, popd, subshell: không còn biết thư mục
-        out.append((plain, full, ctx))
+        out.append((plain, full, ctx, "$" in raw))
     return out
 
 
@@ -207,7 +211,8 @@ def agent_worktree(p):
     return bool(m) and "." not in re.split(r"[\\/]", m.group(1))
 
 
-def benign_delete(full, ctx):
+def benign_delete(full, ctx, worktree=True):
+    """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi)."""
     toks = [t.strip("\"'") for t in TOKEN.findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
@@ -217,10 +222,11 @@ def benign_delete(full, ctx):
     targets = [t for t in toks[1:] if t and not t.startswith("-") and not (cmd_style and CMD_FLAG.match(t))]
     if not targets:
         return False
+    worktree = worktree and not any(PS_NAMED.match(t) for t in toks)
     for t in targets:
         if ".." in re.split(r"[\\/]+", t):
             return False
-        if benign_path(t) or agent_worktree(t):
+        if benign_path(t) or (worktree and agent_worktree(t)):
             continue
         rel = not is_absolute(t)
         if rel and ctx and benign_path(ctx):
@@ -231,11 +237,13 @@ def benign_delete(full, ctx):
 
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
-    for plain, full, ctx in segments(cmd, tool):
+    ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+    for plain, full, ctx, subst in segments(cmd, tool):
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
-            if label == "xoá đệ quy" and benign_delete(full, ctx):
+            # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
+            if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs)):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
                 continue
