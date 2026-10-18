@@ -213,8 +213,10 @@ write("w2.jsonl", [
     result(T2, sub, "b1", "ok"),
     asst(T2, sub, tool("b2", "Bash", {"command": "git push origin feat/x"})),
     result(T2, sub, "b2", REJ + " STOP what you are doing and wait for the user to tell you how to proceed.", err=True),  # không kèm lời
-    user(T2, sub, [text("[Request interrupted by user for tool use]")]),
+    user(T2, sub, [text("[Request interrupted by user for tool use]")]),  # dấu của lần từ chối trên: không phải ngắt
     user(T2, sub, [text("vẫn lỗi khi\nchạy   check")], origin=HUMAN),
+    asst(T2, sub, text("Đang xem lại")),
+    user(T2, sub, [text("[Request interrupted by user]")], uuid="w2-esc"),  # Esc lúc model đang viết: ngắt thật
     user(T2, sub, "Stop hook feedback:\nsai rồi", isMeta=True),
     user(T2, sub, "This session is being continued... sai rồi", isCompactSummary=True, isVisibleInTranscriptOnly=True),
     user(T2, sub, "Another Claude session sent a message: vẫn lỗi", origin={"kind": "peer", "name": "reviewer"}),
@@ -342,6 +344,31 @@ write("rx.jsonl", [
     user(RX, "ko đúng, vẫn chưa được", origin=HUMAN),
     user(RX, "đã bảo là chạy test trước", origin=HUMAN),
 ])
+# Bấm "No" ở hộp xin phép: tool_result từ chối rồi NGAY SAU là dấu ngắt, chép từ file phiên thật (2.1.300, 15/10).
+# Dấu đó thuộc về lần từ chối (đã đếm ở D/G), không phải một lần ngắt. Esc lúc model đang viết thì vẫn là ngắt.
+REAL_REJ = ("The user doesn't want to proceed with this tool use. The tool use was rejected "
+            "(eg. if it was a file edit, the new_string was NOT written to the file).")
+def asked_no(cwd, n, cmd, tail):
+    return [asst(cwd, {"type": "tool_use", "id": n + "-t", "name": "Bash", "input": {"command": cmd}}, uuid=n + "-a"),
+            user(cwd, [{"type": "tool_result", "content": REAL_REJ + tail, "is_error": True, "tool_use_id": n + "-t"}],
+                 uuid=n + "-r", parentUuid=n + "-a", toolUseResult="User rejected tool use", toolDenialKind="user-rejected",
+                 sourceToolAssistantUUID=n + "-a"),
+            user(cwd, [text("[Request interrupted by user for tool use]")], uuid=n + "-i", parentUuid=n + "-r")]
+STOP = " STOP what you are doing and wait for the user to tell you how to proceed."
+RJ, ESC, RJN = "/khong-co-tren-may/rjproj", "/khong-co-tren-may/escproj", "/khong-co-tren-may/rjnoteproj"
+write("rj.jsonl", [user(RJ, "Đẩy nhánh trial lên", origin=HUMAN, uuid="rj-p")]
+      + asked_no(RJ, "rj1", "git push --force origin trial/agent-team", STOP)
+      + [user(RJ, "Thử guard", origin=HUMAN, uuid="rj-p2")]
+      + asked_no(RJ, "rj2", "git push --force origin khong-co-nhanh-nay", STOP))
+write("esc.jsonl", [
+    user(ESC, "Viết README", origin=HUMAN, uuid="esc-p"),
+    asst(ESC, {"type": "tool_use", "id": "esc-t", "name": "Bash", "input": {"command": "ls docs"}}, uuid="esc-a"),
+    user(ESC, [{"type": "tool_result", "content": "a.md", "is_error": False, "tool_use_id": "esc-t"}], uuid="esc-r"),
+    asst(ESC, text("Đang viết README"), uuid="esc-a2"),
+    user(ESC, [text("[Request interrupted by user]")], uuid="esc-i"),
+])
+write("rjn.jsonl", [user(RJN, "Đẩy nhánh", origin=HUMAN, uuid="rjn-p")]
+      + asked_no(RJN, "rjn1", "git push origin main", " To tell you how to proceed, the user said:\n  đẩy lên nhánh feat thôi"))
 # Worktree quy về repo chính: theo đường dẫn .claude/worktrees (cả máy khác), hoặc theo file .git của worktree có trên máy.
 write("wt.jsonl", [user(cwd, "Làm việc trong worktree", origin=HUMAN) for cwd in (
     "C:\\Users\\Ten Nguoi\\wtproj\\.claude\\worktrees\\feat-a", "/khong-co-tren-may/wtproj/.claude/worktrees/feat-b/src",
@@ -501,6 +528,18 @@ check(len(g) == 1 and wr == [("reject_note", g[0])] and wrJ == [(g[0].rsplit("/"
       f"hai bản chép khác cwd: I/J đếm một lần và quy về cùng cwd với mục G: G {g}, I {wr}, J {wrJ}")
 check(said("rxproj") == sorted(["ko đúng, vẫn chưa được", "đã bảo là chạy test trước"]),
       f"câu sửa: 'đã bảo vệ/bảo mật', 'vẫn chưa được merge' không khớp, 'ko đúng' có khớp: {said('rxproj')}")
+fixes_of = lambda proj: [i for i in rv.get("I_user_corrections") or [] if i.get("project") == proj]
+check(fixes_of("rjproj") == [], f"bấm No ở hộp hỏi: dấu ngắt đi ngay sau lần từ chối không phải ngắt: {fixes_of('rjproj')}")
+rrow("rjproj", "từ chối không kèm lời không vào mục I", prompts=2, fixes_per_10=0.0)
+rjG = sorted((i.get("command"), i.get("rejected_by")) for i in rv.get("G_rejected_not_asked") or [] if i.get("cwd") == "/khong-co-tren-may/rjproj")
+check(rjG == [("git push --force origin khong-co-nhanh-nay", "người"), ("git push --force origin trial/agent-team", "người")],
+      f"lần từ chối vẫn được đếm ở mục G: {rjG}")
+esc = [(i.get("kind"), i.get("doing")) for i in fixes_of("escproj")]
+check(esc == [("interrupt", "Bash: ls docs")], f"Esc lúc model đang viết, không có từ chối: 1 ngắt: {esc}")
+rrow("escproj", "Esc lúc model đang viết", prompts=1, interrupt=1, fixes=1, fixes_per_10=10.0)
+rjn = [(i.get("kind"), i.get("text")) for i in fixes_of("rjnoteproj")]
+check(rjn == [("reject_note", "đẩy lên nhánh feat thôi")], f"từ chối kèm lời rồi dấu ngắt: 1 từ chối kèm lời, 0 ngắt: {rjn}")
+rrow("rjnoteproj", "từ chối kèm lời rồi dấu ngắt", prompts=1, reject_note=1, fixes=1, fixes_per_10=10.0)
 wt = sorted((p, w.get("prompts")) for p, w in RW.items() if p in ("wtproj", "mainproj", "feat-a", "src", "pkg", "wt-elsewhere", "feat-c"))
 check(wt == [("mainproj", 2), ("wtproj", 2)], f"J: worktree (.claude/worktrees, hoặc .git là file trỏ về repo chính) quy về repo chính: {wt}")
 for f in fails:

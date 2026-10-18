@@ -239,6 +239,12 @@ def texts_of(content):
     return out
 
 
+def user_rejected(e, c):
+    """tool_result c (trong dòng e) là lần bạn bấm No ở hộp xin phép, có hay không kèm lời."""
+    return e.get("toolUseResult") == "User rejected tool use" or bool(
+        c.get("is_error") and " ".join(texts_of(c.get("content"))).strip().startswith(REJECT_PREFIX))
+
+
 class Session:
     def __init__(self):
         self.calls = {}        # tool_use_id -> dict
@@ -251,6 +257,7 @@ class Session:
         self.old_entries = 0
         self.events = {}       # mục I, J: khoá khử trùng -> dict {kind, ts, cwd, file, ...}
         self.file_state = {}   # trong file đang đọc: agent đã trả lời chưa, tool gọi gần nhất, kết luận gần nhất, dòng đang xét
+        #                        và có lần từ chối nào agent chưa trả lời không (after_reject)
 
 
 def agent_type(path):
@@ -280,7 +287,7 @@ def norm_path(p):
 def parse(path, s, cutoff, only_under=None):
     """only_under: chỉ nhận lệnh có cwd nằm trong thư mục này (file của thư mục phiên khác, cùng tiền tố)."""
     who = agent_type(path)
-    s.file_state = {"assistant": False, "doing": "", "tools": {}, "verdict": None}
+    s.file_state = {"assistant": False, "doing": "", "tools": {}, "verdict": None, "after_reject": False}
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             try:
@@ -333,6 +340,7 @@ def tool_summary(c, wire):
 def track_assistant(e, msg, s, fresh):
     st = s.file_state
     st["assistant"] = True
+    st["after_reject"] = False
     wire = e.get("wireToolInputs") if isinstance(e.get("wireToolInputs"), dict) else {}
     content = msg.get("content")
     for c in content if isinstance(content, list) else []:
@@ -371,6 +379,8 @@ def track_user(e, msg, s, path, who, only_under):
     content = msg.get("content")
     if isinstance(content, list) and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
         for c in content:
+            if isinstance(c, dict) and c.get("type") == "tool_result" and user_rejected(e, c):
+                st["after_reject"] = True
             if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("is_error"):
                 txt = " ".join(texts_of(c.get("content"))).strip()
                 words = clip(txt.split(REJECT_SAID, 1)[1]) if txt.startswith(REJECT_PREFIX) and REJECT_SAID in txt else ""
@@ -382,7 +392,11 @@ def track_user(e, msg, s, path, who, only_under):
         return
     text = unicodedata.normalize("NFC", text).lstrip()
     if text.startswith(INTERRUPT_PREFIX):
-        add_event(s, e, path, "interrupt", doing=st["doing"])
+        # Bấm No ở hộp hỏi thì Claude Code ghi dấu ngắt ngay sau tool_result từ chối, chưa có agent trả lời xen giữa:
+        # dấu đó thuộc về lần từ chối (đã ở D/G, hoặc là từ chối kèm lời), không phải một lần ngắt.
+        if not st["after_reject"]:
+            add_event(s, e, path, "interrupt", doing=st["doing"])
+        st["after_reject"] = False
         return
     if text.startswith(MACHINE_TAGS):
         return
@@ -423,9 +437,7 @@ def parse_entry(e, s, path, who, cutoff, only_under):
         for c in msg.get("content") or [] if isinstance(msg.get("content"), list) else []:
             if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in s.calls:
                 call = s.calls[c["tool_use_id"]]
-                txt = " ".join(texts_of(c.get("content"))).strip()
-                user_no = e.get("toolUseResult") == "User rejected tool use" or (
-                    c.get("is_error") and txt.startswith(REJECT_PREFIX))
+                user_no = user_rejected(e, c)
                 config_no = isinstance(pd, dict) and pd.get("decision") == "reject"
                 call["status"] = "bị từ chối" if (user_no or config_no) else "đã chạy"
                 call["rejected_by"] = "người" if user_no else ("cấu hình" if config_no else "")
