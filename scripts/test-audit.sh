@@ -330,12 +330,15 @@ def copy_at(cwd):
             user(cwd, [{"type": "tool_result", "tool_use_id": "wr1", "is_error": True, "content": REJ + " w"}], uuid="w-u2")]
 write("-wr/s.jsonl", copy_at("/khong-co-tren-may/wrcopy"))
 write("-wr-wrorig/s.jsonl", copy_at("/khong-co-tren-may/wrorig"))
-# Câu sửa: "bảo vệ" không phải "đã bảo"; người dùng hay gõ "ko".
+# Câu sửa: "bảo vệ/bảo mật" không phải "đã bảo", "vẫn chưa được merge" là hỏi trạng thái; người dùng hay gõ "ko".
 RX = "/khong-co-tren-may/rxproj"
 write("rx.jsonl", [
     user(RX, "Thêm guard cho push", origin=HUMAN),
     asst(RX, text("Đã thêm.")),
     user(RX, "guard đã bảo vệ nhánh main chưa?", origin=HUMAN),
+    user(RX, "tôi đã bảo mật file .env chưa?", origin=HUMAN),
+    user(RX, "PR này vẫn chưa được merge à?", origin=HUMAN),
+    user(RX, "test vẫn chưa chạy xong à?", origin=HUMAN),
     user(RX, "ko đúng, vẫn chưa được", origin=HUMAN),
     user(RX, "đã bảo là chạy test trước", origin=HUMAN),
 ])
@@ -497,7 +500,7 @@ wrJ = sorted((w.get("project"), w.get("prompts"), w.get("reject_note")) for w in
 check(len(g) == 1 and wr == [("reject_note", g[0])] and wrJ == [(g[0].rsplit("/", 1)[-1], 1, 1)],
       f"hai bản chép khác cwd: I/J đếm một lần và quy về cùng cwd với mục G: G {g}, I {wr}, J {wrJ}")
 check(said("rxproj") == sorted(["ko đúng, vẫn chưa được", "đã bảo là chạy test trước"]),
-      f"câu sửa: 'đã bảo vệ' không khớp, 'ko đúng'/'vẫn chưa được' có khớp: {said('rxproj')}")
+      f"câu sửa: 'đã bảo vệ/bảo mật', 'vẫn chưa được merge' không khớp, 'ko đúng' có khớp: {said('rxproj')}")
 wt = sorted((p, w.get("prompts")) for p, w in RW.items() if p in ("wtproj", "mainproj", "feat-a", "src", "pkg", "wt-elsewhere", "feat-c"))
 check(wt == [("mainproj", 2), ("wtproj", 2)], f"J: worktree (.claude/worktrees, hoặc .git là file trỏ về repo chính) quy về repo chính: {wt}")
 for f in fails:

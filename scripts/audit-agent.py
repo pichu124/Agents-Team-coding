@@ -47,8 +47,9 @@ VERDICT_RE = re.compile(r"KẾT LUẬN:\W*(PASS|FAIL|INCONCLUSIVE|KHÔNG CHẶN|
 # thường ("đúng không", "lỗi sai chính tả"). Chữ được chuẩn hoá NFC và gộp khoảng trắng trước khi so.
 CORRECTION_RE = re.compile(
     r"\b(sai rồi|bị sai|làm sai|vẫn sai|vẫn lỗi|vẫn còn lỗi|vẫn bị|lại lỗi|lại sai|chưa đúng|không đúng"
-    r"|không phải thế|không phải vậy|nhầm rồi|bạn nhầm|bạn quên|đã bảo rồi|tôi đã bảo|đã bảo là|tôi bảo rồi|nói rồi mà"
-    r"|lần thứ hai|vẫn chưa được|vẫn không được|vẫn ko được|vẫn không chạy|vẫn chưa chạy"
+    r"|không phải thế|không phải vậy|nhầm rồi|bạn nhầm|bạn quên|đã bảo rồi|đã bảo là|tôi bảo rồi|nói rồi mà"
+    # không có "tôi đã bảo" (bảo vệ, bảo mật) hay "vẫn chưa được/chạy" (hỏi trạng thái: "vẫn chưa được merge à?")
+    r"|lần thứ hai|vẫn không được|vẫn ko được|vẫn không chạy"
     r"|ko đúng|k đúng|ko phải thế|ko phải vậy"  # gõ tắt "ko"
     r"|sai roi|van loi|van sai|khong dung|chua dung|nham roi"  # gõ không dấu
     r"|wrong|incorrect|not what i|still (broken|failing|wrong)|you forgot|i told you)\b",
