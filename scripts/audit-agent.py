@@ -103,7 +103,7 @@ def load_watch(root):
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
-SPLIT = re.compile(r"\n|;|&&|\|\||\|")
+SPLIT = re.compile(r"(\n|;|&&|\|\||\|)")  # giữ dấu nối: `a && b` khác `a; b`
 SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
                      r"|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b",
                      re.IGNORECASE)
@@ -112,11 +112,17 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
-# Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần).
+# Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
+# hoặc trong worktree tạm của subagent.
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
                 ".ruff_cache", ".cache", "coverage", ".coverage", "htmlcov", ".venv", "venv", ".tox", ".next",
                 ".turbo", ".parcel-cache", "scratchpad"}
 CMD_FLAG = re.compile(r"^/[a-z]$", re.IGNORECASE)
+# Worktree tạm của subagent: <repo>/.claude/worktrees/agent-<hex>, nhánh worktree-agent-<hex>. Worktree phiên
+# của app desktop (.claude/worktrees/<tên>-<hex>, nhánh claude/<tên>-<hex>) có thể chứa việc của bạn: không tính.
+AGENT_WORKTREE = re.compile(r"(^|[\\/])\.claude[\\/]+worktrees[\\/]+agent-[0-9a-f]+([\\/]|$)", re.IGNORECASE)
+AGENT_BRANCH = re.compile(r"^worktree-agent-[0-9a-f]+$", re.IGNORECASE)
+REDIRECT = re.compile(r"^(\d+|&)?(>>?|<)(.*)$")
 
 
 def expand(text, env):
@@ -135,11 +141,13 @@ def keep_shell_heredocs(cmd):
     return HEREDOC.sub(sub, cmd)
 
 
-def segments(cmd, tool="Bash"):
-    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất).
+def segments(cmd, tool="Bash", cwd=""):
+    """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, dấu nối với đoạn trước).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
     giữ nguyên để biết đích thật. Biến gán trong lệnh (S=/tmp/x; rm -rf $S) được thay theo thứ tự.
+    cwd của phiên chỉ làm thư mục xuất phát khi nó là worktree tạm của agent: thư mục dự án có thể nằm dưới
+    một thư mục tên tmp hay build mà vẫn là việc thật.
     """
     body = keep_shell_heredocs(cmd)
     store = []
@@ -151,8 +159,11 @@ def segments(cmd, tool="Bash"):
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
-    out, ctx, env = [], "", {}
-    for seg in SPLIT.split(marked):
+    out, ctx, env, sep = [], cwd if in_agent_worktree(cwd) else "", {}, ""
+    for i, seg in enumerate(SPLIT.split(marked)):
+        if i % 2:
+            sep = seg
+            continue
         seg = seg.strip()
         if not seg:
             continue
@@ -166,10 +177,15 @@ def segments(cmd, tool="Bash"):
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
-            ctx = target if is_absolute(target) else (ctx + "/" + target)
+            if is_absolute(target):
+                ctx = target
+            elif re.search(r"[$`]", target):
+                ctx = ""  # cd vào biến chưa biết hay lệnh lồng: không còn biết thư mục
+            else:
+                ctx = ctx + "/" + target
         elif full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
             ctx = ""  # cd không tham số, cd -, popd, subshell: không còn biết thư mục
-        out.append((plain, full, ctx))
+        out.append((plain, full, ctx, sep))
     return out
 
 
@@ -186,9 +202,13 @@ def under_temp(p):
     return any(t in low + "/" for t in temps)
 
 
+def in_agent_worktree(p):
+    return ".." not in re.split(r"[\\/]+", p) and bool(AGENT_WORKTREE.search(p))
+
+
 def benign_path(p):
     parts = [x.lower() for x in re.split(r"[\\/]+", p) if x]
-    return under_temp(p) or any(x in BENIGN_NAMES for x in parts)
+    return under_temp(p) or any(x in BENIGN_NAMES for x in parts) or in_agent_worktree(p)
 
 
 def benign_delete(full, ctx):
@@ -211,13 +231,50 @@ def benign_delete(full, ctx):
     return True
 
 
-def suspicious_labels(cmd, patterns, tool="Bash"):
+def words_after(full, word):
+    """Đối số sau `word` đầu tiên trong một đoạn lệnh, đã bỏ nháy và chuyển hướng (2>&1, > f)."""
+    toks = [t.strip("\"'") for t in TOKEN.findall(full)]
+    if word not in toks:
+        return []
+    out, skip = [], False
+    for t in toks[toks.index(word) + 1:]:
+        m = REDIRECT.match(t)
+        if skip or m:
+            skip = bool(m) and not m.group(3)  # `>` đứng riêng: từ kế tiếp là tên file
+            continue
+        out.append(t)
+    return out
+
+
+def ref_name(t):
+    return t[len("refs/heads/"):] if t.startswith("refs/heads/") else t
+
+
+def benign_branch_delete(full, prev):
+    """git branch -D vô hại khi mọi nhánh bị xoá là nhánh worktree tạm của agent, hoặc đoạn ngay trước (prev,
+    nối bằng &&) là git merge-base --is-ancestor <đúng nhánh đó> <gốc>: nhánh đã gộp hết vào gốc."""
+    names = [ref_name(t) for t in words_after(full, "branch") if not t.startswith("-")]
+    if not names:
+        return False
+    if all(AGENT_BRANCH.match(n) for n in names):
+        return True
+    toks = TOKEN.findall(prev.lstrip("({ "))
+    if toks[:1] in (["do"], ["then"], ["else"]):
+        toks = toks[1:]
+    args = words_after(prev, "merge-base") if toks[:1] == ["git"] else []  # `! git merge-base` thì ngược nghĩa
+    return len(args) == 3 and args[0] == "--is-ancestor" and all(n == ref_name(args[1]) for n in names)
+
+
+def suspicious_labels(cmd, patterns, tool="Bash", cwd=""):
     labels = []
-    for plain, full, ctx in segments(cmd, tool):
+    segs = segments(cmd, tool, cwd)
+    for i, (plain, full, ctx, sep) in enumerate(segs):
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             if label == "xoá đệ quy" and benign_delete(full, ctx):
+                continue
+            if label == "xoá nhánh local (-D)" and benign_branch_delete(full, segs[i - 1][1] if i and sep == "&&" else ""):
                 continue
             labels.append(label)
     return labels
@@ -257,7 +314,7 @@ class Session:
         self.old_entries = 0
         self.events = {}       # mục I, J: khoá khử trùng -> dict {kind, ts, cwd, file, ...}
         self.file_state = {}   # trong file đang đọc: agent đã trả lời chưa, tool gọi gần nhất, kết luận gần nhất, dòng đang xét
-        #                        và có lần từ chối nào agent chưa trả lời không (after_reject)
+        #                        và có lần từ chối nào chưa được agent trả lời hay bạn gõ lượt mới không (after_reject)
 
 
 def agent_type(path):
@@ -406,6 +463,7 @@ def track_user(e, msg, s, path, who, only_under):
     if who != "phiên chính":
         return  # tin "user" trong file subagent là lead gửi, không phải bạn gõ
     one = " ".join(text.split())
+    st["after_reject"] = False  # lượt hỏi mới khép lần từ chối trước: Esc sau đó là ngắt thật
     add_event(s, e, path, "prompt", text=clip(one))  # chữ để khử trùng dòng không có uuid
     if st["assistant"] and CORRECTION_RE.search(one):
         add_event(s, e, path, "correction", text=clip(one))
@@ -681,7 +739,7 @@ def main():
     for cid, c in s.calls.items():
         hist = s.guard.get(cid)
         now = replayed.get((c["tool"], c["cwd"], c["command"]))
-        sus = suspicious_labels(c["command"], ctx.of(c["cwd"])[1], c["tool"])
+        sus = suspicious_labels(c["command"], ctx.of(c["cwd"])[1], c["tool"], c["cwd"])
         item = dict(c, id=cid, suspicious=sus, guard_then=hist, guard_now=now, approved=who_approved(c["permission"]))
         asked_then = bool(hist and hist["asked"])
         asked_now = now["asked"] if now else None

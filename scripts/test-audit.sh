@@ -17,9 +17,11 @@ export PYTHONIOENCODING=utf-8 PYTHONDONTWRITEBYTECODE=1
 # Repo đang ở nhánh main: guard hỏi mọi git push chạy ở đây.
 git init -q -b main "$tmp/mainrepo" && git -C "$tmp/mainrepo" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m i
 # Tạo file phiên giả: phiên chính + một subagent implementer + một file cũ (ngoài --since).
-"$py" - "$tmp/t" "$root" "$tmp/mainrepo" <<'PYEOF'
+"$py" - "$tmp/t" "$tmp/mainrepo" <<'PYEOF'
 import json, os, sys, time
-d, cwd = sys.argv[1], sys.argv[2]
+d = sys.argv[1]
+# cwd giả: kết quả không được phụ thuộc chỗ đặt repo kit (vd verifier chạy check trong worktree tạm của nó).
+cwd = "/khong-co-tren-may/kitproj"
 os.makedirs(d + "/s1/subagents", exist_ok=True)
 lines = []
 NOW = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -72,7 +74,7 @@ call("k4", "cat > notes.txt <<'EOF'; git stash drop\nghi chú\nEOF")
 call("k5", "rm -rf build/../src")
 call("k6", "cd /tmp/x && cd && rm -rf proj")
 call("k7", "rm -rf node_modules /c")
-call("m1", "git push", where=sys.argv[3])
+call("m1", "git push", where=sys.argv[2])
 # Claude Code trên Windows (2.1.296) không ghi kết quả guard vào file phiên: suy từ hộp hỏi.
 call("n1", "git push --force origin y", result="rejected")                # bạn từ chối ở hộp hỏi -> D
 call("n2", "git push -u origin main", pd={"decision": "accept", "source": "user_temporary"})
@@ -80,6 +82,28 @@ call("n2", "git push -u origin main", pd={"decision": "accept", "source": "user_
 call("b1", "git branch -d wt-u1 wt-u2")
 call("b2", "git branch -D wip-chua-gop")
 call("g2", "cat data/bao-cao.csv", result="denied", pd={"decision": "reject", "source": "config", "reasonType": "classifier"})  # bạn duyệt -> C, không phải H                                 # push lúc đang ở main, không khớp mẫu chữ
+# Báo cáo desktop 18/10: subagent dọn worktree tạm của chính nó (.claude/worktrees/agent-<hex>, nhánh worktree-agent-<hex>).
+WT = cwd + "/.claude/worktrees/agent-abc"
+call("w1", "git -C .claude/worktrees/agent-a1b2c3d4e5f60718 status --short && git branch -D worktree-agent-a1b2c3d4e5f60718")
+call("w2", "git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune")
+call("w3", 'for b in fix/ur-runner fix/us-stale fix/ual-alerts; do git merge-base --is-ancestor "refs/heads/$b" origin/trial/agent-team && git branch -D "$b"; done')
+call("w4", 'echo "# drift" >> skill/agent-audit/mode.md ; cat skill/agent-audit/mode.md ; git checkout -- skill/agent-audit/mode.md')
+call("w5", "rm -rf src", where=WT)
+call("w6", "cd .claude/worktrees/agent-abc && rm -rf src")
+call("w7", 'Remove-Item -Recurse -Force "C:\\Users\\Ten Nguoi\\repo\\.claude\\worktrees\\agent-abc"', tool="PowerShell")
+# Vẫn nghi: nhánh thường, worktree phiên của app (có thể chứa việc của bạn), thoát khỏi worktree, chưa kiểm gộp đúng nhánh.
+call("x1", "git branch -D feature-x")
+call("x2", "git branch -D worktree-agent-abc feature-x")
+call("x3", "rm -rf .claude/worktrees")
+call("x4", "rm -rf .claude/worktrees/quirky-mayer-c977af")
+call("x5", "rm -rf .claude/worktrees/agent-abc/../..")
+call("x6", "git merge-base --is-ancestor a main; git branch -D a")
+call("x7", "git merge-base --is-ancestor a main && git branch -D b")
+call("x8", "git merge-base --is-ancestor a main || git branch -D a")
+call("x9", "! git merge-base --is-ancestor a main && git branch -D a")
+call("x10", "cd && rm -rf proj", where=WT)
+call("x11", "cd .. && rm -rf src", where=WT)
+call("x12", "cd $D && rm -rf src", where=WT)
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -369,6 +393,13 @@ write("esc.jsonl", [
 ])
 write("rjn.jsonl", [user(RJN, "Đẩy nhánh", origin=HUMAN, uuid="rjn-p")]
       + asked_no(RJN, "rjn1", "git push origin main", " To tell you how to proceed, the user said:\n  đẩy lên nhánh feat thôi"))
+# Lần từ chối không có dấu ngắt đi kèm, rồi bạn gõ lượt hỏi mới và bấm Esc trước khi agent kịp trả lời:
+# lượt hỏi đã khép lần từ chối, nên Esc đó là một lần ngắt thật.
+RJP = "/khong-co-tren-may/rjpromptproj"
+write("rjp.jsonl", [user(RJP, "Đẩy nhánh", origin=HUMAN, uuid="rjp-p")]
+      + asked_no(RJP, "rjp1", "git push --force origin feat/z", STOP)[:2]
+      + [user(RJP, "Thôi, viết README trước", origin=HUMAN, uuid="rjp-p2"),
+         user(RJP, [text("[Request interrupted by user]")], uuid="rjp-i")])
 # Worktree quy về repo chính: theo đường dẫn .claude/worktrees (cả máy khác), hoặc theo file .git của worktree có trên máy.
 write("wt.jsonl", [user(cwd, "Làm việc trong worktree", origin=HUMAN) for cwd in (
     "C:\\Users\\Ten Nguoi\\wtproj\\.claude\\worktrees\\feat-a", "/khong-co-tren-may/wtproj/.claude/worktrees/feat-b/src",
@@ -421,6 +452,20 @@ check("git branch -D ancient" not in A, "dòng có timestamp cũ hơn --since kh
 check(cmds("G_rejected_not_asked") == {"ls -la", "cat data/bao-cao.csv"}, f"G sai (output thường có chữ 'doesn't want to proceed' không phải từ chối): {cmds('G_rejected_not_asked')}")
 check("git branch -d wt-u1 wt-u2" not in A, "git branch -d (chữ thường) là xoá an toàn, không được vào A")
 check("git branch -D wip-chua-gop" in A, "git branch -D (xoá cưỡng bức) phải vào A")
+for benign in ("git -C .claude/worktrees/agent-a1b2c3d4e5f60718 status --short && git branch -D worktree-agent-a1b2c3d4e5f60718",
+               "git branch -D worktree-agent-aeb4c21e13a20ddd0 2>&1; rm -rf .claude/worktrees/agent-aeb4c21e13a20ddd0 && git worktree prune",
+               'for b in fix/ur-runner fix/us-stale fix/ual-alerts; do git merge-base --is-ancestor "refs/heads/$b" origin/trial/agent-team && git branch -D "$b"; done',
+               "rm -rf src", "cd .claude/worktrees/agent-abc && rm -rf src",
+               'Remove-Item -Recurse -Force "C:\\Users\\Ten Nguoi\\repo\\.claude\\worktrees\\agent-abc"'):
+    check(benign not in A, f"agent dọn worktree tạm của chính nó (hoặc xoá nhánh đã kiểm gộp) không phải lỗi: {benign!r}")
+check('echo "# drift" >> skill/agent-audit/mode.md ; cat skill/agent-audit/mode.md ; git checkout -- skill/agent-audit/mode.md' in A,
+      "git checkout -- sau khi tự ghi thử vẫn phải ở A")
+for must in ("git branch -D feature-x", "git branch -D worktree-agent-abc feature-x", "rm -rf .claude/worktrees",
+             "rm -rf .claude/worktrees/quirky-mayer-c977af", "rm -rf .claude/worktrees/agent-abc/../..",
+             "git merge-base --is-ancestor a main; git branch -D a", "git merge-base --is-ancestor a main && git branch -D b",
+             "git merge-base --is-ancestor a main || git branch -D a", "! git merge-base --is-ancestor a main && git branch -D a",
+             "cd && rm -rf proj", "cd .. && rm -rf src", "cd $D && rm -rf src"):
+    check(must in A, f"A phải có (không phải worktree hay nhánh tạm của agent): {must!r}")
 check("`ls -la`" in md and "bạn từ chối" in md.split("## G.")[1] and "auto mode chặn" in md.split("## G.")[1],
       "mục G phải ghi ai chặn: bạn hay auto mode/luật")
 sg = r["stop_gate"]
@@ -540,6 +585,9 @@ rrow("escproj", "Esc lúc model đang viết", prompts=1, interrupt=1, fixes=1, 
 rjn = [(i.get("kind"), i.get("text")) for i in fixes_of("rjnoteproj")]
 check(rjn == [("reject_note", "đẩy lên nhánh feat thôi")], f"từ chối kèm lời rồi dấu ngắt: 1 từ chối kèm lời, 0 ngắt: {rjn}")
 rrow("rjnoteproj", "từ chối kèm lời rồi dấu ngắt", prompts=1, reject_note=1, fixes=1, fixes_per_10=10.0)
+rjp = [(i.get("kind"), i.get("doing")) for i in fixes_of("rjpromptproj")]
+check(rjp == [("interrupt", "Bash: git push --force origin feat/z")], f"từ chối, lượt hỏi mới rồi Esc trước khi agent trả lời: 1 ngắt: {rjp}")
+rrow("rjpromptproj", "từ chối, lượt hỏi mới rồi Esc", prompts=2, interrupt=1, fixes=1, fixes_per_10=5.0)
 wt = sorted((p, w.get("prompts")) for p, w in RW.items() if p in ("wtproj", "mainproj", "feat-a", "src", "pkg", "wt-elsewhere", "feat-c"))
 check(wt == [("mainproj", 2), ("wtproj", 2)], f"J: worktree (.claude/worktrees, hoặc .git là file trỏ về repo chính) quy về repo chính: {wt}")
 for f in fails:
