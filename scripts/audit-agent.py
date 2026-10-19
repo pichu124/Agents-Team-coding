@@ -359,7 +359,11 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
     for t in targets:
         if ".." in re.split(r"[\\/]+", t):
             return False
-        if benign_path(t) or (worktree and agent_worktree(t)):
+        if worktree and agent_worktree(t):
+            continue
+        if t.endswith("/"):
+            return False  # rm đi theo symlink ở thành phần cuối: xoá nội dung thư mục mà link trỏ tới, tên nào cũng vậy
+        if benign_path(t):
             continue
         # Đích còn biến chưa biết, lệnh lồng hay brace: bash thay trước khi rm chạy, có thể thành đường tuyệt đối hay có `..`.
         rel = not is_absolute(t) and not re.search(r"[$`{(]", t)

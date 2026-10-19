@@ -205,6 +205,11 @@ call("bc5", "rm -rf /tmp/x -important")                                 # macOS 
 call("bc6", "wsl rm -rf /tmp/x -important", tool="PowerShell")          # rm chạy trong Linux: đọc như lệnh Bash
 call("bc7", "rm C:\\tmp\\x -Recurse", tool="PowerShell")                # vô hại: -Recurse là tham số của Remove-Item
 call("bc8", "rd /s /q C:\\tmp\\x")                                       # vô hại: /s /q là cờ của cmd
+# `/` cuối đích làm rm đi theo symlink ở thành phần cuối (`stat link` → symbolic link, `stat link/` → directory): xoá nội dung
+# thư mục mà link trỏ tới, dù tên hay thư mục cd trông như thư mục tạm. Đích ghi trọn là worktree agent vẫn được `/` cuối (d5).
+call("bc9", "rm -rf /tmp/link/")
+call("bc10", "cd /tmp/x && rm -rf link/")
+call("bc11", "rm -rf node_modules/")
 # Thư mục cd chỉ áp cho lệnh nối sau nó bằng `&&` trong cùng phạm vi. Các ca sau, bash chạy rm ở thư mục dự án.
 call("cx1", "(cd /tmp && true); rm -rf src")                            # cd trong subshell
 call("cx2", "(cd /tmp && true) && rm -rf src")
@@ -707,6 +712,8 @@ for must in ("rm -rf /tmp/x -important", "wsl rm -rf /tmp/x -important"):
     check(must in A, f"rm của BSD thôi nhận cờ ở toán hạng đầu tiên: token sau đó là đích dù mở bằng `-`: {must!r}")
 for benign in ("rm C:\\tmp\\x -Recurse", "rd /s /q C:\\tmp\\x"):
     check(benign not in A, f"Remove-Item của PowerShell và cmd nhận tham số sau đích: vô hại: {benign!r}")
+for must in ("rm -rf /tmp/link/", "cd /tmp/x && rm -rf link/", "rm -rf node_modules/"):
+    check(must in A, f"`/` cuối đích làm rm đi theo symlink, xoá nội dung thư mục mà link trỏ tới: {must!r}")
 # Chốt "không có đích ngoài cờ thì báo" của bản cũ phải giữ: thư mục suy từ cd có thể sai (subshell, cd .., cd lỗi)
 # và bản cũ báo các ca này chỉ nhờ chốt đó.
 for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
