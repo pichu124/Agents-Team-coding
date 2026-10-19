@@ -119,7 +119,7 @@ ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)"
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
 CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
-CHDIR_NAMES = r"cd|pushd|popd|set-location|sl|push-location|pop-location|source"
+CHDIR_NAMES = r"cd|pushd|popd|chdir|set-location|sl|push-location|pop-location|source"  # chdir: builtin của zsh
 # Lệnh đổi thư mục ở vị trí lệnh bất kỳ trong đoạn (`builtin cd`, `time cd`, `FOO=1 cd`, `source`), hoặc `.` đầu lệnh.
 CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:" + CHDIR_NAMES + r")"
                    r"(?=[\s;&|(){}<>`\"']|$)"

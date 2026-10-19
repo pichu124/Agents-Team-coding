@@ -245,6 +245,7 @@ call("ce3", 'cd /tmp/x && c"d" /home/p && rm -rf src')
 call("ce4", "cd /tmp/x && c\\d /home/p && rm -rf src")
 call("ce5", "cd /tmp/x && $'cd' /home/p && rm -rf src")
 call("ce6", 'cd /tmp/x && "." ./env.sh && rm -rf src')
+call("ce7", "cd /tmp/x && chdir /home/p && rm -rf src")                  # zsh: chdir là builtin như cd
 # Thân heredoc đưa vào shell chạy ở shell con: biến gán trong thân không ra ngoài, biến không export của shell cha rỗng trong
 # thân <<'EOF' (<<EOF thì shell cha thay trước), chỉ shell cục bộ trơn chạy thân ở thư mục cd, thân chạy trước lệnh sau shell
 # trên dòng mở. `\` cuối dòng mở kéo dòng kế (`| bash`) vào lệnh. Shell trơn không có heredoc không đọc dòng sau.
@@ -744,6 +745,7 @@ for must in ('cd /tmp/x && "cd" /home/p && rm -rf src', "cd /tmp/x && 'cd' /home
              'cd /tmp/x && c"d" /home/p && rm -rf src', "cd /tmp/x && c\\d /home/p && rm -rf src",
              "cd /tmp/x && $'cd' /home/p && rm -rf src", 'cd /tmp/x && "." ./env.sh && rm -rf src'):
     check(must in A, f"tên lệnh đổi thư mục có nháy hay `\\` vẫn đổi thư mục: không biết thư mục: {must!r}")
+check("cd /tmp/x && chdir /home/p && rm -rf src" in A, "zsh có builtin chdir đổi thư mục như cd: không biết thư mục")
 for must in ("bash <<'EOF'\nD=/tmp/x\nEOF\nrm -rf $D/src", "bash <<'EOF'\nD=/tmp/x\n# don't\nEOF\necho 'ok'; rm -rf $D/src",
              "bash <<'EOF'; D=/tmp/x\nrm -rf $D/src\nEOF"):
     check(must in A, f"biến gán trong thân heredoc đưa vào shell không ra ngoài, thân chạy trước lệnh sau shell: {must!r}")
