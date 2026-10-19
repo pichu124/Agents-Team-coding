@@ -115,6 +115,11 @@ SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*
                      re.IGNORECASE)
 QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng \ ("C:\x\" là một chuỗi trọn)
+# segments(exact=True) che cả comment như một chuỗi: `#` mở một từ (sau khoảng trắng, `;&|()` hay đầu dòng, ngoài nháy) tới
+# hết dòng. Nháy lẻ trong comment (`# don't`) không còn ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh.
+COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
+QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
+QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), rồi chuỗi nháy đơn hay kép.
 SHELL_C_BODY = re.compile(r"\b((?:bash|sh|zsh|dash)(?:\.exe)?)(?:\s+-\w+)*?\s+-[A-Za-z]*c[A-Za-z]*\s+"
                           r"('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
@@ -194,6 +199,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
+    Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
+    comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped)
@@ -214,8 +221,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
         return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
 
     shell_c = bool(SHELL_C.search(body))
-    quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
-    marked = body if shell_c else quoted.sub(keep, body)
+    quoted = (QUOTED_PS_X if exact else QUOTED_PS) if tool == "PowerShell" else (QUOTED_X if exact else QUOTED)
+    # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
+    parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
+    marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
     out, ctx, env, sep, saved, inherit = [], "", {}, None, [], False
     for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)

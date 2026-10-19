@@ -856,6 +856,14 @@ for cmd in ("cd /tmp/w && bash -c 'rm -rf src'", "D=/tmp/y/; bash -c 'echo hi'; 
     check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"thân bash -c vô hại không được thành nghi: {cmd!r}")
 got = [full for _p, full, _c, _s in a.segments('bash -c "rm -rf \\"a b\\" \\$D"', exact=True)]
 check(got == ["bash", 'rm -rf "a b" $D'], f"thân -c nháy kép gỡ thoát như bash (`\\\"` thành `\"`, `\\$` thành `$`): {got!r}")
+# Nháy lẻ trong thân heredoc đưa vào shell hay trong comment không ghép với nháy của lệnh sau thành một chuỗi nuốt rm.
+# cd lỗi thì rm sau EOF chạy ở thư mục dự án.
+for cmd, tool in (("cd /tmp/w && bash <<'EOF'\n# don't\nEOF\nrm -rf src 'x'", "Bash"),
+                  ("cd /tmp/w && bash <<'EOF'\necho don't\nEOF\nrm -rf src 'x'", "Bash"),
+                  ("# Clean build artifacts (don't touch src)\nrm -rf build 'some dir'", "Bash"),
+                  ("# don't\nrm -rf src 'x'", "Bash"), ("# don't\nRemove-Item -Recurse src 'x'", "PowerShell")):
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS, tool), f"nháy không ghép qua thân heredoc hay comment: {tool} {cmd!r}")
+check(not a.suspicious_labels("# don't\nrm -rf node_modules 'dist'", a.SUSPICIOUS), "comment có nháy lẻ: đích vô hại vẫn vô hại")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
