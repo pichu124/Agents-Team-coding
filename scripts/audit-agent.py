@@ -279,12 +279,14 @@ def agent_worktree(p):
     return bool(m) and "." not in re.split(r"[\\/]", m.group(1))
 
 
-def benign_delete(full, ctx, worktree=True):
+def benign_delete(full, ctx, worktree=True, tool="Bash"):
     """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi)."""
     toks = [t.strip("\"'") for t in TOKEN.findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
+    wsl = False
     while toks and toks[0].lower() in ("sudo", "doas", "wsl", "command", "builtin"):
+        wsl = wsl or toks[0].lower() == "wsl"
         toks = toks[1:]
     cmd_style = bool(toks) and toks[0].lower() in ("rd", "del", "erase", "rmdir")  # /s /q là cờ của cmd
     args = toks[1:]
@@ -293,6 +295,14 @@ def benign_delete(full, ctx, worktree=True):
     end = args.index("--") if "--" in args else len(args)  # sau `--` đầu tiên mọi token là đích, kể cả token mở bằng `-`
     targets = [t for t in args[:end] if t and not t.startswith("-") and not (cmd_style and CMD_FLAG.match(t))]
     targets += [t for t in args[end + 1:] if t]
+    # rm của BSD/macOS (getopt POSIX, không hoán vị) thôi nhận cờ ở toán hạng đầu tiên: mọi token sau đó là đích, kể cả
+    # `-x` và `--`. Lấy hợp với cách đọc GNU ở trên. Không áp cho cmd và PowerShell (`rm x -Recurse` là Remove-Item), trừ qua wsl.
+    if not cmd_style and (tool != "PowerShell" or wsl):
+        i = 0
+        while i < len(args) and args[i].startswith("-") and args[i] not in ("-", "--"):
+            i += 1
+        if args[i:i + 1] != ["--"]:  # `--` trước toán hạng đầu: đích là các token sau nó, như cách đọc GNU
+            targets += [t for t in args[i:] if t]
     worktree = worktree and not any(PS_NAMED.match(t) for t in toks)
     for t in targets:
         if ".." in re.split(r"[\\/]+", t):
@@ -321,7 +331,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
-            if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs)):
+            if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
                 continue
