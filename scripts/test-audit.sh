@@ -330,6 +330,14 @@ call("hf3", "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)")       #
 # cd ngay sau `||` hay `|` không đặt thư mục cho lệnh sau `&&`: `(true || cd x) && rm` bỏ qua cd, cd trong ống chạy ở shell con.
 call("hf4", "true || cd /tmp/x && rm -rf y")                                  # bash xoá ./y ở thư mục dự án
 call("hf5", "true | cd /tmp/x && rm -rf y")                                   # bash xoá ./y ở thư mục dự án
+# Gán tạm trước lệnh khác và `NAME=VALUE` là tham số của lệnh khác không đổi biến của shell: chỉ đoạn toàn phép gán, hay tham
+# số của export/declare/typeset/local/readonly mới đổi.
+call("hf6", "D=/tmp/x/ true; rm -rf ${D}src")                                # D chỉ có trong env của true: bash xoá ./src
+call("hf7", "echo D=/tmp/x/; rm -rf ${D}src")                                # D=/tmp/x/ là tham số của echo: bash xoá ./src
+call("hf8", "env D=/tmp/x/ true; rm -rf ${D}src")                            # bash xoá ./src
+call("hf9", "true;D=/tmp/x/ true;rm -rf ${D}src")                            # bash xoá ./src (`;D=` không có khoảng trắng)
+call("hf10", "D=/tmp/x/; rm -rf ${D}src")                                    # vô hại: bash xoá /tmp/x/src
+call("hf11", "export D=/tmp/x/; rm -rf ${D}src")                             # vô hại: bash xoá /tmp/x/src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -856,6 +864,11 @@ for must in ("\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x 
     check(must in A, f"cách đọc byte \\x01–\\x04 có sẵn thành dấu như 695e799 vẫn trong phép hợp: {must!r}")
 for must in ("true || cd /tmp/x && rm -rf y", "true | cd /tmp/x && rm -rf y"):
     check(must in A, f"cd sau `||` có thể bị bỏ qua, cd trong ống chạy ở shell con: không biết thư mục: {must!r}")
+for must in ("D=/tmp/x/ true; rm -rf ${D}src", "echo D=/tmp/x/; rm -rf ${D}src", "env D=/tmp/x/ true; rm -rf ${D}src",
+             "true;D=/tmp/x/ true;rm -rf ${D}src"):
+    check(must in A, f"gán tạm trước lệnh khác hay NAME=VALUE là tham số của lệnh khác không đổi biến của shell: {must!r}")
+for benign in ("D=/tmp/x/; rm -rf ${D}src", "export D=/tmp/x/; rm -rf ${D}src"):
+    check(benign not in A, f"phép gán đứng riêng hay qua export đổi biến của shell: vô hại: {benign!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd

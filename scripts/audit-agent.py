@@ -130,6 +130,8 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'|(?<![^ \t\n;&|()<>])(?<!`[ \t;&|()<>
 QUOTED_6F32D5A = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 QUOTED_PS_6F32D5A = re.compile(r"\"[^\"]*\"|'[^']*'")
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
+# Đoạn (đã che nháy, bỏ comment) đổi biến của shell: toàn từ NAME=VALUE, hay lệnh export/declare/typeset/local/readonly.
+ASSIGN_STMT = re.compile(r"^(?:export|declare|typeset|local|readonly)(?:\s|$)|^(?:[A-Za-z_][A-Za-z0-9_]*=\S*(?:\s+|$))+$")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
 CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
@@ -197,7 +199,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False):
     return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False):
+def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
+             strict_assign=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -211,6 +214,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     lệnh, biến gán trong thân vẫn áp.
     comments=False: che nháy như 6f32d5a, không biết comment (nháy trong `# don't` mở chuỗi).
     raw_marks (chỉ có nghĩa khi scoped): như 695e799, byte \\x01–\\x04 có sẵn trong lệnh đọc thành dấu, không có SNAP.
+    strict_assign: chỉ đoạn toàn phép gán hay export/declare/typeset/local/readonly mới đổi biến; gán tạm trước lệnh khác
+    (`D=x true`, `env D=x true`) và NAME=VALUE là tham số của lệnh khác (`echo D=x`) không đổi. Mặc định: NAME=VALUE ở
+    đâu trong đoạn cũng đổi biến.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, raw_marks)
@@ -264,7 +270,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
-        for name, val in (ASSIGN.findall(full) if not frozen else ()):
+        assigns = not strict_assign or ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
+        for name, val in (ASSIGN.findall(full) if assigns and not frozen else ()):
             env[name] = val.strip("\"'")
         if snapped:
             snap = pre, dict(env)
@@ -397,13 +404,17 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Che nháy đọc hai cách: như 6f32d5a (comments=False) và biết comment (`# don't` không mở chuỗi nuốt dòng sau).
     # Lệnh có sẵn byte \x01–\x05: cách đọc scoped đọc thêm như 695e799 (raw_marks: byte thành dấu, không SNAP). Bash coi
     # byte là chữ, nhưng dấu giả xoá env bù được lỗi khác làm lệnh xoá trông vô hại (gán tạm, heredoc lồng).
+    # Lệnh có NAME=: mọi cách trên đọc thêm phép gán chặt (strict_assign: `D=x true`, `echo D=x` không đổi biến). Dò
+    # NAME= cả ngay sau `;&|` hay nháy: `true;D=x true` chỉ có `^D=x` cho ASSIGN sau khi segments tách đoạn.
     # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở, `\$` hay nháy theo hướng làm lệnh xoá trông vô hại,
     # nên chỉ lấy hợp. Cách gần bản cũ xét trước. PowerShell không nối dòng tại `\`.
     joins = (True,) if tool == "PowerShell" else (False, True)
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
-    segs = [s for comments in (False, True) for scoped, parent_env in ((False, False), (True, False), (True, True))
+    stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
+    segs = [s for strict_assign in stricts for comments in (False, True)
+            for scoped, parent_env in ((False, False), (True, False), (True, True))
             for raw_marks in (marks if scoped else (False,)) for join in joins
-            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks)]
+            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks, strict_assign)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
