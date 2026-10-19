@@ -194,6 +194,34 @@ call("s3", "rm -rf -- /tmp/x")                                          # `--` k
 call("s4", "(cd /tmp && true); rm -rf -- -x")                           # cd trong subshell không đổi thư mục: xoá ./-x của dự án
 call("s5", "cd dist && cd .. && rm -rf -- -x")                          # về lại thư mục dự án: xoá ./-x
 call("s6", "cd /tmp/w; rm -rf -- -x")                                   # cd lỗi thì `;` vẫn chạy rm: xoá ./-x của dự án
+# Thư mục cd chỉ áp cho lệnh nối sau nó bằng `&&` trong cùng phạm vi. Các ca sau, bash chạy rm ở thư mục dự án.
+call("cx1", "(cd /tmp && true); rm -rf src")                            # cd trong subshell
+call("cx2", "(cd /tmp && true) && rm -rf src")
+call("cx3", "cd dist && cd .. && rm -rf src")                           # về lại thư mục dự án
+call("cx4", "cd /tmp/w; rm -rf src")                                    # cd lỗi thì lệnh sau `;`, xuống dòng, `||` vẫn chạy
+call("cx5", "cd /tmp/w\nrm -rf src")
+call("cx6", "cd /tmp/w || true; rm -rf src")
+call("cx7", "cd node_modules/ x; rm -rf src")                           # cd nhiều tham số: lỗi
+call("cx8", "cd /tmp/x & rm -rf src")                                   # cd chạy nền ở shell con
+call("cx9", "cd /tmp/x && rm -rf y")                                    # vô hại: rm chạy trong /tmp/x
+call("cx10", "cd /tmp/x &&\nrm -rf y")                                  # bash cho xuống dòng sau `&&`
+call("cx11", "(cd /tmp/x && rm -rf foo)")
+call("cx12", "cd dist && cd .'.' && rm -rf src")                        # nháy và `\` không che được `..`
+call("cx13", "cd dist && cd .\\. && rm -rf src")
+call("cx14", 'cd /tmp/x && cd "-L" && rm -rf src')                      # vẫn là cờ: cd -L về $HOME
+# Không biết thư mục sau các lệnh này, bash chạy rm ở thư mục dự án (hay ở /): đích cd còn biến chưa biết hay lệnh lồng,
+# lệnh đổi thư mục không ở dạng cd đơn đầu đoạn, đích mở bằng `+` (xoay ngăn xếp pushd).
+call("cy1", 'cd /tmp/x && cd "$(git rev-parse --show-toplevel)" && rm -rf src')
+call("cy2", "cd /tmp/x && cd $OLDPWD && rm -rf src")
+call("cy3", 'cd /tmp/x && cd "$REPO" && rm -rf src')
+call("cy4", 'cd /tmp/x && cd "`git rev-parse --show-toplevel`" && rm -rf src')
+call("cy5", "cd /tmp/x && builtin cd .. && rm -rf src")
+call("cy6", "cd /tmp/x && time cd / && rm -rf home")
+call("cy7", "cd /tmp/x && FOO=1 cd / && rm -rf home")
+call("cy8", "cd /tmp/x && command cd / && rm -rf home")
+call("cy9", "cd /tmp/x && source ./env.sh && rm -rf src")
+call("cy10", "cd /tmp/x && . ./env.sh && rm -rf src")
+call("cy11", "pushd /tmp/x && pushd +1 && rm -rf src")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -629,6 +657,21 @@ check("rm -rf -- /tmp/x" not in A, "bản thân `--` không phải đích: rm -r
 # và bản cũ báo các ca này chỉ nhờ chốt đó.
 for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
     check(must in A, f"đích chỉ gồm token mở bằng `-` thì vẫn báo như bản cũ, dù cd trông lành: {must!r}")
+for must in ("(cd /tmp && true); rm -rf src", "(cd /tmp && true) && rm -rf src", "cd dist && cd .. && rm -rf src",
+             "cd /tmp/w; rm -rf src", "cd /tmp/w\nrm -rf src", "cd /tmp/w || true; rm -rf src", "cd node_modules/ x; rm -rf src",
+             "cd /tmp/x & rm -rf src", "cd dist && cd .'.' && rm -rf src", "cd dist && cd .\\. && rm -rf src",
+             'cd /tmp/x && cd "-L" && rm -rf src'):
+    check(must in A, f"thư mục cd chỉ tin qua `&&` trong cùng phạm vi, đích một token không có `..`: rm chạy ở dự án: {must!r}")
+for benign in ("cd /tmp/x && rm -rf y", "cd /tmp/x &&\nrm -rf y", "(cd /tmp/x && rm -rf foo)"):
+    check(benign not in A, f"cd vào thư mục tạm rồi `&&` (kể cả xuống dòng sau `&&`, trong subshell) vẫn vô hại: {benign!r}")
+for must in ('cd /tmp/x && cd "$(git rev-parse --show-toplevel)" && rm -rf src', "cd /tmp/x && cd $OLDPWD && rm -rf src",
+             'cd /tmp/x && cd "$REPO" && rm -rf src', 'cd /tmp/x && cd "`git rev-parse --show-toplevel`" && rm -rf src'):
+    check(must in A, f"đích cd còn `$` hay backtick sau khi thay biến đã biết: không biết thư mục: {must!r}")
+for must in ("cd /tmp/x && builtin cd .. && rm -rf src", "cd /tmp/x && time cd / && rm -rf home",
+             "cd /tmp/x && FOO=1 cd / && rm -rf home", "cd /tmp/x && command cd / && rm -rf home",
+             "cd /tmp/x && source ./env.sh && rm -rf src", "cd /tmp/x && . ./env.sh && rm -rf src"):
+    check(must in A, f"lệnh đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục: {must!r}")
+check("pushd /tmp/x && pushd +1 && rm -rf src" in A, "đích pushd mở bằng `+` xoay ngăn xếp thư mục: không biết thư mục")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
