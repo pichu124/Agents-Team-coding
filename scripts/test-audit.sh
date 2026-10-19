@@ -288,6 +288,9 @@ call("hv2", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")          # sh
 call("hv3", "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF")        # D rỗng: xoá /src (chạy ở /tmp/x)
 call("hv4", "D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF")        # `\$`: shell con thay, xoá /srv/src
 call("hv5", "D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF")                   # vô hại: shell cha thay D, xoá /tmp/y/src
+# Thân <<'EOF' chỉ được đưa vào bash nhờ `\` cuối dòng mở kéo `| bash`: biến đã export của shell cha vẫn thấy trong thân.
+call("hv6", "export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF")  # xoá /srv/src (chạy ở /tmp/x)
+call("hv7", "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF")               # xoá /srv/src
 # PowerShell cũng đọc thêm thân heredoc theo cách cũ rồi lấy hợp; byte \x01–\x04 có sẵn trong lệnh không phải dấu ở cách
 # đọc cũ. Guard không hỏi cả hai lệnh: vào A, không vào H.
 call("hp1", "wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'", tool="PowerShell")  # xoá /srv/app/src
@@ -790,6 +793,9 @@ for must in ("bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF", "D=/srv/; bash <<EOF\nD
     check(must in A, f"heredoc không nháy: shell cha thay biến trước, biến gán trong thân không đổi phép thay: {must!r}")
 check("D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF" in A, "`\\$` trong thân heredoc không nháy: shell con thay biến")
 check("D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF" not in A, "heredoc không nháy: shell cha thay biến bằng thư mục tạm, vô hại")
+for must in ("export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF",
+             "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"`\\` cuối dòng mở kéo `| bash`: thân <<'EOF' thấy biến đã export của shell cha: {must!r}")
 check("wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'" in A,
       "PowerShell cũng đọc thân heredoc theo cách cũ rồi lấy hợp")
 check("D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x" in A, "byte \\x03 có sẵn trong lệnh không phải dấu ở cách đọc cũ")

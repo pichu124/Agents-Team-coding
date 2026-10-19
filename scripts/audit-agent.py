@@ -220,7 +220,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=F
     scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
     thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
     parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như lúc mở, biến gán trong thân không đổi
-    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy).
+    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell
+    cha như đã export, biến gán trong thân vẫn áp.
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
@@ -313,11 +314,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=F
                 inherit = False
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
                 # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
-                # đọc scoped=False thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán trong thân
-                # không đổi phép thay. exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
+                # đọc scoped=False và parent_env thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán
+                # trong thân không đổi phép thay. exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
                 # env thành ngăn xếp; cách đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
                 saved = (saved if exact else []) + [env]
-                env = dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
+                env = dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else dict(env)
                 frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
@@ -397,8 +398,10 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
     # thấy biến của shell cha như lúc mở (parent_env: shell cha thay `$D` trước, gán trong thân không đổi phép thay;
-    # `\$D` thì shell con thay, chỉ cách scoped đọc đúng). Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở
-    # hay `\$` theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
+    # `\$D` thì shell con thay, chỉ cách scoped đọc đúng), thân <<'EOF' thấy biến của shell cha như đã export (cách
+    # scoped=False cũng vậy nhưng không kéo dòng nên không thấy thân chỉ được đưa vào shell nhờ `\` cuối dòng mở).
+    # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở hay `\$` theo hướng làm lệnh xoá trông vô hại, nên
+    # chỉ lấy hợp. Cách gần bản cũ xét trước.
     # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
     # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
