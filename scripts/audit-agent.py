@@ -222,9 +222,12 @@ def benign_delete(full, ctx, worktree=True):
     while toks and toks[0].lower() in ("sudo", "doas", "wsl", "command", "builtin"):
         toks = toks[1:]
     cmd_style = bool(toks) and toks[0].lower() in ("rd", "del", "erase", "rmdir")  # /s /q là cờ của cmd
-    targets = [t for t in toks[1:] if t and not t.startswith("-") and not (cmd_style and CMD_FLAG.match(t))]
-    if not targets:
-        return False
+    args = toks[1:]
+    if not [t for t in args if t and not t.startswith("-") and not (cmd_style and CMD_FLAG.match(t))]:
+        return False  # như trước: ngoài cờ không thấy đích nào thì không biết lệnh xoá gì
+    end = args.index("--") if "--" in args else len(args)  # sau `--` đầu tiên mọi token là đích, kể cả token mở bằng `-`
+    targets = [t for t in args[:end] if t and not t.startswith("-") and not (cmd_style and CMD_FLAG.match(t))]
+    targets += [t for t in args[end + 1:] if t]
     worktree = worktree and not any(PS_NAMED.match(t) for t in toks)
     for t in targets:
         if ".." in re.split(r"[\\/]+", t):

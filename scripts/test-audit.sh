@@ -187,6 +187,13 @@ call("c2", "rm -rf /tmp/x\\\n  src")                                     # bash 
 call("c3", "ls | xargs \\\n  rm -rf /tmp/x")                             # bash chạy ls | xargs rm -rf /tmp/x
 call("c4", "echo a\\\\\nrm -rf src")                                     # `\\` là một `\` thường: xuống dòng là dấu ngắt thật
 call("c5", "rm -rf /tmp/x\\\nsrc")                                       # không thụt lề: bash xoá MỘT đích /tmp/xsrc
+# Sau `--` mọi token là đích, kể cả token mở bằng `-`. GNU rm hoán vị tham số: `--` sau đích vẫn kết thúc cờ.
+call("s1", "rm -rf -- -important /tmp/x")                               # xoá cả ./-important
+call("s2", "rm -rf /tmp/x -- -y")                                       # xoá cả ./-y
+call("s3", "rm -rf -- /tmp/x")                                          # `--` không phải đích: chỉ xoá /tmp/x
+call("s4", "(cd /tmp && true); rm -rf -- -x")                           # cd trong subshell không đổi thư mục: xoá ./-x của dự án
+call("s5", "cd dist && cd .. && rm -rf -- -x")                          # về lại thư mục dự án: xoá ./-x
+call("s6", "cd /tmp/w; rm -rf -- -x")                                   # cd lỗi thì `;` vẫn chạy rm: xoá ./-x của dự án
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -592,6 +599,13 @@ for must in ("rm -rf dist\\\n  src", "rm -rf /tmp/x\\\n  src", "ls | xargs \\\n 
     check(must in A, f"nối dòng như bash trước khi tách lệnh: đích hay xargs ở dòng sau vẫn tính: {must!r}")
 # Không thụt lề thì bash dán `src` vào đích trước: chỉ xoá /tmp/xsrc, vẫn trong thư mục tạm.
 check("rm -rf /tmp/x\\\nsrc" not in A, "`\\` + xuống dòng không thụt lề nối thành một đích /tmp/xsrc: vô hại")
+for must in ("rm -rf -- -important /tmp/x", "rm -rf /tmp/x -- -y"):
+    check(must in A, f"token sau `--` là đích dù mở bằng `-`: {must!r}")
+check("rm -rf -- /tmp/x" not in A, "bản thân `--` không phải đích: rm -rf -- /tmp/x vô hại")
+# Chốt "không có đích ngoài cờ thì báo" của bản cũ phải giữ: thư mục suy từ cd có thể sai (subshell, cd .., cd lỗi)
+# và bản cũ báo các ca này chỉ nhờ chốt đó.
+for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
+    check(must in A, f"đích chỉ gồm token mở bằng `-` thì vẫn báo như bản cũ, dù cd trông lành: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
