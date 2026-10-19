@@ -291,7 +291,7 @@ class Session:
         self.stop_blocks = {}  # (khoá dòng, thứ tự trong dòng) -> "1/3"
         self.stop_releases = set()  # khoá dòng
         self.bad_lines = 0
-        self.old_entries = 0
+        self.old_entries = set()  # khoá dòng
         self.events = {}       # mục I, J: khoá khử trùng -> dict {kind, ts, cwd, file, ...}
         self.file_state = {}   # trong file đang đọc: agent đã trả lời chưa, tool gọi gần nhất, kết luận gần nhất, dòng đang xét
         #                        và có lần từ chối lệnh shell nào chưa được agent trả lời hay bạn gõ lượt mới không (after_reject)
@@ -457,13 +457,13 @@ def parse_entry(e, s, path, who, cutoff, only_under):
     fresh = when is None or when >= cutoff
     if t == "assistant" and isinstance(msg, dict):
         track_assistant(e, msg, s, fresh)  # cả dòng cũ: câu sửa ở đầu cửa sổ --since vẫn biết agent đã trả lời trước đó
-    if not fresh:
-        s.old_entries += 1
-        return
-    # Khoá dòng cho mục E, F: dòng chép sang file khác giữ uuid, đếm một lần (xem add_event). Không có uuid thì mỗi
-    # dòng một khoá riêng, không gộp theo nội dung: hai lần chạy giống hệt nhau vẫn là hai lần.
+    # Khoá dòng cho mục E, F và old_entries: dòng chép sang file khác giữ uuid, đếm một lần (xem add_event). Không có uuid
+    # thì mỗi dòng một khoá riêng, không gộp theo nội dung: hai lần chạy giống hệt nhau vẫn là hai lần.
     u = e.get("uuid")
     key = u if isinstance(u, str) and u else object()
+    if not fresh:
+        s.old_entries.add(key)
+        return
     if t == "assistant":
         wire = e.get("wireToolInputs") or {}
         for c in msg.get("content") or []:
@@ -759,7 +759,7 @@ def main():
         "shell_commands": len(s.calls), "replay": bool(can_replay),
         "A_possible_misses": rows["A"], "B_regressions": rows["B"], "C_asked_approved": rows["C"],
         "D_asked_rejected": rows["D"], "G_rejected_not_asked": rows["G"], "H_ran_unguarded": rows["H"],
-        "hook_errors": list(s.hook_errors.values()), "old_entries_skipped": s.old_entries,
+        "hook_errors": list(s.hook_errors.values()), "old_entries_skipped": len(s.old_entries),
         "guard_records": len(s.guard),
         "replay_errors": sorted({r["error"] for r in replayed.values() if r.get("error")})[:5],
         "stop_gate": {"runs": len(s.stop_runs), "blocks": list(s.stop_blocks.values()), "released_after_max": len(s.stop_releases),
