@@ -430,6 +430,11 @@ shared = [
     user(DUP, [text("[Request interrupted by user]")], uuid="d-u4"),
     {"type": "system", "subtype": "stop_hook_summary", "timestamp": NOW, "cwd": DUP, "uuid": "d-s1",
      "hookInfos": [{"command": "stop-gate.sh", "durationMs": 10}], "hookErrors": [BLOCK.format(1), BLOCK.format(2)]},
+    {"type": "attachment", "uuid": "d-r1", "timestamp": NOW, "cwd": DUP, "attachment": {"type": "hook_system_message", "hookName": "Stop",
+     "hookEvent": "Stop", "content": "Stop gate: ./scripts/check.sh vẫn đỏ sau 3 lần chặn liên tiếp. Agent được dừng để bạn xem xét."}},
+    {"type": "attachment", "uuid": "d-h1", "timestamp": NOW, "cwd": DUP, "attachment": {"type": "hook_non_blocking_error",
+     "hookName": "PreToolUse:Bash", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-irreversible.sh", "exitCode": 1,
+     "stderr": "Failed with non-blocking status code: guard-irreversible.sh: lỗi giả"}},
     user(DUP, "bạn nhầm rồi", origin=HUMAN),  # bản cũ không có uuid: khử trùng theo nội dung
 ]
 write("-dup/s.jsonl", shared)
@@ -703,6 +708,9 @@ import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
 lcode, lmd, ex = int(sys.argv[10]), sys.argv[11], json.load(open(sys.argv[12], encoding="utf-8"))
 check(lcode == 0, f"audit thư mục mục I/J phải exit 0, được {lcode}")
+lsg = lr["stop_gate"]
+check(lsg["runs"] == 2 and lsg["blocks"] == ["1/3", "1/3"],
+      f"E: hai dòng Stop gate không có uuid (khác giờ, khác cwd) là hai lần chạy, không được gộp: {lsg}")
 I = lr.get("I_user_corrections") or []
 kinds = collections.Counter(i.get("kind") for i in I)
 check(kinds == {"interrupt": 1, "reject_note": 1, "correction": 3}, f"I phải có 1 ngắt, 1 từ chối kèm lời, 3 câu sửa: {dict(kinds)}")
@@ -768,6 +776,10 @@ rrow("dupproj", "dòng có mặt ở hai file phiên, chung uuid hoặc trùng n
 dupI = collections.Counter((i.get("kind"), i.get("text")) for i in rv.get("I_user_corrections") or [] if i.get("project") == "dupproj")
 check(dupI == {("reject_note", "đừng push"): 1, ("interrupt", None): 1, ("correction", "vẫn sai, làm lại"): 1, ("correction", "bạn nhầm rồi"): 1},
       f"I: mỗi lần sửa một dòng dù phiên có hai bản chép: {dict(dupI)}")
+dsg = rv["stop_gate"]
+check(dsg["runs"] == 1 and dsg["blocks"] == ["1/3", "2/3"] and dsg["released_after_max"] == 1,
+      f"E: phiên có hai bản chép thì dòng Stop gate chung uuid (chạy, chặn, nhả) chỉ đếm một lần: {dsg}")
+check(len(rv["hook_errors"]) == 1, f"F: phiên có hai bản chép thì dòng lỗi hook chung uuid chỉ đếm một lần: {rv['hook_errors']}")
 g = [i.get("cwd") for i in rv.get("G_rejected_not_asked") or [] if i.get("command") == "git push origin feat/w"]
 wr = [(i.get("kind"), i.get("cwd")) for i in rv.get("I_user_corrections") or [] if i.get("text") == "đừng push w"]
 wrJ = sorted((w.get("project"), w.get("prompts"), w.get("reject_note")) for w in rv.get("weekly") or [] if w.get("project", "").startswith("wr"))
