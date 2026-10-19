@@ -100,7 +100,14 @@ def load_watch(root):
     return pats
 
 
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
+# Heredoc: dòng mở (rest: phần còn lại của dòng, vẫn là lệnh), thân, dòng đóng (lỏng: khoảng trắng hai bên). Chưa đóng thì
+# thân tới hết chuỗi như bash. HEREDOC nhận thân rỗng khi dòng ngay sau dòng mở đúng là dấu đóng như bash đòi (chỉ `<<-`
+# cho tab đầu dòng, không khoảng trắng nào khác): không có nhóm body. HEREDOC_6F32D5A (cách đọc scoped=False) không nhận
+# thân rỗng như 6f32d5a, để phép hợp trong suspicious_labels vẫn có mọi nhãn cách đọc cũ cho.
+_HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?P<rest>[^\n]*)\n"
+_HD_BODY = r"(?P<body>.*?)(?:\n[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)"
+HEREDOC = re.compile(_HD_OPEN + r"(?:(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
+HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
@@ -157,10 +164,10 @@ def expand(text, env):
 def keep_shell_heredocs(cmd, join=False, scoped=True):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
-    scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng."""
+    scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
-        rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        rest, body = m["rest"], m["body"] or ""  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
         # Kéo dòng theo chỉ số rồi ghép một lần: cắt chuỗi mỗi vòng là bậc hai theo số dòng. `\` lẻ đã bỏ trước khi ghép
         # dòng kế, nên số `\` cuối cả lệnh cùng chẵn lẻ với số `\` cuối dòng vừa kéo.
         parts, pos = [rest], 0
@@ -174,8 +181,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True):
         fed = SHELL_WORD.search(m.string[line_start:m.start()]) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
-        return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    return HEREDOC.sub(sub, cmd)
+        return "\n".join((rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+    return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
 
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False):
