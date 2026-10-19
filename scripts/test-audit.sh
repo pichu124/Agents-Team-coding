@@ -295,6 +295,16 @@ call("hv7", "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF")      
 # đọc cũ. Guard không hỏi cả hai lệnh: vào A, không vào H.
 call("hp1", "wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'", tool="PowerShell")  # xoá /srv/app/src
 call("hp2", "D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x")                        # bash xoá /srv/atmp/x
+# Thân heredoc rỗng: dòng ngay sau dòng mở là dấu đóng, lệnh sau đó chạy ở shell cha. Chưa đóng thì thân tới hết chuỗi.
+call("ha1", "cat > f <<'EOF'\nEOF\nrm -rf src")                               # bash xoá src ở thư mục dự án
+call("ha2", "cat > f <<EOF\nEOF\nrm -rf src")
+call("ha3", "cat > f <<-EOF\n\tEOF\nrm -rf src")                              # <<- bỏ tab đầu dòng đóng
+call("ha4", "cat > f <<'EOF'\nEOF\nrm -rf src\nEOF")                          # EOF đầu đã đóng thân: bash xoá src
+call("ha5", "bash <<'EOF'\nEOF\nrm -rf src")                                  # bash nhận thân rỗng, rm chạy ở shell cha
+call("ha6", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src")                     # rm sau xuống dòng: cd lỗi thì xoá src của dự án
+call("ha7", "bash <<'EOF'\nrm -rf src")                                       # chưa đóng, thân đưa vào bash: bash xoá src
+# Dòng đầu chỉ đóng thân khi đúng là dấu đóng: `<<EOF` không bỏ tab, `\tEOF` là lệnh của thân, EOF sau mới đóng.
+call("ha8", "bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX")             # bash xoá src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -799,6 +809,12 @@ for must in ("export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}sr
 check("wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'" in A,
       "PowerShell cũng đọc thân heredoc theo cách cũ rồi lấy hợp")
 check("D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x" in A, "byte \\x03 có sẵn trong lệnh không phải dấu ở cách đọc cũ")
+for must in ("cat > f <<'EOF'\nEOF\nrm -rf src", "cat > f <<EOF\nEOF\nrm -rf src", "cat > f <<-EOF\n\tEOF\nrm -rf src",
+             "cat > f <<'EOF'\nEOF\nrm -rf src\nEOF"):
+    check(must in A, f"thân heredoc rỗng: dòng ngay sau dòng mở là dấu đóng, lệnh sau đó vẫn chạy: {must!r}")
+for must in ("bash <<'EOF'\nEOF\nrm -rf src", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src", "bash <<'EOF'\nrm -rf src"):
+    check(must in A, f"thân rỗng hay chưa đóng đưa vào shell vẫn nghi: {must!r}")
+check("bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX" in A, "`<<EOF` không bỏ tab: `\\tEOF` ở dòng đầu không đóng thân")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -983,6 +999,13 @@ got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
 check(dt < 2 and "xoá đệ quy" in got,
       f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 2 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
+# Heredoc chưa đóng: bash đọc thân tới hết chuỗi (cảnh báo delimited by end-of-file), rm là dữ liệu của cat, không chạy.
+got = a.suspicious_labels("cat > f <<'EOF'\nrm -rf src", a.SUSPICIOUS)
+check(got == [], f"heredoc chưa đóng nuốt tới hết chuỗi như bash: {got!r}")
+# Cách đọc như 6f32d5a (không nhận thân rỗng, thân tới hết chuỗi) vẫn ở trong phép hợp: chỉ nó thấy rm ở đây. `\` nối
+# D=/tmp/x/ thành tham số của true nên D rỗng: bash xoá src và `\`. Guard hỏi lệnh này (vào H) nên gọi trực tiếp.
+got = a.suspicious_labels("bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\", a.SUSPICIOUS)
+check("xoá đệ quy" in got, f"cách đọc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp: {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
