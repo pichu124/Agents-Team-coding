@@ -903,6 +903,15 @@ for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf 
         got = exc
     check(isinstance(got, list) and "xoá đệ quy" in got,
           f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
+# `\` cuối mỗi dòng thân kéo dòng kế vào lệnh: kéo từng dòng không được tốn thời gian bậc hai theo số dòng. Bản bậc hai
+# mất ~45 s với 40000 dòng, bản tuyến tính ~0,1 s. Bash nối cả 40002 dòng thành lệnh mở, thân rỗng, rm chạy sau EOF.
+import time
+cmd = "cat <<'EOF' \\\n" + "x \\\n" * 40000 + "| bash\nEOF\nrm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 2 and "xoá đệ quy" in got,
+      f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 2 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
