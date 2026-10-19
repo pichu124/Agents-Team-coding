@@ -211,7 +211,7 @@ def unwrap_shell_c(text):
     return SHELL_C_BODY.sub(sub, text)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
+def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -219,6 +219,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     join=False: không nối dòng tại `\\` + xuống dòng, tách như cũ.
     scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
     thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
+    parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như lúc mở, biến gán trong thân không đổi
+    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy).
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
@@ -249,7 +251,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
-    out, ctx, env, sep, saved, inherit = [], "", {}, None, [], False
+    out, ctx, env, sep, saved, inherit, frozen = [], "", {}, None, [], False, False
     for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
@@ -272,7 +274,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
-        for name, val in ASSIGN.findall(full):
+        for name, val in (ASSIGN.findall(full) if not frozen else ()):
             env[name] = val.strip("\"'")
         head, lead = full.lstrip("({ "), plain.lstrip("({ ")
         m = CD.match(head)
@@ -306,15 +308,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
         # scoped=False không đặt dấu: byte \x01–\x04 có sẵn trong lệnh là ký tự thường như ở 6f32d5a.
         for mark in (re.findall("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", raw) if scoped else ()):
             if mark == CLOSE:  # biến chỉ gán trong thân là rỗng ở shell cha, biến có từ trước lấy lại giá trị đã chụp
-                ctx, env, inherit = "", {**dict.fromkeys(env, ""), **(saved.pop() if saved else {})}, False
+                ctx, env, inherit, frozen = "", {**dict.fromkeys(env, ""), **(saved.pop() if saved else {})}, False, False
             elif mark == NOT_LAST:
                 inherit = False
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
                 # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
-                # đọc scoped=False thấy chúng). exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
+                # đọc scoped=False thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán trong thân
+                # không đổi phép thay. exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
                 # env thành ngăn xếp; cách đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
                 saved = (saved if exact else []) + [env]
                 env = dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
+                frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
 
@@ -391,15 +395,19 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
     # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
-    # Thân heredoc đưa vào shell cũng đọc hai cách: phạm vi riêng (scoped) và như 6f32d5a. Cách có phạm vi có thể đọc sai
-    # export, thân rỗng hay `\` cuối dòng mở theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
+    # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
+    # thấy biến của shell cha như lúc mở (parent_env: shell cha thay `$D` trước, gán trong thân không đổi phép thay;
+    # `\$D` thì shell con thay, chỉ cách scoped đọc đúng). Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở
+    # hay `\$` theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
     # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
     # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
     if tool == "PowerShell":
-        segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, exact=True)
+        segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, parent_env=True)
+        segs += segments(cmd, tool, exact=True)
     else:
         segs = [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
+        segs += [s for join in (False, True) for s in segments(cmd, tool, join, parent_env=True)]
         segs += [s for join in (False, True) for s in segments(cmd, tool, join, exact=True)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:

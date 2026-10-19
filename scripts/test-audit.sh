@@ -281,6 +281,13 @@ call("hz12", "cd /tmp/x && cd '-' && rm -rf src")
 call("hz13", "cd /tmp/x || rm -rf src")                                      # rm chỉ chạy khi cd lỗi
 call("hz14", "cd /tmp/x | rm -rf src")                                       # cd ở shell con của ống
 call("hz15", "D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src")        # vô hại: D có từ trước thân, giữ /tmp/y/
+# <<EOF không nháy: shell cha thay biến trong thân bằng giá trị của chính nó trước khi shell con chạy, nên biến gán trong thân
+# không đổi phép thay đó. `\$` thoát thì shell con mới thay, khi đó thấy biến gán trong thân.
+call("hv1", "bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF")                     # D rỗng ở shell cha: bash xoá /src
+call("hv2", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")          # shell cha thay D=/srv/: xoá /srv/src
+call("hv3", "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF")        # D rỗng: xoá /src (chạy ở /tmp/x)
+call("hv4", "D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF")        # `\$`: shell con thay, xoá /srv/src
+call("hv5", "D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF")                   # vô hại: shell cha thay D, xoá /tmp/y/src
 # PowerShell cũng đọc thêm thân heredoc theo cách cũ rồi lấy hợp; byte \x01–\x04 có sẵn trong lệnh không phải dấu ở cách
 # đọc cũ. Guard không hỏi cả hai lệnh: vào A, không vào H.
 call("hp1", "wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'", tool="PowerShell")  # xoá /srv/app/src
@@ -778,6 +785,11 @@ for must in ("cd /tmp/x && cd \"-\" && rm -rf src", "cd /tmp/x && cd '-' && rm -
 for must in ("cd /tmp/x || rm -rf src", "cd /tmp/x | rm -rf src"):
     check(must in A, f"`||` và `|` không giữ thư mục cd: {must!r}")
 check("D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src" not in A, "biến có từ trước thân heredoc giữ giá trị sau thân")
+for must in ("bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF",
+             "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF"):
+    check(must in A, f"heredoc không nháy: shell cha thay biến trước, biến gán trong thân không đổi phép thay: {must!r}")
+check("D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF" in A, "`\\$` trong thân heredoc không nháy: shell con thay biến")
+check("D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF" not in A, "heredoc không nháy: shell cha thay biến bằng thư mục tạm, vô hại")
 check("wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'" in A,
       "PowerShell cũng đọc thân heredoc theo cách cũ rồi lấy hợp")
 check("D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x" in A, "byte \\x03 có sẵn trong lệnh không phải dấu ở cách đọc cũ")
