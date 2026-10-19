@@ -180,7 +180,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False):
     scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
     thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
     parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như lúc mở, biến gán trong thân không đổi
-    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy).
+    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell
+    cha như đã export, biến gán trong thân vẫn áp.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped)
@@ -263,9 +264,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False):
                 inherit = False
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
                 # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
-                # đọc scoped=False thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán trong thân
-                # không đổi phép thay.
-                saved, env = env, dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
+                # đọc scoped=False và parent_env thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán
+                # trong thân không đổi phép thay.
+                saved, env = env, dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else dict(env)
                 frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
@@ -345,8 +346,10 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
     # thấy biến của shell cha như lúc mở (parent_env: shell cha thay `$D` trước, gán trong thân không đổi phép thay;
-    # `\$D` thì shell con thay, chỉ cách scoped đọc đúng). Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở
-    # hay `\$` theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
+    # `\$D` thì shell con thay, chỉ cách scoped đọc đúng), thân <<'EOF' thấy biến của shell cha như đã export (cách
+    # scoped=False cũng vậy nhưng không kéo dòng nên không thấy thân chỉ được đưa vào shell nhờ `\` cuối dòng mở).
+    # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở hay `\$` theo hướng làm lệnh xoá trông vô hại, nên
+    # chỉ lấy hợp. Cách gần bản cũ xét trước.
     segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) if tool == "PowerShell" else \
         [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
     segs += segments(cmd, tool, parent_env=True) if tool == "PowerShell" else \
