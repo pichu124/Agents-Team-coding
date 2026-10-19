@@ -238,6 +238,13 @@ call("cy8", "cd /tmp/x && command cd / && rm -rf home")
 call("cy9", "cd /tmp/x && source ./env.sh && rm -rf src")
 call("cy10", "cd /tmp/x && . ./env.sh && rm -rf src")
 call("cy11", "pushd /tmp/x && pushd +1 && rm -rf src")
+# Tên lệnh đổi thư mục có nháy hay `\` vẫn là lệnh đó sau khi bash bỏ nháy: rm chạy ở /home/p (`.` thì ở nơi env.sh cd tới).
+call("ce1", 'cd /tmp/x && "cd" /home/p && rm -rf src')
+call("ce2", "cd /tmp/x && 'cd' /home/p && rm -rf src")
+call("ce3", 'cd /tmp/x && c"d" /home/p && rm -rf src')
+call("ce4", "cd /tmp/x && c\\d /home/p && rm -rf src")
+call("ce5", "cd /tmp/x && $'cd' /home/p && rm -rf src")
+call("ce6", 'cd /tmp/x && "." ./env.sh && rm -rf src')
 # Thân heredoc đưa vào shell chạy ở shell con: biến gán trong thân không ra ngoài, biến không export của shell cha rỗng trong
 # thân <<'EOF' (<<EOF thì shell cha thay trước), chỉ shell cục bộ trơn chạy thân ở thư mục cd, thân chạy trước lệnh sau shell
 # trên dòng mở. `\` cuối dòng mở kéo dòng kế (`| bash`) vào lệnh. Shell trơn không có heredoc không đọc dòng sau.
@@ -733,6 +740,10 @@ for must in ("cd /tmp/x && builtin cd .. && rm -rf src", "cd /tmp/x && time cd /
              "cd /tmp/x && source ./env.sh && rm -rf src", "cd /tmp/x && . ./env.sh && rm -rf src"):
     check(must in A, f"lệnh đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục: {must!r}")
 check("pushd /tmp/x && pushd +1 && rm -rf src" in A, "đích pushd mở bằng `+` xoay ngăn xếp thư mục: không biết thư mục")
+for must in ('cd /tmp/x && "cd" /home/p && rm -rf src', "cd /tmp/x && 'cd' /home/p && rm -rf src",
+             'cd /tmp/x && c"d" /home/p && rm -rf src', "cd /tmp/x && c\\d /home/p && rm -rf src",
+             "cd /tmp/x && $'cd' /home/p && rm -rf src", 'cd /tmp/x && "." ./env.sh && rm -rf src'):
+    check(must in A, f"tên lệnh đổi thư mục có nháy hay `\\` vẫn đổi thư mục: không biết thư mục: {must!r}")
 for must in ("bash <<'EOF'\nD=/tmp/x\nEOF\nrm -rf $D/src", "bash <<'EOF'\nD=/tmp/x\n# don't\nEOF\necho 'ok'; rm -rf $D/src",
              "bash <<'EOF'; D=/tmp/x\nrm -rf $D/src\nEOF"):
     check(must in A, f"biến gán trong thân heredoc đưa vào shell không ra ngoài, thân chạy trước lệnh sau shell: {must!r}")

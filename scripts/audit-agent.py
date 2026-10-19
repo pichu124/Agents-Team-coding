@@ -119,8 +119,9 @@ ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)"
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
 CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
+CHDIR_NAMES = r"cd|pushd|popd|set-location|sl|push-location|pop-location|source"
 # Lệnh đổi thư mục ở vị trí lệnh bất kỳ trong đoạn (`builtin cd`, `time cd`, `FOO=1 cd`, `source`), hoặc `.` đầu lệnh.
-CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:cd|pushd|popd|set-location|sl|push-location|pop-location|source)"
+CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:" + CHDIR_NAMES + r")"
                    r"(?=[\s;&|(){}<>`\"']|$)"
                    r"|^(?:[({!`]\s*|(?:[A-Za-z_]\w*=\S*|builtin|command|time|-p|if|then|do|else|elif|while|until)\s+)*\.(?=\s|$)",
                    re.IGNORECASE)
@@ -235,6 +236,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
             ctx = ""  # cd không tham số, cd - (kể cả "-"), popd, subshell: không còn biết thư mục
         if CHDIR.search(lead[len(m.group(1)):] if m else lead):
             ctx = ""  # đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục
+        # Từ có nháy hay `\` (tách theo khoảng trắng ngoài nháy: `c"d"` là một từ) mà bỏ nháy và `\` đi thì thành tên lệnh
+        # đổi thư mục (`"cd"`, `'cd'`, `c\d`, `$'cd'`, `"."` đầu đoạn): bash vẫn chạy lệnh đó, CHDIR (bản che nháy) không thấy.
+        for k, word in enumerate(seg.lstrip("({ ").split()):
+            word = re.sub(r"\0(\d+)\0", unkeep, word)
+            name = re.sub(r"\$?[\"']|\\", "", word)
+            if name != word and (re.fullmatch(CHDIR_NAMES, name, re.IGNORECASE) or (name == "." and k == 0)):
+                ctx = ""
         if not mark_only:
             out.append((plain, full, ctx, "$" in raw))
         if re.search(r"[)}]", seg):
