@@ -991,4 +991,90 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
       f"{relabeled} lệnh đổi nhãn nhưng vẫn nghi")
 PYEOF
 fi
+
+# Bất biến khi có bản chép: worker khởi động lại hay resume chép phiên sang file khác, các dòng giữ uuid. Bộ đếm cộng dồn
+# đếm chúng hai lần; đã vá từng bộ một (3e86d90 mục I/J, PR #1 mục E/F, rồi old_entries_skipped) vì không test nào canh
+# mọi bộ đếm cùng lúc. Bước này chạy lại mọi thư mục phiên ở trên (A, dòng thiếu uuid được gán uuid tất định) và A kèm
+# một bản chép đầy đủ (B): báo cáo phải y hệt, trừ files, transcripts, khoá file (đường dẫn đọc sau cùng) và bad_lines.
+inv="$tmp/inv"
+"$py" - "$tmp" "$inv" <<'PYEOF'
+import json, os, shutil, sys
+tmp, inv = sys.argv[1:3]
+a = os.path.join(inv, "a")
+for n in sorted(os.listdir(tmp)):
+    src = os.path.join(tmp, n)
+    if n != "inv" and os.path.isdir(src) and any(f.endswith(".jsonl") for _r, _d, fs in os.walk(src) for f in fs):
+        shutil.copytree(src, os.path.join(a, n), symlinks=True)  # copy2: giữ mtime (--since lọc file theo mtime)
+if not os.path.isdir(a):
+    sys.exit("✘ audit: bước bản chép không thấy thư mục phiên nào: phải chạy sau khi mọi fixture đã sinh")
+for root, _dirs, fs in os.walk(a):
+    for f in fs:
+        if not f.endswith(".jsonl"):
+            continue
+        p = os.path.join(root, f)
+        st = os.stat(p)
+        rel = os.path.relpath(p, a).replace(os.sep, "/")
+        with open(p, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        for i, line in enumerate(lines):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue  # dòng hỏng giữ nguyên
+            if isinstance(e, dict) and not (isinstance(e.get("uuid"), str) and e["uuid"]):
+                e["uuid"] = f"{rel}:{i + 1}"
+                lines[i] = json.dumps(e, ensure_ascii=False) + "\n"
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(lines)
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+for n in ("goc", "chep"):
+    shutil.copytree(a, os.path.join(inv, "b", n))
+PYEOF
+built=$?
+./scripts/audit-agent.sh --transcripts "$inv/a" --since 30 --no-replay --json > "$inv/a.json"
+acode=$?
+./scripts/audit-agent.sh --transcripts "$inv/b" --since 30 --no-replay --json > "$inv/b.json"
+bcode=$?
+"$py" - "$inv" "$built" "$acode" "$bcode" <<'PYEOF' || status=1
+import json, os, sys
+inv, codes = sys.argv[1], [int(x) for x in sys.argv[2:5]]
+if codes != [0, 0, 0]:
+    sys.exit(f"✘ audit: bước bản chép không chạy được (dựng, audit A, audit B exit {codes})")
+raw = [json.load(open(os.path.join(inv, n + ".json"), encoding="utf-8")) for n in "ab"]
+def norm(x):
+    if isinstance(x, dict):
+        return {k: norm(v) for k, v in x.items() if k != "file"}
+    return [norm(v) for v in x] if isinstance(x, list) else x
+# bad_lines: dòng JSON hỏng không có uuid nên không khử trùng được, ở B bị đếm hai lần và không tránh được.
+a, b = ({k: v for k, v in norm(r).items() if k not in ("files", "transcripts", "bad_lines")} for r in raw)
+fails = []
+if raw[1]["files"] != 2 * raw[0]["files"]:
+    fails.append(f"B phải đọc gấp đôi số file của A: A {raw[0]['files']}, B {raw[1]['files']}")
+# Chỉ canh được bộ đếm mà fixture chạm tới: bộ nào rỗng ở A thì phép so vô nghĩa với nó.
+idle = [k for k, v in (("shell_commands", a["shell_commands"]), ("old_entries_skipped", a["old_entries_skipped"]),
+                       ("hook_errors", a["hook_errors"]), ("stop_gate.runs", a["stop_gate"]["runs"]),
+                       ("I_user_corrections", a["I_user_corrections"]), ("weekly", a["weekly"])) if not v]
+if idle:
+    fails.append(f"fixture không chạm tới bộ đếm: {', '.join(idle)}")
+def brief(v):
+    s = f"[{len(v)} mục]" if isinstance(v, list) else json.dumps(v, ensure_ascii=False)
+    return s if len(s) <= 200 else s[:199] + "…"
+diff = sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+for k in diff:
+    fails.append(f"{k}: A {brief(a.get(k))}, B {brief(b.get(k))}")
+    if isinstance(a.get(k), list) and isinstance(b.get(k), list):
+        i = next((i for i, (x, y) in enumerate(zip(a[k], b[k])) if x != y), None)
+        if i is not None:
+            fails[-1] += f"\n    mục {i} khác: A {brief(a[k][i])}, B {brief(b[k][i])}"
+if fails:
+    print("✘ audit: báo cáo đổi khi mọi file phiên có thêm một bản chép (A: fixture, B: A + một bản chép):", file=sys.stderr)
+    for f in fails:
+        print("  " + f, file=sys.stderr)
+    if diff:
+        print("  Bộ đếm mới phải khoá theo uuid của dòng (xem add_event, stop_runs…), không cộng dồn: phiên có bản chép "
+              "ở file khác.", file=sys.stderr)
+    sys.exit(1)
+dirs = sorted(os.listdir(os.path.join(inv, "a")))
+print(f"✔ audit: báo cáo không đổi khi mọi file phiên có thêm một bản chép ({raw[0]['files']} file từ {', '.join(dirs)})")
+PYEOF
 exit "$status"
