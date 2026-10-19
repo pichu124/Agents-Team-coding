@@ -198,7 +198,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
         seg = seg.strip()
         if not seg:
             continue
-        raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m.group(1))], seg)
+        # Lệnh có sẵn chuỗi dạng chỗ giữ (byte NUL, số, NUL) mà không có trong store thì giữ nguyên, không ném lỗi.
+        raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m[1])] if int(m[1]) < len(store) else m[0], seg)
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
