@@ -114,8 +114,9 @@ SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
 # Dòng dấu mở thân heredoc đưa vào shell (OPEN: <<EOF, shell cha thay biến trong thân; OPEN_RAW: <<'EOF', không thay) và
 # dòng dấu đóng (keep_shell_heredocs). Khác \0 của kho chuỗi trong nháy. NOT_LAST theo sau dấu mở khi trên dòng mở, sau
-# toán tử heredoc, còn lệnh (`bash <<'EOF' && cd x && bash`): shell nhận thân không phải lệnh cuối dòng.
-OPEN, OPEN_RAW, CLOSE, NOT_LAST = "\x02", "\x03", "\x01", "\x04"
+# toán tử heredoc, còn lệnh (`bash <<'EOF' && cd x && bash`): shell nhận thân không phải lệnh cuối dòng. SNAP đánh dấu chỗ
+# toán tử heredoc trên dòng mở: env của thân chụp tại đó, trước lệnh sau toán tử (segments, cách đọc parent_env).
+OPEN, OPEN_RAW, CLOSE, NOT_LAST, SNAP = "\x02", "\x03", "\x01", "\x04", "\x05"
 # Lệnh nhận thân heredoc là chính shell cục bộ: thân chạy ở thư mục của nó. Không nhận `ssh h bash`, `env -C / bash`...
 LOCAL_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
@@ -187,7 +188,8 @@ def expand(text, env):
 
 def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
-    và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
+    và dòng CLOSE, SNAP thay chỗ toán tử trên dòng mở. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như
+    bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
@@ -215,9 +217,9 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
-        return "\n".join((rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+        return "\n".join((SNAP + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính để không đọc thành dấu
-        cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", "\ufffd", cmd)
+        cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
 
 
@@ -242,9 +244,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     join=False: không nối dòng tại `\\` + xuống dòng, tách như cũ.
     scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
     thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
-    parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như lúc mở, biến gán trong thân không đổi
-    phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell
-    cha như đã export, biến gán trong thân vẫn áp.
+    parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như tại toán tử heredoc (không thấy gán tạm
+    trước lệnh hay lệnh sau toán tử trên dòng mở), biến gán trong thân không đổi phép thay tới hết thân (shell cha thay
+    `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell cha như đã export, kể cả gán tạm trước
+    lệnh, biến gán trong thân vẫn áp.
     comments=False: che nháy như 6f32d5a, không biết comment (nháy trong `# don't` mở chuỗi).
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
@@ -281,7 +284,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
-    out, ctx, env, sep, saved, inherit, frozen = [], "", {}, None, [], False, False
+    out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, [], False, False, None
     for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
@@ -291,6 +294,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         if not seg:
             continue
         raw = re.sub(r"\0(\d+)\0", unkeep, seg)
+        # Đoạn có toán tử heredoc đưa vào shell: bỏ SNAP rồi đọc như cũ, ghi env trước và sau phép gán của đoạn.
+        snapped = scoped and SNAP in raw
+        if snapped:
+            seg, raw, pre = seg.replace(SNAP, "").strip(), raw.replace(SNAP, "").strip(), dict(env)
+            if not seg:
+                snap = pre, pre
+                continue
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
@@ -306,6 +316,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             plain = re.sub(r"[\"']", " ", plain)
         for name, val in (ASSIGN.findall(full) if not frozen else ()):
             env[name] = val.strip("\"'")
+        if snapped:
+            snap = pre, dict(env)
         head, lead = full.lstrip("({ "), plain.lstrip("({ ")
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
@@ -344,10 +356,15 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
                 # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
                 # đọc scoped=False và parent_env thấy chúng). parent_env: shell cha thay biến trong thân <<EOF trước, gán
-                # trong thân không đổi phép thay. exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
-                # env thành ngăn xếp; cách đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
+                # trong thân không đổi phép thay. Env của thân chụp ở toán tử heredoc (SNAP), trước lệnh sau toán tử trên
+                # dòng mở: <<EOF không thấy gán tạm trước lệnh (shell cha thay), <<'EOF' thấy (shell con nhận gán tạm).
+                # exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp env thành ngăn xếp; cách
+                # đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
                 saved = (saved if exact else []) + [env]
                 env = dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else dict(env)
+                if parent_env and snap:
+                    env = dict(snap[1] if mark == OPEN_RAW else snap[0])
+                snap = None
                 frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out

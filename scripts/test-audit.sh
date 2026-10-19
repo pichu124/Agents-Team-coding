@@ -315,6 +315,12 @@ call("hb4", "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF") 
 # Byte \x01–\x04 có sẵn trong lệnh là chữ thường với bash, không phải dấu đóng/mở thân của cách đọc scoped.
 call("hb5", "D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF")             # D không export: bash xoá ./src
 call("hb6", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src")             # D chỉ gán trong thân: bash xoá ./src
+# Shell cha thay biến trong thân <<EOF ngay tại toán tử heredoc: trước lệnh sau toán tử trên dòng mở, không thấy gán tạm
+# trước lệnh. Thân <<'EOF' thì shell con thay, thấy gán tạm của chính nó.
+call("hb7", "bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF")                         # D chưa gán khi thay: bash xoá /src
+call("hb8", "bash <<EOF && D=/tmp/x\nrm -rf $D/src\nEOF")                       # bash xoá /src
+call("hb9", "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF")                        # bash xoá ./src
+call("hb10", "D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF")                     # bash xoá /srv/x/src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -831,6 +837,10 @@ check("true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF" in A,
       "cách che nháy cũ (không biết comment) vẫn ở trong phép hợp, kể cả ở cách đọc kéo dòng")
 for must in ("D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src"):
     check(must in A, f"byte \\x01–\\x04 có sẵn trong lệnh không phải dấu của cách đọc scoped: {must!r}")
+for must in ("bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF", "bash <<EOF && D=/tmp/x\nrm -rf $D/src\nEOF",
+             "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"shell cha thay biến trong thân <<EOF tại toán tử heredoc, trước lệnh sau nó, không thấy gán tạm: {must!r}")
+check("D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF" in A, "thân <<'EOF': shell con thấy phép gán tạm của chính nó")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
