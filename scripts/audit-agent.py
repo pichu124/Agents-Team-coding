@@ -142,6 +142,9 @@ CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:" + CHDIR_NAMES + r")"
                    r"(?=[\s;&|(){}<>`\"']|$)"
                    r"|^(?:[({!`]\s*|(?:[A-Za-z_]\w*=\S*|builtin|command|time|-p|if|then|do|else|elif|while|until)\s+)*\.(?=\s|$)",
                    re.IGNORECASE)
+# `&` chạy nền còn lệnh theo sau trong cùng đoạn (dò trên bản đã che nháy). Không phải `>&`, `<&`, `&>`; `&&` đã tách,
+# `&` đầu đoạn là của `|&`.
+BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
 TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
@@ -293,6 +296,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
             name = re.sub(r"\$?[\"']|\\", "", word)
             if name != word and (re.fullmatch(CHDIR_NAMES, name, re.IGNORECASE) or (name == "." and k == 0)):
                 ctx = ""
+        if BACKGROUND.search(seg):
+            ctx = ""  # `cd x && a & b`: cả `cd x && a` chạy nền ở shell con, b chạy ở thư mục cũ
         if not mark_only:
             out.append((plain, full, ctx, "$" in raw))
         if re.search(r"[)}]", seg):
