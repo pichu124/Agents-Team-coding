@@ -199,6 +199,12 @@ call("bc1", "cd /tmp/x && rm -rf $D/src")                               # D chư
 call("bc2", "cd /tmp/x && rm -rf `pwd`src")                             # bash xoá /tmp/xsrc: lệnh lồng cho đường tuyệt đối
 call("bc3", "cd /tmp/x && rm -rf {/,}src")                              # brace: bash xoá /src và ./src
 call("bc4", "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src") # xoá src ở gốc repo
+# rm của BSD/macOS (getopt POSIX, không hoán vị) thôi nhận cờ ở toán hạng đầu tiên: token sau đó là đích dù mở bằng `-`.
+# Không áp cho PowerShell (`rm` là Remove-Item, tham số đứng sau đích được) và cmd (`rd /s`), trừ khi chạy qua wsl.
+call("bc5", "rm -rf /tmp/x -important")                                 # macOS xoá cả ./-important
+call("bc6", "wsl rm -rf /tmp/x -important", tool="PowerShell")          # rm chạy trong Linux: đọc như lệnh Bash
+call("bc7", "rm C:\\tmp\\x -Recurse", tool="PowerShell")                # vô hại: -Recurse là tham số của Remove-Item
+call("bc8", "rd /s /q C:\\tmp\\x")                                       # vô hại: /s /q là cờ của cmd
 # Thư mục cd chỉ áp cho lệnh nối sau nó bằng `&&` trong cùng phạm vi. Các ca sau, bash chạy rm ở thư mục dự án.
 call("cx1", "(cd /tmp && true); rm -rf src")                            # cd trong subshell
 call("cx2", "(cd /tmp && true) && rm -rf src")
@@ -697,6 +703,10 @@ check("rm -rf -- /tmp/x" not in A, "bản thân `--` không phải đích: rm -r
 for must in ("cd /tmp/x && rm -rf $D/src", "cd /tmp/x && rm -rf `pwd`src", "cd /tmp/x && rm -rf {/,}src",
              "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src"):
     check(must in A, f"đích còn `$`, backtick, `{{` hay `(` không phải đường tương đối với thư mục cd: {must!r}")
+for must in ("rm -rf /tmp/x -important", "wsl rm -rf /tmp/x -important"):
+    check(must in A, f"rm của BSD thôi nhận cờ ở toán hạng đầu tiên: token sau đó là đích dù mở bằng `-`: {must!r}")
+for benign in ("rm C:\\tmp\\x -Recurse", "rd /s /q C:\\tmp\\x"):
+    check(benign not in A, f"Remove-Item của PowerShell và cmd nhận tham số sau đích: vô hại: {benign!r}")
 # Chốt "không có đích ngoài cờ thì báo" của bản cũ phải giữ: thư mục suy từ cd có thể sai (subshell, cd .., cd lỗi)
 # và bản cũ báo các ca này chỉ nhờ chốt đó.
 for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
