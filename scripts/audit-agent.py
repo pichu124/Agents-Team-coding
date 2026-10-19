@@ -104,6 +104,12 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
+# Dòng dấu mở thân heredoc đưa vào shell (OPEN: <<EOF, shell cha thay biến trong thân; OPEN_RAW: <<'EOF', không thay) và
+# dòng dấu đóng (keep_shell_heredocs). Khác \0 của kho chuỗi trong nháy. NOT_LAST theo sau dấu mở khi trên dòng mở, sau
+# toán tử heredoc, còn lệnh (`bash <<'EOF' && cd x && bash`): shell nhận thân không phải lệnh cuối dòng.
+OPEN, OPEN_RAW, CLOSE, NOT_LAST = "\x02", "\x03", "\x01", "\x04"
+# Lệnh nhận thân heredoc là chính shell cục bộ: thân chạy ở thư mục của nó. Không nhận `ssh h bash`, `env -C / bash`...
+LOCAL_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
                      r"|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b",
                      re.IGNORECASE)
@@ -118,8 +124,6 @@ CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:cd|pushd|popd|set-location|sl|push
                    r"(?=[\s;&|(){}<>`\"']|$)"
                    r"|^(?:[({!`]\s*|(?:[A-Za-z_]\w*=\S*|builtin|command|time|-p|if|then|do|else|elif|while|until)\s+)*\.(?=\s|$)",
                    re.IGNORECASE)
-# Lệnh chỉ là một shell đọc stdin: keep_shell_heredocs đặt thân heredoc đưa vào nó ngay sau, cách bằng xuống dòng.
-STDIN_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
@@ -146,25 +150,35 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd):
-    """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh."""
+def keep_shell_heredocs(cmd, join=False, scoped=True):
+    """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
+    và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
+    scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
-        rest = m.group(3)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
+            line, _, body = body.partition("\n")
+            rest = rest[:-1] + line
         fed = SHELL_WORD.search(m.string[line_start:m.start()]) or PIPE_SHELL.match(rest)
-        return rest + "\n" + (m.group(4) + "\n" if fed else "")
+        if not (fed and scoped):
+            return rest + "\n" + (body + "\n" if fed else "")
+        return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     return HEREDOC.sub(sub, cmd)
 
 
-def segments(cmd, tool="Bash", join=True):
+def segments(cmd, tool="Bash", join=True, scoped=True):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
     giữ nguyên để biết đích thật. Biến gán trong lệnh (S=/tmp/x; rm -rf $S) được thay theo thứ tự.
     join=False: không nối dòng tại `\\` + xuống dòng, tách như cũ.
+    scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
+    thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
     """
-    body = keep_shell_heredocs(cmd)
-    if join and tool != "PowerShell":  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
+    join = join and tool != "PowerShell"
+    body = keep_shell_heredocs(cmd, join, scoped)
+    if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", body)
     store = []
 
@@ -175,7 +189,7 @@ def segments(cmd, tool="Bash", join=True):
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
-    out, ctx, env, sep = [], "", {}, None
+    out, ctx, env, sep, saved, inherit = [], "", {}, None, None, False
     for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
@@ -184,12 +198,16 @@ def segments(cmd, tool="Bash", join=True):
         seg = seg.strip()
         if not seg:
             continue
-        # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng thân
-        # heredoc đưa vào shell (`cd x && bash <<'EOF'`) chạy trong shell đó, ở thư mục của nó.
-        if sep != "&&" and not (sep == "\n" and out and STDIN_SHELL.match(out[-1][0])):
-            ctx = ""
-        sep = None
         raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m.group(1))], seg)
+        mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
+        # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
+        # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
+        if not mark_only:
+            inherit = inherit or not scoped and sep == "\n" and bool(out and LOCAL_SHELL.match(out[-1][0]))
+            if sep != "&&" and not inherit:
+                ctx = ""
+            inherit = False
+        sep = None
         full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
@@ -207,13 +225,26 @@ def segments(cmd, tool="Bash", join=True):
                 ctx = target if is_absolute(target) else (ctx + "/" + target)
             else:
                 ctx = ""
-        elif full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
-            ctx = ""  # cd không tham số, cd -, popd, subshell: không còn biết thư mục
+        elif m or full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
+            ctx = ""  # cd không tham số, cd - (kể cả "-"), popd, subshell: không còn biết thư mục
         if CHDIR.search(lead[len(m.group(1)):] if m else lead):
             ctx = ""  # đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục
-        out.append((plain, full, ctx, "$" in raw))
+        if not mark_only:
+            out.append((plain, full, ctx, "$" in raw))
         if re.search(r"[)}]", seg):
             ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
+        # Dò dấu trên raw: nháy lẻ trong thân (`# don't`) ghép với nháy sau EOF có thể nuốt dòng dấu vào một chuỗi.
+        # scoped=False không đặt dấu: byte \x01–\x04 có sẵn trong lệnh là ký tự thường như ở 6f32d5a.
+        for mark in (re.findall("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", raw) if scoped else ()):
+            if mark == CLOSE:  # biến chỉ gán trong thân là rỗng ở shell cha, biến có từ trước lấy lại giá trị đã chụp
+                ctx, env, saved, inherit = "", {**dict.fromkeys(env, ""), **(saved or {})}, None, False
+            elif mark == NOT_LAST:
+                inherit = False
+            else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
+                # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
+                # đọc scoped=False thấy chúng)
+                saved, env = env, dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
+                inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
 
 
@@ -274,7 +305,10 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
     # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
-    segs = segments(cmd, tool) if tool == "PowerShell" else segments(cmd, tool, join=False) + segments(cmd, tool)
+    # Thân heredoc đưa vào shell cũng đọc hai cách: phạm vi riêng (scoped) và như 6f32d5a. Cách có phạm vi có thể đọc sai
+    # export, thân rỗng hay `\` cuối dòng mở theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
+    segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) if tool == "PowerShell" else \
+        [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):

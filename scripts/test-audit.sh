@@ -222,6 +222,42 @@ call("cy8", "cd /tmp/x && command cd / && rm -rf home")
 call("cy9", "cd /tmp/x && source ./env.sh && rm -rf src")
 call("cy10", "cd /tmp/x && . ./env.sh && rm -rf src")
 call("cy11", "pushd /tmp/x && pushd +1 && rm -rf src")
+# Thân heredoc đưa vào shell chạy ở shell con: biến gán trong thân không ra ngoài, biến không export của shell cha rỗng trong
+# thân <<'EOF' (<<EOF thì shell cha thay trước), chỉ shell cục bộ trơn chạy thân ở thư mục cd, thân chạy trước lệnh sau shell
+# trên dòng mở. `\` cuối dòng mở kéo dòng kế (`| bash`) vào lệnh. Shell trơn không có heredoc không đọc dòng sau.
+call("hd1", "bash <<'EOF'\nD=/tmp/x\nEOF\nrm -rf $D/src")               # D rỗng sau heredoc: bash xoá /src
+call("hd2", "bash <<'EOF'\nD=/tmp/x\n# don't\nEOF\necho 'ok'; rm -rf $D/src")  # nháy lẻ trong thân không che dấu đóng
+call("hd3", "cat <<'EOF' \\\n| bash\nrm -rf src\nEOF")
+call("hd4", "cd /tmp/w && bash\nrm -rf src")                            # cd lỗi thì rm vẫn chạy ở dự án
+call("hd5", "bash <<'EOF' && cd /tmp/x\nrm -rf src\nEOF")               # thân chạy trước cd
+call("hd6", "bash <<'EOF'; D=/tmp/x\nrm -rf $D/src\nEOF")               # thân chạy trước khi gán D
+call("hd7", "cd /tmp/w && bash <<'EOF'\nrm -rf y\nEOF\necho ok")        # vô hại: thân thừa hưởng thư mục cd
+call("hd8", "cd /tmp/x && env -C / bash <<'EOF'\nrm -rf home\nEOF")     # thân chạy ở /: chỉ shell cục bộ trơn mới thừa hưởng
+call("hd9", "cd /tmp/x && ssh host bash <<'EOF'\nrm -rf src\nEOF")      # thân chạy ở máy khác
+call("hd10", "D=/tmp/x; bash <<'EOF'\nrm -rf $D/src\nEOF")              # shell con không thấy D (không export): xoá /src
+call("hd11", "D=/srv/; cd /tmp/x && bash <<EOF\nrm -rf ${D}y\nEOF")     # <<EOF: shell cha thay D trước, bash xoá /srv/y
+call("hd12", "export D=/srv/; cd /tmp/x && bash <<'EOF'\nrm -rf ${D}y\nEOF")  # D đã export: shell con thấy D, xoá /srv/y
+# Biến chỉ gán trong thân là rỗng sau thân (không phải "không biết"); export hay không thì không đoán: đọc cả theo cách cũ
+# (thân không phạm vi) rồi lấy hợp. Thân chỉ thừa hưởng thư mục khi shell nhận thân là lệnh cuối dòng mở. `cd -` dù có nháy.
+call("hz1", "bash <<'EOF'\nD=/home/u\nEOF\ncd /tmp/x && rm -rf $D/src")      # D rỗng sau thân: bash xoá /src
+call("hz2", "bash <<'EOF'\nD=/tmp/y\nEOF\ncd /tmp/x && rm -rf $D/src")      # D rỗng, không phải /tmp/y: bash xoá /src
+call("hz3", "D=/srv/app/ bash <<'EOF'\ncd /tmp/x && rm -rf ${D}src\nEOF")  # gán tạm cho bash: thân thấy D, xoá /srv/app/src
+call("hz4", "env D=/srv/app/ bash <<'EOF'\ncd /tmp/x && rm -rf ${D}src\nEOF")
+call("hz5", "set -e -a; D=/srv/app/; cd /tmp/x && bash <<'EOF'\nrm -rf ${D}src\nEOF")  # set -a export D
+call("hz6", "HOME=/home/u/; cd /tmp/x && bash <<'EOF'\nrm -rf ${HOME}proj\nEOF")       # HOME vốn đã export
+call("hz7", "D=/srv/app/; bash <<'EOF'\nEOF\ncd /tmp/x && rm -rf ${D}src")  # thân rỗng: dòng sau EOF ở shell cha
+call("hz8", "D=/srv/app/; bash <<'EOF' && cd /tmp/x && bash\nrm -rf ${D}src\nEOF")  # bash đầu nhận thân, ở dự án
+call("hz9", "cat <<'EOF' \\\n| bash\nEOF\ncd /tmp/x && rm -rf $D/src")     # D chưa gán: bash xoá /src
+call("hz10", "bash <<'EOF' && cd /tmp/x && bash\nrm -rf src\nEOF")         # thân chạy ở dự án, trước cd
+call("hz11", "cd /tmp/x && cd \"-\" && rm -rf src")                          # về lại thư mục dự án
+call("hz12", "cd /tmp/x && cd '-' && rm -rf src")
+call("hz13", "cd /tmp/x || rm -rf src")                                      # rm chỉ chạy khi cd lỗi
+call("hz14", "cd /tmp/x | rm -rf src")                                       # cd ở shell con của ống
+call("hz15", "D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src")        # vô hại: D có từ trước thân, giữ /tmp/y/
+# PowerShell cũng đọc thêm thân heredoc theo cách cũ rồi lấy hợp; byte \x01–\x04 có sẵn trong lệnh không phải dấu ở cách
+# đọc cũ. Guard không hỏi cả hai lệnh: vào A, không vào H.
+call("hp1", "wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'", tool="PowerShell")  # xoá /srv/app/src
+call("hp2", "D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x")                        # bash xoá /srv/atmp/x
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -672,6 +708,36 @@ for must in ("cd /tmp/x && builtin cd .. && rm -rf src", "cd /tmp/x && time cd /
              "cd /tmp/x && source ./env.sh && rm -rf src", "cd /tmp/x && . ./env.sh && rm -rf src"):
     check(must in A, f"lệnh đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục: {must!r}")
 check("pushd /tmp/x && pushd +1 && rm -rf src" in A, "đích pushd mở bằng `+` xoay ngăn xếp thư mục: không biết thư mục")
+for must in ("bash <<'EOF'\nD=/tmp/x\nEOF\nrm -rf $D/src", "bash <<'EOF'\nD=/tmp/x\n# don't\nEOF\necho 'ok'; rm -rf $D/src",
+             "bash <<'EOF'; D=/tmp/x\nrm -rf $D/src\nEOF"):
+    check(must in A, f"biến gán trong thân heredoc đưa vào shell không ra ngoài, thân chạy trước lệnh sau shell: {must!r}")
+check("D=/tmp/x; bash <<'EOF'\nrm -rf $D/src\nEOF" in A, "biến không export của shell cha là rỗng trong thân heredoc (trong nháy)")
+check("D=/srv/; cd /tmp/x && bash <<EOF\nrm -rf ${D}y\nEOF" in A, "heredoc không nháy: shell cha thay biến trong thân trước khi đưa vào")
+check("export D=/srv/; cd /tmp/x && bash <<'EOF'\nrm -rf ${D}y\nEOF" in A, "biến đã export: shell con thấy giá trị của shell cha")
+check("cat <<'EOF' \\\n| bash\nrm -rf src\nEOF" in A, "`\\` cuối dòng mở heredoc kéo `| bash` vào lệnh: thân được đưa vào bash")
+for must in ("cd /tmp/w && bash\nrm -rf src", "bash <<'EOF' && cd /tmp/x\nrm -rf src\nEOF",
+             "cd /tmp/x && env -C / bash <<'EOF'\nrm -rf home\nEOF", "cd /tmp/x && ssh host bash <<'EOF'\nrm -rf src\nEOF"):
+    check(must in A, f"chỉ thân heredoc đưa vào shell mới thừa hưởng thư mục, của chính lệnh shell: {must!r}")
+check("cd /tmp/w && bash <<'EOF'\nrm -rf y\nEOF\necho ok" not in A, "thân heredoc đưa vào shell thừa hưởng thư mục cd của lệnh mở")
+for must in ("bash <<'EOF'\nD=/home/u\nEOF\ncd /tmp/x && rm -rf $D/src", "bash <<'EOF'\nD=/tmp/y\nEOF\ncd /tmp/x && rm -rf $D/src"):
+    check(must in A, f"biến chỉ gán trong thân heredoc đưa vào shell là rỗng sau thân, không phải không biết: {must!r}")
+for must in ("D=/srv/app/ bash <<'EOF'\ncd /tmp/x && rm -rf ${D}src\nEOF", "env D=/srv/app/ bash <<'EOF'\ncd /tmp/x && rm -rf ${D}src\nEOF",
+             "set -e -a; D=/srv/app/; cd /tmp/x && bash <<'EOF'\nrm -rf ${D}src\nEOF",
+             "HOME=/home/u/; cd /tmp/x && bash <<'EOF'\nrm -rf ${HOME}proj\nEOF",
+             "D=/srv/app/; bash <<'EOF'\nEOF\ncd /tmp/x && rm -rf ${D}src",
+             "D=/srv/app/; bash <<'EOF' && cd /tmp/x && bash\nrm -rf ${D}src\nEOF",
+             "cat <<'EOF' \\\n| bash\nEOF\ncd /tmp/x && rm -rf $D/src"):
+    check(must in A, f"không đoán export, thân rỗng hay kéo dòng: đọc thêm theo cách cũ rồi lấy hợp: {must!r}")
+check("bash <<'EOF' && cd /tmp/x && bash\nrm -rf src\nEOF" in A,
+      "thân heredoc chỉ thừa hưởng thư mục khi shell nhận thân là lệnh cuối dòng mở")
+for must in ("cd /tmp/x && cd \"-\" && rm -rf src", "cd /tmp/x && cd '-' && rm -rf src"):
+    check(must in A, f"cd - trong nháy vẫn về thư mục trước: không biết thư mục: {must!r}")
+for must in ("cd /tmp/x || rm -rf src", "cd /tmp/x | rm -rf src"):
+    check(must in A, f"`||` và `|` không giữ thư mục cd: {must!r}")
+check("D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src" not in A, "biến có từ trước thân heredoc giữ giá trị sau thân")
+check("wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'" in A,
+      "PowerShell cũng đọc thân heredoc theo cách cũ rồi lấy hợp")
+check("D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x" in A, "byte \\x03 có sẵn trong lệnh không phải dấu ở cách đọc cũ")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
