@@ -194,6 +194,11 @@ call("s3", "rm -rf -- /tmp/x")                                          # `--` k
 call("s4", "(cd /tmp && true); rm -rf -- -x")                           # cd trong subshell không đổi thư mục: xoá ./-x của dự án
 call("s5", "cd dist && cd .. && rm -rf -- -x")                          # về lại thư mục dự án: xoá ./-x
 call("s6", "cd /tmp/w; rm -rf -- -x")                                   # cd lỗi thì `;` vẫn chạy rm: xoá ./-x của dự án
+# Đích còn biến chưa biết, lệnh lồng hay brace: bash thay trước khi rm chạy, kết quả không phải đường tương đối với thư mục cd.
+call("bc1", "cd /tmp/x && rm -rf $D/src")                               # D chưa gán: bash xoá /src
+call("bc2", "cd /tmp/x && rm -rf `pwd`src")                             # bash xoá /tmp/xsrc: lệnh lồng cho đường tuyệt đối
+call("bc3", "cd /tmp/x && rm -rf {/,}src")                              # brace: bash xoá /src và ./src
+call("bc4", "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src") # xoá src ở gốc repo
 # Thư mục cd chỉ áp cho lệnh nối sau nó bằng `&&` trong cùng phạm vi. Các ca sau, bash chạy rm ở thư mục dự án.
 call("cx1", "(cd /tmp && true); rm -rf src")                            # cd trong subshell
 call("cx2", "(cd /tmp && true) && rm -rf src")
@@ -689,6 +694,9 @@ check("rm -rf /tmp/x\\\nsrc" not in A, "`\\` + xuống dòng không thụt lề 
 for must in ("rm -rf -- -important /tmp/x", "rm -rf /tmp/x -- -y"):
     check(must in A, f"token sau `--` là đích dù mở bằng `-`: {must!r}")
 check("rm -rf -- /tmp/x" not in A, "bản thân `--` không phải đích: rm -rf -- /tmp/x vô hại")
+for must in ("cd /tmp/x && rm -rf $D/src", "cd /tmp/x && rm -rf `pwd`src", "cd /tmp/x && rm -rf {/,}src",
+             "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src"):
+    check(must in A, f"đích còn `$`, backtick, `{{` hay `(` không phải đường tương đối với thư mục cd: {must!r}")
 # Chốt "không có đích ngoài cờ thì báo" của bản cũ phải giữ: thư mục suy từ cd có thể sai (subshell, cd .., cd lỗi)
 # và bản cũ báo các ca này chỉ nhờ chốt đó.
 for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
@@ -808,6 +816,9 @@ for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\n
 # PowerShell nối dòng bằng backtick, `\` cuối dòng chỉ là dấu phân cách đường dẫn.
 got = [full for _p, full, _c, _s in a.segments("Remove-Item -Recurse C:\\x\\\nsrc", "PowerShell")]
 check(got == ["Remove-Item -Recurse C:\\x\\", "src"], f"PowerShell không nối dòng tại `\\`: {got!r}")
+# Guard hỏi lệnh này (` /)` trông như đích /), nên không vào A: kiểm thẳng. Bash thay $(echo /) rồi xoá /src.
+check("xoá đệ quy" in a.suspicious_labels("cd /tmp/x && rm -rf $(echo /)src", a.SUSPICIOUS),
+      "đích mở bằng lệnh lồng không phải đường tương đối với thư mục cd: cd /tmp/x && rm -rf $(echo /)src")
 # Chỗ bash KHÔNG nối dòng: `\` trong comment là chữ, `\` cuối thân heredoc hay cuối dòng mở heredoc không nối qua ranh giới.
 # Bản nối dòng đọc sai các ca này, bản không nối dòng vẫn bắt được.
 for cmd in ("cd proj # vao thu muc \\\nrm -rf src ./node_modules", "cd proj;# x \\\nrm -rf src /tmp/x"):
