@@ -40,4 +40,5 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
 | Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
 | Không bớt ca "phải hỏi" của guard để cho dễ | `scripts/guard-ask-floor` (test-hooks đỏ khi số ca dưới sàn) |
+| Sửa phân tích lệnh của audit không được làm mục A bỏ sót lệnh mà bản trước vẫn báo | `scripts/test-audit.sh` (so với bản trước trên lệnh fixture và fuzz; `NARROWING_OK` cho thu hẹp có chủ ý) |
 | Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |
