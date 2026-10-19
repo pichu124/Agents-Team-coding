@@ -186,6 +186,12 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
         store.append(m.group(0))
         return "\0%d\0" % (len(store) - 1)
 
+    def unkeep(m):
+        # Lệnh có sẵn chuỗi dạng chỗ giữ (byte NUL, số, NUL) mà số không có trong store thì giữ nguyên, không ném lỗi.
+        # Bỏ số 0 đầu và so độ dài trước: int() ném lỗi với chuỗi quá 4300 chữ số.
+        n = m[1].lstrip("0") or "0"
+        return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
+
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
@@ -198,8 +204,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
         seg = seg.strip()
         if not seg:
             continue
-        # Lệnh có sẵn chuỗi dạng chỗ giữ (byte NUL, số, NUL) mà không có trong store thì giữ nguyên, không ném lỗi.
-        raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m[1])] if int(m[1]) < len(store) else m[0], seg)
+        raw = re.sub(r"\0(\d+)\0", unkeep, seg)
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.

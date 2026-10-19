@@ -832,12 +832,13 @@ for cmd in ("bash <<'EOF'\ncd node_modules \\\n  && npm ci\n# don't touch src\nE
     check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"bản nối dòng chỉ thêm nghi ngờ: lệnh nghi khi không nối dòng vẫn nghi: {cmd!r}")
 # Lệnh có sẵn chuỗi trùng dạng chỗ giữ nháy (byte NUL, số, NUL) không được làm audit chết: một lệnh ném lỗi là mất cả báo cáo.
 # `\` cuối dòng mở heredoc kéo dòng thân vào lệnh nên chuỗi đó tới được chỗ tra.
-for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf src"):
+for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf src", "echo \x00" + "1" * 5000 + "\x00; rm -rf src"):
     try:
         got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     except Exception as exc:
         got = exc
-    check(got and not isinstance(got, Exception), f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd!r}: {got!r}")
+    check(isinstance(got, list) and "xoá đệ quy" in got,
+          f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
