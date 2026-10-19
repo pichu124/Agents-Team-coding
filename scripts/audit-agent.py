@@ -216,6 +216,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         return "\n".join((rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+    if scoped:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính để không đọc thành dấu
+        cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", "\ufffd", cmd)
     return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
 
 
