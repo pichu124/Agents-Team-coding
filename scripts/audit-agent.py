@@ -121,13 +121,20 @@ LOCAL_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
                      r"|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b",
                      re.IGNORECASE)
-QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
-QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng \ ("C:\x\" là một chuỗi trọn)
-# segments(exact=True) che cả comment như một chuỗi: `#` mở một từ (sau khoảng trắng, `;&|()` hay đầu dòng, ngoài nháy) tới
-# hết dòng. Nháy lẻ trong comment (`# don't`) không còn ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh.
+# Chuỗi trong nháy, hoặc comment: `#` đầu từ ngoài nháy (sau đầu chuỗi, xuống dòng, hay sau khoảng trắng, `;&|()<>` không
+# thoát bằng `\`, của PowerShell là backtick) tới hết dòng. Quét chung một lượt trái→phải để nháy trong comment (`# don't`)
+# không mở chuỗi nuốt các dòng sau. Cách che như 6f32d5a (không biết comment, segments(comments=False)) vẫn ở trong phép hợp:
+# nó cho cả nhãn chỉ có nhờ nháy ghép sai (`true | cd /tmp/x && rm -rf y #'⏎cat <<'EOF' \⏎# don't $x⏎EOF`: bash xoá ./y).
+QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'|(?<![^ \t\n;&|()<>])(?<!\\[ \t;&|()<>])#[^\n]*")
+QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'|(?<![^ \t\n;&|()<>])(?<!`[ \t;&|()<>])#[^\n]*")  # không escape bằng \ ("C:\x\" trọn)
+QUOTED_6F32D5A = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+QUOTED_PS_6F32D5A = re.compile(r"\"[^\"]*\"|'[^']*'")
+# segments(exact=True) che nháy như 6f32d5a và che cả comment như một chuỗi (cất vào kho như chuỗi trong nháy): `#` mở một
+# từ (sau khoảng trắng, `;&|()` hay đầu dòng, ngoài nháy) tới hết dòng. Nháy lẻ trong comment (`# don't`) không còn ghép
+# với nháy của lệnh sau thành một chuỗi nuốt lệnh.
 COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
-QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
-QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
+QUOTED_X = re.compile(QUOTED_6F32D5A.pattern + COMMENT, re.MULTILINE)
+QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
 # đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ trước cụm c: `-x`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`:
@@ -225,7 +232,7 @@ def unwrap_shell_c(text):
     return SHELL_C_BODY.sub(sub, text)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=False):
+def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, exact=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -236,6 +243,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=F
     parent_env (chỉ có nghĩa khi scoped): thân <<EOF thấy biến của shell cha như lúc mở, biến gán trong thân không đổi
     phép thay tới hết thân (shell cha thay `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell
     cha như đã export, biến gán trong thân vẫn áp.
+    comments=False: che nháy như 6f32d5a, không biết comment (nháy trong `# don't` mở chuỗi).
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
@@ -252,6 +260,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=F
     store = []
 
     def keep(m):
+        if m[0].startswith("#") and not exact:
+            return m[0]  # comment giữ nguyên văn như trước, chỉ không để nháy trong nó mở chuỗi (exact cất như chuỗi)
         store.append(m.group(0))
         return "\0%d\0" % (len(store) - 1)
 
@@ -262,7 +272,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, exact=F
         return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
 
     shell_c = bool(SHELL_C.search(body))
-    quoted = (QUOTED_PS_X if exact else QUOTED_PS) if tool == "PowerShell" else (QUOTED_X if exact else QUOTED)
+    ps = tool == "PowerShell"
+    quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
+    if exact:
+        quoted = QUOTED_PS_X if ps else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
@@ -414,18 +427,16 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # thấy biến của shell cha như lúc mở (parent_env: shell cha thay `$D` trước, gán trong thân không đổi phép thay;
     # `\$D` thì shell con thay, chỉ cách scoped đọc đúng), thân <<'EOF' thấy biến của shell cha như đã export (cách
     # scoped=False cũng vậy nhưng không kéo dòng nên không thấy thân chỉ được đưa vào shell nhờ `\` cuối dòng mở).
-    # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở hay `\$` theo hướng làm lệnh xoá trông vô hại, nên
-    # chỉ lấy hợp. Cách gần bản cũ xét trước.
+    # Che nháy đọc hai cách: như 6f32d5a (comments=False) và biết comment (`# don't` không mở chuỗi nuốt dòng sau).
+    # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở, `\$` hay nháy theo hướng làm lệnh xoá trông vô hại,
+    # nên chỉ lấy hợp. Cách gần bản cũ xét trước. PowerShell không nối dòng tại `\`.
     # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
     # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
-    if tool == "PowerShell":
-        segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, parent_env=True)
-        segs += segments(cmd, tool, exact=True)
-    else:
-        segs = [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
-        segs += [s for join in (False, True) for s in segments(cmd, tool, join, parent_env=True)]
-        segs += [s for join in (False, True) for s in segments(cmd, tool, join, exact=True)]
+    joins = (True,) if tool == "PowerShell" else (False, True)
+    segs = [s for comments in (False, True) for scoped, parent_env in ((False, False), (True, False), (True, True))
+            for join in joins for s in segments(cmd, tool, join, scoped, parent_env, comments)]
+    segs += [s for join in joins for s in segments(cmd, tool, join, exact=True)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):

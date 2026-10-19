@@ -305,6 +305,13 @@ call("ha6", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src")                     # 
 call("ha7", "bash <<'EOF'\nrm -rf src")                                       # chưa đóng, thân đưa vào bash: bash xoá src
 # Dòng đầu chỉ đóng thân khi đúng là dấu đóng: `<<EOF` không bỏ tab, `\tEOF` là lệnh của thân, EOF sau mới đóng.
 call("ha8", "bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX")             # bash xoá src
+# `#` đầu từ ngoài nháy mở comment tới hết dòng: nháy trong comment không mở chuỗi, dòng sau vẫn là lệnh.
+call("hb1", "# don't\nrm -rf src\necho 'x'")                                # bash xoá src ở thư mục dự án
+call("hb2", "cd /tmp/x # don't\nrm -rf src\necho 'ok'")                     # rm sau xuống dòng: cd lỗi thì xoá src của dự án
+call("hb3", "echo a \\\\\n# don't\nrm -rf src\necho 'x'")                   # `\\` là một `\` thường: `#` ở đầu dòng mới
+# Cách che nháy cũ (không biết comment) vẫn trong hợp, kể cả ở cách đọc kéo dòng: chỉ nó báo ca này, nhờ `#'` ghép với
+# nháy của dòng được `\` kéo vào làm `$x` lọt vào đích.
+call("hb4", "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF")  # cd ở shell con của ống: bash xoá ./y
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -815,6 +822,10 @@ for must in ("cat > f <<'EOF'\nEOF\nrm -rf src", "cat > f <<EOF\nEOF\nrm -rf src
 for must in ("bash <<'EOF'\nEOF\nrm -rf src", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src", "bash <<'EOF'\nrm -rf src"):
     check(must in A, f"thân rỗng hay chưa đóng đưa vào shell vẫn nghi: {must!r}")
 check("bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX" in A, "`<<EOF` không bỏ tab: `\\tEOF` ở dòng đầu không đóng thân")
+for must in ("# don't\nrm -rf src\necho 'x'", "cd /tmp/x # don't\nrm -rf src\necho 'ok'", "echo a \\\\\n# don't\nrm -rf src\necho 'x'"):
+    check(must in A, f"nháy trong comment không mở chuỗi: lệnh ở dòng sau vẫn được xét: {must!r}")
+check("true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF" in A,
+      "cách che nháy cũ (không biết comment) vẫn ở trong phép hợp, kể cả ở cách đọc kéo dòng")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -1006,6 +1017,17 @@ check(got == [], f"heredoc chưa đóng nuốt tới hết chuỗi như bash: {g
 # D=/tmp/x/ thành tham số của true nên D rỗng: bash xoá src và `\`. Guard hỏi lệnh này (vào H) nên gọi trực tiếp.
 got = a.suspicious_labels("bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\", a.SUSPICIOUS)
 check("xoá đệ quy" in got, f"cách đọc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp: {got!r}")
+# `#` không ở đầu từ (`$#`, `${#x}`, `a#b`, `a=#x`, sau `\ `) không mở comment: nháy sau nó mở chuỗi, bash không chạy rm.
+for cmd in ("echo $# 'x\nrm -rf src\n'", "echo ${#x} 'x\nrm -rf src\n'", "echo a#b 'x\nrm -rf src\n'",
+            "a=#x 'x\nrm -rf src\n'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(got == [], f"`#` không ở đầu từ không mở comment, rm nằm trong chuỗi: {cmd!r}: {got!r}")
+# Sau `\ ` (khoảng trắng đã thoát) cũng vậy, nhưng cách đọc exact (PR #5) coi `#` sau mọi khoảng trắng là comment nên báo
+# thừa lệnh này: phép hợp có nhãn. Canh các cách đọc không exact, nơi cách che biết comment được thêm vào.
+cmd = "echo x\\ # don't\nrm -rf src\n'"
+got = [p for comments in (False, True) for scoped, pe in ((False, False), (True, False), (True, True)) for j in (False, True)
+       for p, _f, _c, _s in a.segments(cmd, "Bash", j, scoped, pe, comments) if "rm" in p]
+check(got == [], f"`#` sau `\\ ` không mở comment ở các cách đọc không exact, rm nằm trong chuỗi: {cmd!r}: {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
