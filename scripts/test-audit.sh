@@ -312,6 +312,9 @@ call("hb3", "echo a \\\\\n# don't\nrm -rf src\necho 'x'")                   # `\
 # Cách che nháy cũ (không biết comment) vẫn trong hợp, kể cả ở cách đọc kéo dòng: chỉ nó báo ca này, nhờ `#'` ghép với
 # nháy của dòng được `\` kéo vào làm `$x` lọt vào đích.
 call("hb4", "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF")  # cd ở shell con của ống: bash xoá ./y
+# Byte \x01–\x04 có sẵn trong lệnh là chữ thường với bash, không phải dấu đóng/mở thân của cách đọc scoped.
+call("hb5", "D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF")             # D không export: bash xoá ./src
+call("hb6", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src")             # D chỉ gán trong thân: bash xoá ./src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -826,6 +829,8 @@ for must in ("# don't\nrm -rf src\necho 'x'", "cd /tmp/x # don't\nrm -rf src\nec
     check(must in A, f"nháy trong comment không mở chuỗi: lệnh ở dòng sau vẫn được xét: {must!r}")
 check("true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF" in A,
       "cách che nháy cũ (không biết comment) vẫn ở trong phép hợp, kể cả ở cách đọc kéo dòng")
+for must in ("D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src"):
+    check(must in A, f"byte \\x01–\\x04 có sẵn trong lệnh không phải dấu của cách đọc scoped: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
