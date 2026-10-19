@@ -974,6 +974,15 @@ for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ có shell sau `-` (đầu lệnh, giây): {slow}")
+# `\` cuối mỗi dòng thân kéo dòng kế vào lệnh: kéo từng dòng không được tốn thời gian bậc hai theo số dòng. Bản bậc hai
+# mất ~45 s với 40000 dòng, bản tuyến tính ~0,1 s. Bash nối cả 40002 dòng thành lệnh mở, thân rỗng, rm chạy sau EOF.
+import time
+cmd = "cat <<'EOF' \\\n" + "x \\\n" * 40000 + "| bash\nEOF\nrm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 2 and "xoá đệ quy" in got,
+      f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 2 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))

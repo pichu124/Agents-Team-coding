@@ -187,9 +187,16 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
                 break
             line_start = prev_start
         rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
-        while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
-            line, _, body = body.partition("\n")
-            rest = rest[:-1] + line
+        # Kéo dòng theo chỉ số rồi ghép một lần: cắt chuỗi mỗi vòng là bậc hai theo số dòng. `\` lẻ đã bỏ trước khi ghép
+        # dòng kế, nên số `\` cuối cả lệnh cùng chẵn lẻ với số `\` cuối dòng vừa kéo.
+        parts, pos = [rest], 0
+        while scoped and join and pos < len(body) and re.search(r"(?<!\\)(\\\\)*\\$", parts[-1]):
+            end = body.find("\n", pos)
+            end = len(body) if end < 0 else end
+            parts[-1] = parts[-1][:-1]
+            parts.append(body[pos:end])
+            pos = end + 1
+        rest, body = "".join(parts), body[pos:]
         lead = m.string[line_start:m.start()]
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
