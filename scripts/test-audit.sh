@@ -511,6 +511,24 @@ write("rja.jsonl", [user(RJA, "Đẩy nhánh", origin=HUMAN, uuid="rja-p")]
       + asked_no(RJA, "rja1", "git push --force origin feat/q", STOP)[:2]
       + [asst(RJA, text("Đã dừng, chờ bạn."), uuid="rja-a2"),
          user(RJA, [text("[Request interrupted by user]")], uuid="rja-i")])
+# Từ chối kèm dấu ngắt, task nền xong mở lượt mới (tin máy chèn không khép lần từ chối), rồi bạn bấm Esc trước khi
+# agent kịp viết gì: chỉ dấu ngắt đầu thuộc về lần từ chối, dấu thứ hai là một lần ngắt thật.
+RJT = "/khong-co-tren-may/rjtaskproj"
+write("rjt.jsonl", [user(RJT, "Đẩy nhánh", origin=HUMAN, uuid="rjt-p")]
+      + asked_no(RJT, "rjt1", "git push --force origin feat/t", STOP)
+      + [user(RJT, "<task-notification>\n<task-id>b2</task-id>\n<summary>test xong</summary>\n</task-notification>", uuid="rjt-n"),
+         user(RJT, [text("[Request interrupted by user]")], uuid="rjt-i2")])
+# Bấm No mà chỉ toolUseResult cho biết là từ chối: (i) tool_result không có khoá is_error, (ii) is_error nhưng nội dung
+# không mở bằng câu từ chối quen thuộc. Vẫn là lần từ chối: dấu ngắt đi kèm được nuốt, lệnh vào G với người từ chối.
+# Dựng tay từ asked_no; chưa thấy dạng chỉ có toolUseResult trong file phiên thật.
+TUR = "/khong-co-tren-may/turonlyproj"
+tur1 = asked_no(TUR, "tur1", "git push --force origin feat/t1", STOP)
+del tur1[1]["message"]["content"][0]["is_error"]
+tur2 = asked_no(TUR, "tur2", "git push --force origin feat/t2", STOP)
+tur2[1]["message"]["content"][0]["content"] = ("The user doesn't want to take this action right now. STOP what you are doing "
+                                               "and wait for the user to tell you how to proceed.")
+write("tur.jsonl", [user(TUR, "Đẩy nhánh t1", origin=HUMAN, uuid="tur-p")] + tur1
+      + [user(TUR, "Đẩy nhánh t2", origin=HUMAN, uuid="tur-p2")] + tur2)
 # Worktree quy về repo chính: theo đường dẫn .claude/worktrees (cả máy khác), hoặc theo file .git của worktree có trên máy.
 write("wt.jsonl", [user(cwd, "Làm việc trong worktree", origin=HUMAN) for cwd in (
     "C:\\Users\\Ten Nguoi\\wtproj\\.claude\\worktrees\\feat-a", "/khong-co-tren-may/wtproj/.claude/worktrees/feat-b/src",
@@ -808,6 +826,15 @@ rrow("editproj", "từ chối Edit rồi dấu ngắt", prompts=1, interrupt=1, 
 rja = [(i.get("kind"), i.get("doing")) for i in fixes_of("rjanswerproj")]
 check(rja == [("interrupt", "Bash: git push --force origin feat/q")], f"từ chối, agent trả lời rồi Esc: 1 ngắt: {rja}")
 rrow("rjanswerproj", "từ chối, agent trả lời rồi Esc", prompts=1, interrupt=1, fixes=1, fixes_per_10=10.0)
+rjt = [(i.get("kind"), i.get("doing")) for i in fixes_of("rjtaskproj")]
+check(rjt == [("interrupt", "Bash: git push --force origin feat/t")],
+      f"từ chối kèm dấu ngắt, tin task nền rồi Esc trước khi agent viết: dấu ngắt thứ hai là 1 ngắt: {rjt}")
+rrow("rjtaskproj", "từ chối, dấu ngắt, tin task nền rồi Esc", prompts=1, interrupt=1, fixes=1, fixes_per_10=10.0)
+check(fixes_of("turonlyproj") == [], f"bấm No chỉ có toolUseResult: dấu ngắt đi kèm không phải ngắt: {fixes_of('turonlyproj')}")
+rrow("turonlyproj", "từ chối chỉ có toolUseResult không vào mục I", prompts=2, fixes_per_10=0.0)
+turG = sorted((i.get("command"), i.get("rejected_by")) for i in rv.get("G_rejected_not_asked") or [] if i.get("cwd") == "/khong-co-tren-may/turonlyproj")
+check(turG == [("git push --force origin feat/t1", "người"), ("git push --force origin feat/t2", "người")],
+      f"từ chối chỉ có toolUseResult (không có is_error, hoặc nội dung lạ) vẫn vào mục G: {turG}")
 wt = sorted((p, w.get("prompts")) for p, w in RW.items() if p in ("wtproj", "mainproj", "feat-a", "src", "pkg", "wt-elsewhere", "feat-c"))
 check(wt == [("mainproj", 2), ("wtproj", 2)], f"J: worktree (.claude/worktrees, hoặc .git là file trỏ về repo chính) quy về repo chính: {wt}")
 for f in fails:
