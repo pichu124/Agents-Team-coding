@@ -104,6 +104,7 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
+LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
 # Dòng dấu mở thân heredoc đưa vào shell (OPEN: <<EOF, shell cha thay biến trong thân; OPEN_RAW: <<'EOF', không thay) và
 # dòng dấu đóng (keep_shell_heredocs). Khác \0 của kho chuỗi trong nháy. NOT_LAST theo sau dấu mở khi trên dòng mở, sau
 # toán tử heredoc, còn lệnh (`bash <<'EOF' && cd x && bash`): shell nhận thân không phải lệnh cuối dòng.
@@ -158,17 +159,27 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd, join=False, scoped=True):
+def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
-    scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng."""
+    scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng.
+    exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
+    `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
+    thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
+        while exact and line_start:  # dòng trước kết thúc bằng số lẻ `\`: bash nối nó với dòng đang xét
+            prev_start = m.string.rfind("\n", 0, line_start - 1) + 1
+            prev = m.string[prev_start:line_start - 1]
+            if (len(prev) - len(prev.rstrip("\\"))) % 2 == 0:
+                break
+            line_start = prev_start
         rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
         while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
             line, _, body = body.partition("\n")
             rest = rest[:-1] + line
-        fed = SHELL_WORD.search(m.string[line_start:m.start()]) or PIPE_SHELL.match(rest)
+        lead = m.string[line_start:m.start()]
+        fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
@@ -200,12 +211,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
-    comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh.
+    comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
+    `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped)
+    body = keep_shell_heredocs(cmd, join, scoped, exact)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
-        body = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", body)
+        body = LINE_JOIN.sub(r"\1", body)
     if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng
         body = unwrap_shell_c(body)
     store = []
@@ -345,8 +357,9 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc hai cách: phạm vi riêng (scoped) và như 6f32d5a. Cách có phạm vi có thể đọc sai
     # export, thân rỗng hay `\` cuối dòng mở theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
-    # Cách đọc exact (thân bash -c là phạm vi shell con) xét sau cùng, cũng chỉ lấy hợp: nó cho biến của cha là rỗng cả khi
-    # biến đã export hay được cha thay trong nháy kép, còn các cách cũ thế giá trị của cha.
+    # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
+    # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
+    # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
     if tool == "PowerShell":
         segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, exact=True)
     else:

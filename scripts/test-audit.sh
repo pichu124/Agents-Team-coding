@@ -864,6 +864,12 @@ for cmd, tool in (("cd /tmp/w && bash <<'EOF'\n# don't\nEOF\nrm -rf src 'x'", "B
                   ("# don't\nrm -rf src 'x'", "Bash"), ("# don't\nRemove-Item -Recurse src 'x'", "PowerShell")):
     check(a.suspicious_labels(cmd, a.SUSPICIOUS, tool), f"nháy không ghép qua thân heredoc hay comment: {tool} {cmd!r}")
 check(not a.suspicious_labels("# don't\nrm -rf node_modules 'dist'", a.SUSPICIOUS), "comment có nháy lẻ: đích vô hại vẫn vô hại")
+# `\` + xuống dòng giữa shell và `<<`: bash nối thành một lệnh, thân heredoc là lệnh của shell đó.
+for cmd in ("bash \\\n<<'EOF'\nrm -rf src\nEOF", "bash \\\n  -s <<'EOF'\nrm -rf src\nEOF",
+            "bash \\\n<<'EOF'\n# x \\\nD=/; rm -rf $D\nEOF"):  # `\` cuối comment trong thân là chữ: bash xoá /
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"dòng mở heredoc nối qua `\\`: thân đưa vào bash là lệnh: {cmd!r}")
+# `\` cuối comment là chữ, bash chạy rm ở dòng sau: cách đọc exact cũng phải đọc không nối dòng (nối thì rm vào comment).
+check(a.suspicious_labels("# don't \\\nrm -rf src 'x'", a.SUSPICIOUS), "`\\` cuối comment có nháy lẻ: rm ở dòng sau vẫn nghi")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -1083,6 +1089,21 @@ def line():
     s = rnd.choice([" && ", "; ", " || ", " | "]).join(rnd.choice(CORE + STEP) for _ in range(rnd.randint(1, 2)))
     return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 5))) for _ in range(3000)]
+# Lô phụ, bộ sinh riêng để lô trên giữ nguyên từng lệnh: thân bash -c/sh -c có biến, cd và lồng nhau, cờ gộp, `\` + xuống
+# dòng giữa shell và `<<`, nháy lẻ trong comment hay trong thân heredoc.
+SUB = ["bash -c 'D=/; rm -rf $D'", 'sh -c "cd /tmp/w && rm -rf src"', "D=/tmp/w", "D=/", "bash -lc 'x'",
+       "bash -lc 'rm -rf $D/a'", "sh -c 'rm -rf $D/a'", 'bash -c "rm -rf \\$D/a"', 'bash -c "true; D=/tmp/w"',
+       "bash -c 'D=/tmp/w'", "bash -c \"bash -c 'rm -rf $D'\"", "bash -c 'cd /tmp/w'", "rm -rf $D", "rm -rf ${D}src",
+       "rm -rf src 'x'", "echo don't", "echo 'a b'"]
+SUB_LINE = ["bash \\\n<<'EOF'", "bash \\\n  -s <<'EOF'", "bash <<'EOF'", "cat <<'EOF'", "EOF", "# don't", "# x \\"]
+rnd2 = random.Random(2)
+def line2():
+    if rnd2.random() < 0.3:
+        return rnd2.choice(SUB_LINE)
+    s = rnd2.choice([" && ", "; ", " || ", " | "]).join(
+        rnd2.choice(SUB if rnd2.random() < 0.6 else CORE + STEP) for _ in range(rnd2.randint(1, 3)))
+    return s + rnd2.choice(TAIL)
+fuzz += ["\n".join(line2() for _ in range(rnd2.randint(1, 5))) for _ in range(1000)]
 pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
