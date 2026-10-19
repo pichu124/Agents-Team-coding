@@ -299,7 +299,8 @@ def benign_delete(full, ctx, worktree=True):
             return False
         if benign_path(t) or (worktree and agent_worktree(t)):
             continue
-        rel = not is_absolute(t)
+        # Đích còn biến chưa biết, lệnh lồng hay brace: bash thay trước khi rm chạy, có thể thành đường tuyệt đối hay có `..`.
+        rel = not is_absolute(t) and not re.search(r"[$`{(]", t)
         if rel and ctx and benign_path(ctx):
             continue
         return False
