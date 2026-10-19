@@ -844,3 +844,151 @@ if fails:
     sys.exit(1)
 print(f"✔ audit: {total} test xanh")
 PYEOF
+status=$?
+
+# Không thụt lùi: sửa phân tích lệnh đã nhiều lần âm thầm làm mục A bỏ sót lệnh mà bản trước vẫn báo (1e9882a phải vá
+# 3 lần, PR #1 bị chặn 3 vòng), lần nào cũng chỉ lộ ra nhờ reviewer tự so nhãn giữa hai bản. Đây là đúng phép so đó, trên
+# mọi lệnh fixture ở trên và một bộ fuzz cố định. Chỉ chạy trong repo kit (có install-kit.sh, file không chép sang dự án):
+# ở dự án cài kit, bản trước là bản kit cũ đã commit nên nâng cấp qua một lần thu hẹp có chủ ý sẽ đỏ, mà NARROWING_OK lại
+# nằm trong file của kit. Bản trước: AUDIT_BASE_REF nếu đặt; không thì HEAD khi audit-agent.py đang sửa dở; merge-base với
+# origin/HEAD khi có và khác HEAD (soát mọi commit của nhánh, không chỉ commit cuối); còn lại HEAD^ (PR trong CI thường
+# không có origin/HEAD: HEAD là merge commit, cha đầu là đầu nhánh base).
+ref="${AUDIT_BASE_REF:-}" why="AUDIT_BASE_REF" skip="" miss=""
+if [ ! -f scripts/install-kit.sh ]; then
+  skip="chỉ chạy trong repo kit"
+elif ! git rev-parse --git-dir >/dev/null 2>&1; then
+  skip="không có git hoặc không ở trong repo git"
+elif [ -z "$ref" ]; then
+  git diff --quiet HEAD -- scripts/audit-agent.py 2>/dev/null
+  case $? in
+    0) ref="$(git merge-base HEAD origin/HEAD 2>/dev/null)" why="merge-base với origin/HEAD"
+       if [ -z "$ref" ] || [ "$ref" = "$(git rev-parse HEAD)" ]; then ref="HEAD^" why="HEAD^"; fi ;;
+    1) ref="HEAD" why="HEAD, audit-agent.py đang sửa dở" ;;
+    *) skip="repo chưa có commit" ;;
+  esac
+fi
+if [ -z "$skip" ] && ! git rev-parse -q --verify "$ref^{commit}" >/dev/null; then
+  miss="không có ref $ref"
+elif [ -z "$skip" ] && ! git show "$ref:./scripts/audit-agent.py" >"$tmp/audit-base.py" 2>/dev/null; then
+  miss="không có scripts/audit-agent.py ở $ref"
+elif [ -z "$skip" ]; then
+  ref="$(git rev-parse --short "$ref^{commit}")"
+fi
+# Ref tự chọn mà thiếu (clone nông) thì bỏ qua; AUDIT_BASE_REF do người đặt có chủ ý, sai thì đỏ.
+if [ -n "$miss" ] && [ -n "${AUDIT_BASE_REF:-}" ]; then
+  printf '✘ audit: AUDIT_BASE_REF=%s không phải ref có scripts/audit-agent.py (%s)\n' "$AUDIT_BASE_REF" "$miss" >&2
+  status=1
+elif [ -n "$skip$miss" ]; then
+  printf '• audit: bỏ qua so nhãn với bản trước (%s)\n' "$skip$miss"
+elif git diff --quiet "$ref" -- scripts/audit-agent.py 2>/dev/null; then
+  printf '• audit: audit-agent.py giống hệt bản ở %s (%s), bỏ qua so nhãn\n' "$ref" "$why"
+else
+  "$py" -I -B - "$tmp/audit-base.py" "$tmp" "$ref ($why)" <<'PYEOF' || status=1
+import glob, importlib.util, json, os, random, sys
+for s in (sys.stdout, sys.stderr):
+    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
+base_file, tmp, ref = sys.argv[1:4]
+# Chỉ thêm khi CHỦ Ý thu hẹp mục A (người dùng than báo thừa): (tool, lệnh, "lý do"). Ghi đúng từng lệnh, không dùng
+# mẫu, để người review đọc được hết những lệnh vừa thành vô hại.
+NARROWING_OK = [
+]
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+new = load("audit_head", "scripts/audit-agent.py")
+try:
+    old = load("audit_base", base_file)
+except Exception as exc:  # bản trước hỏng thì không có gì để thụt lùi
+    print(f"• audit: bỏ qua so nhãn với bản trước (không nạp được bản ở {ref}: {exc!r})")
+    sys.exit(0)
+def shell_calls(x):
+    """(tool, lệnh) của mọi tool_use Bash/PowerShell nằm trong x."""
+    if isinstance(x, list):
+        for v in x:
+            yield from shell_calls(v)
+    elif isinstance(x, dict):
+        inp = x.get("input")
+        if x.get("type") == "tool_use" and x.get("name") in ("Bash", "PowerShell") and isinstance(inp, dict) \
+                and isinstance(inp.get("command"), str):
+            yield x["name"], inp["command"]
+        for v in x.values():
+            yield from shell_calls(v)
+fixture = []
+for f in sorted(glob.glob(os.path.join(tmp, "**", "*.jsonl"), recursive=True)):
+    with open(f, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                fixture += shell_calls(json.loads(line))
+            except ValueError:
+                pass  # dòng hỏng có chủ ý của fixture
+# Fuzz cố định: 1–5 dòng ghép từ lõi nguy hiểm và các cấu trúc shell từng làm phân tích đọc sai (nối dòng, comment,
+# heredoc đưa vào shell / dữ liệu / chưa đóng, cd, subshell, biến, xargs, `--`, worktree agent).
+CORE = ["rm -rf src", "rm -rf -- -x", "rm -rf dist\\\n  src", "git push --force origin main", "git reset --hard",
+        "git clean -fd", "git branch -D x", "Remove-Item -Recurse -Force src", "rd /s /q src"]
+STEP = ["cd proj", "cd -P /home/u/proj", "cd /tmp/w", "cd dist", "cd ..", "cd", "pushd dist", "popd", "(cd /tmp && true)",
+        "( cd dist )", "cd .claude/worktrees/agent-abc", "rm -rf .claude/worktrees/agent-abc",
+        "rm -rf -- .claude/worktrees/agent-abc", "S=/tmp/x", "rm -rf $S", "ls | xargs rm -rf", "echo 'a b'", 'echo "a b"',
+        "git commit -m 'wip'", "true"]
+LINE = ["bash <<'EOF'", "cat <<EOF | sh", "cat > f <<'EOF'", "EOF", "# x \\", "# don't"]
+TAIL = ["", "", "", "", " \\", " \\\\", " # x \\", " # don't"]
+rnd = random.Random(1)
+def line():
+    if rnd.random() < 0.25:
+        return rnd.choice(LINE)
+    s = rnd.choice([" && ", "; ", " || ", " | "]).join(rnd.choice(CORE + STEP) for _ in range(rnd.randint(1, 2)))
+    return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
+fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 5))) for _ in range(3000)]
+pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
+ok = {(tool, c) for tool, c, _why in NARROWING_OK}
+in_fixture = set(fixture)
+lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0
+for tool, c in pairs:
+    try:
+        base = set(old.suspicious_labels(c, old.SUSPICIOUS, tool))
+    except Exception as exc:
+        base = exc
+    try:
+        head = set(new.suspicious_labels(c, new.SUSPICIOUS, tool))
+    except Exception as exc:
+        crash.append(f"{tool} {c!r}: {exc!r}")
+        head = None
+    if isinstance(base, Exception):
+        base_err.append(f"{tool} {c!r}: {base!r}")
+        if head is not None and (tool, c) in in_fixture:
+            fixture_err.append(base_err[-1])
+    elif head is not None and base - head:
+        # Mục A chỉ xét lệnh còn nhãn nào không (tên nhãn chỉ để hiển thị): còn nhãn thì mục A vẫn báo, chỉ đếm.
+        if head:
+            relabeled += 1
+        elif (tool, c) not in ok:
+            lost.append((len(c), tool, c, sorted(base)))
+# Bản trước ném lỗi ở mọi lệnh (vd đổi chữ ký hay tên suspicious_labels mà lời gọi ở trên chỉ khớp bản mới) thì phép so
+# xanh giả. Chỉ bỏ qua lỗi của bản trước ở lệnh fuzz lẻ tẻ (bản cũ có thể crash, vd byte NUL).
+uncallable = len(base_err) == len(pairs) or fixture_err
+if not fixture:
+    print("✘ audit: so nhãn không thấy lệnh fixture nào: bước này phải chạy sau khi mọi fixture đã sinh", file=sys.stderr)
+for x in crash[:10]:
+    print("✘ audit: suspicious_labels ném lỗi:", x, file=sys.stderr)
+if uncallable:
+    print(f"✘ audit: không gọi được bản ở {ref}: lời gọi bản đó ném lỗi ở {len(base_err)}/{len(pairs)} cặp lệnh/tool, "
+          f"{len(fixture_err)} lệnh fixture mà bản này chạy được. Lỗi đầu tiên: {(fixture_err or base_err)[0]}", file=sys.stderr)
+    print("  Đổi chữ ký hay tên suspicious_labels thì sửa lời gọi trong bước so này sao cho gọi được cả hai bản (bản trước "
+          "theo chữ ký cũ, bản này theo chữ ký mới), đừng chỉ sửa cho khớp bản mới: không gọi được bản trước thì không so "
+          "được gì.", file=sys.stderr)
+if lost:
+    print(f"✘ audit: mục A sẽ bỏ sót {len(lost)} lệnh mà bản ở {ref} vẫn báo (bản này hết nhãn nghi ngờ), ngắn nhất trước:",
+          file=sys.stderr)
+    for _n, tool, c, labels in sorted(lost)[:None if os.environ.get("AUDIT_LOST_ALL") else 10]:
+        print(f"  {tool} {c!r}: bản trước báo {', '.join(labels)}", file=sys.stderr)
+    print("  Sửa phân tích lệnh không được làm mục A bỏ sót lệnh bản trước vẫn báo. Đọc thêm theo cách cũ rồi lấy hợp (như "
+          "suspicious_labels làm với nối dòng), hoặc giữ chốt cũ (như benign_delete với `--`). Nếu chủ ý thu hẹp thì "
+          "thêm đúng lệnh vào NARROWING_OK kèm lý do (AUDIT_LOST_ALL=1 in đủ danh sách để soát).", file=sys.stderr)
+if lost or crash or not fixture or uncallable:
+    sys.exit(1)
+print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {len(pairs)} cặp lệnh/tool, {len(in_fixture)} từ fixture, "
+      f"{relabeled} lệnh đổi nhãn nhưng vẫn nghi")
+PYEOF
+fi
+exit "$status"
