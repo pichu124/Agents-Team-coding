@@ -115,6 +115,9 @@ SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*
                      re.IGNORECASE)
 QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng \ ("C:\x\" là một chuỗi trọn)
+# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), rồi chuỗi nháy đơn hay kép.
+SHELL_C_BODY = re.compile(r"\b((?:bash|sh|zsh|dash)(?:\.exe)?)(?:\s+-\w+)*?\s+-[A-Za-z]*c[A-Za-z]*\s+"
+                          r"('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
@@ -167,7 +170,20 @@ def keep_shell_heredocs(cmd, join=False, scoped=True):
     return HEREDOC.sub(sub, cmd)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True):
+def unwrap_shell_c(text):
+    """Thay `bash -c '<thân>'` bằng shell rồi thân giữa dòng OPEN_RAW và dòng CLOSE: thân là phạm vi shell con như thân
+    <<'EOF'. Thân nháy kép được gỡ thoát như bash (`\\$`, `\\``, `\\"`, `\\\\` thành ký tự, `\\` + xuống dòng bỏ hẳn) mà vẫn
+    dùng OPEN_RAW: biến cha không thoát mà cha tự thay cũng thành rỗng. Báo thừa, vì các cách đọc không gỡ vẫn thay giá trị
+    của cha. Thân lồng nhau gỡ đệ quy."""
+    def sub(m):
+        body = m.group(2)[1:-1]
+        if m.group(2)[0] == '"':
+            body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
+        return "\n".join((m.group(1), OPEN_RAW, unwrap_shell_c(body), CLOSE, ""))
+    return SHELL_C_BODY.sub(sub, text)
+
+
+def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -175,11 +191,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
     join=False: không nối dòng tại `\\` + xuống dòng, tách như cũ.
     scoped=False: thân heredoc đưa vào shell không phải phạm vi riêng (như 6f32d5a): biến gán trong thân lọt ra ngoài,
     thân <<'EOF' thấy biến của shell cha; đoạn ngay sau một shell trơn, cách bằng xuống dòng, thừa hưởng thư mục.
+    exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
+    `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
+    ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", body)
+    if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng
+        body = unwrap_shell_c(body)
     store = []
 
     def keep(m):
@@ -195,7 +216,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
-    out, ctx, env, sep, saved, inherit = [], "", {}, None, None, False
+    out, ctx, env, sep, saved, inherit = [], "", {}, None, [], False
     for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
@@ -243,13 +264,15 @@ def segments(cmd, tool="Bash", join=True, scoped=True):
         # scoped=False không đặt dấu: byte \x01–\x04 có sẵn trong lệnh là ký tự thường như ở 6f32d5a.
         for mark in (re.findall("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", raw) if scoped else ()):
             if mark == CLOSE:  # biến chỉ gán trong thân là rỗng ở shell cha, biến có từ trước lấy lại giá trị đã chụp
-                ctx, env, saved, inherit = "", {**dict.fromkeys(env, ""), **(saved or {})}, None, False
+                ctx, env, inherit = "", {**dict.fromkeys(env, ""), **(saved.pop() if saved else {})}, False
             elif mark == NOT_LAST:
                 inherit = False
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
                 # <<'EOF' không được shell cha thay biến: biến của shell cha là rỗng trong thân, trừ biến đã export (cách
-                # đọc scoped=False thấy chúng)
-                saved, env = env, dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
+                # đọc scoped=False thấy chúng). exact: phạm vi lồng nhau (bash -c trong bash -c hay trong thân heredoc) chụp
+                # env thành ngăn xếp; cách đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
+                saved = (saved if exact else []) + [env]
+                env = dict.fromkeys(env, "") if mark == OPEN_RAW else dict(env)
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
 
@@ -313,8 +336,13 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc hai cách: phạm vi riêng (scoped) và như 6f32d5a. Cách có phạm vi có thể đọc sai
     # export, thân rỗng hay `\` cuối dòng mở theo hướng làm lệnh xoá trông vô hại, nên chỉ lấy hợp. Cách gần bản cũ xét trước.
-    segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) if tool == "PowerShell" else \
-        [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
+    # Cách đọc exact (thân bash -c là phạm vi shell con) xét sau cùng, cũng chỉ lấy hợp: nó cho biến của cha là rỗng cả khi
+    # biến đã export hay được cha thay trong nháy kép, còn các cách cũ thế giá trị của cha.
+    if tool == "PowerShell":
+        segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, exact=True)
+    else:
+        segs = [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
+        segs += [s for join in (False, True) for s in segments(cmd, tool, join, exact=True)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):

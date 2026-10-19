@@ -839,6 +839,23 @@ for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf 
         got = exc
     check(isinstance(got, list) and "xoá đệ quy" in got,
           f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
+# Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
+# gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
+for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
+            "D=/tmp/w; sh -c 'rm -rf $D/a'",                     # D không export: xoá /a
+            "D=/tmp/w; cd /tmp && sh -c 'rm -rf $D/a'",          # xoá /a
+            "bash -lc 'rm -rf /'",
+            "D=/; bash -c 'true; D=/tmp/w'; rm -rf $D",          # D gán trong thân không ra shell cha: xoá /
+            "D=/; bash -c \"true; D=/tmp/w\"; rm -rf $D",
+            'D=/tmp/w; bash -c "rm -rf \\$D/a"',                 # \$ trong nháy kép: shell con tự thay D (rỗng), xoá /a
+            "bash -c \"true; D=/tmp/w; bash -c 'rm -rf \\$D/a'\""):  # lồng nhau: D không export sang shell cháu, xoá /a
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"thân bash -c là phạm vi shell con: {cmd!r}")
+# Thân -c của shell cục bộ trơn thừa hưởng thư mục cd, biến có từ trước lấy lại giá trị sau thân, kể cả thân lồng nhau.
+for cmd in ("cd /tmp/w && bash -c 'rm -rf src'", "D=/tmp/y/; bash -c 'echo hi'; rm -rf ${D}src",
+            "D=/tmp/y/; bash -c \"bash -c 'echo hi'\"; rm -rf ${D}src"):
+    check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"thân bash -c vô hại không được thành nghi: {cmd!r}")
+got = [full for _p, full, _c, _s in a.segments('bash -c "rm -rf \\"a b\\" \\$D"', exact=True)]
+check(got == ["bash", 'rm -rf "a b" $D'], f"thân -c nháy kép gỡ thoát như bash (`\\\"` thành `\"`, `\\$` thành `$`): {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
