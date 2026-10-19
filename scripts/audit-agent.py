@@ -147,13 +147,16 @@ def keep_shell_heredocs(cmd):
     return HEREDOC.sub(sub, cmd)
 
 
-def segments(cmd, tool="Bash"):
+def segments(cmd, tool="Bash", join=True):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
     giữ nguyên để biết đích thật. Biến gán trong lệnh (S=/tmp/x; rm -rf $S) được thay theo thứ tự.
+    join=False: không nối dòng tại `\\` + xuống dòng, tách như cũ.
     """
     body = keep_shell_heredocs(cmd)
+    if join and tool != "PowerShell":  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
+        body = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", body)
     store = []
 
     def keep(m):
@@ -238,7 +241,10 @@ def benign_delete(full, ctx, worktree=True):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
-    for plain, full, ctx, subst in segments(cmd, tool):
+    # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
+    # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
+    segs = segments(cmd, tool) if tool == "PowerShell" else segments(cmd, tool, join=False) + segments(cmd, tool)
+    for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue

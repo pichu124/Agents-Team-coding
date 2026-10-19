@@ -181,6 +181,12 @@ call("d3", "Remove-Item -Recurse -Force C:\\Users\\admin\\automarking\\.claude\\
 call("d4", "git branch -D worktree-agent-abc worktree-agent-def")
 call("d5", "rm -rf ~/automarking/.claude/worktrees/agent-abc123/ ./.claude/worktrees/agent-def/src")
 call("d6", "git branch --delete --force worktree-agent-abc >/dev/null 2>&1")
+# Nối dòng: bash bỏ `\` + xuống dòng trước khi tách lệnh. Tách tại \n trước thì đích ở dòng sau bị mất.
+call("c1", "rm -rf dist\\\n  src")                                       # bash xoá dist src
+call("c2", "rm -rf /tmp/x\\\n  src")                                     # bash xoá /tmp/x src
+call("c3", "ls | xargs \\\n  rm -rf /tmp/x")                             # bash chạy ls | xargs rm -rf /tmp/x
+call("c4", "echo a\\\\\nrm -rf src")                                     # `\\` là một `\` thường: xuống dòng là dấu ngắt thật
+call("c5", "rm -rf /tmp/x\\\nsrc")                                       # không thụt lề: bash xoá MỘT đích /tmp/xsrc
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -582,6 +588,10 @@ for must in ("rm -rf .claude/worktrees/agent-abc\\\n  src", "rm -rf .claude/work
              "Remove-Item -Path:C:\\proj\\* -Recurse -Force -Exclude C:\\proj\\.claude\\worktrees\\agent-abc",
              "D=/; D=.claude/worktrees/agent-abc true; rm -rf $D"):
     check(must in A, f"`\\` của bash, biến, IFS hay -Tên:giá-trị làm đích thật khác đích ghi: vẫn nghi: {must!r}")
+for must in ("rm -rf dist\\\n  src", "rm -rf /tmp/x\\\n  src", "ls | xargs \\\n  rm -rf /tmp/x", "echo a\\\\\nrm -rf src"):
+    check(must in A, f"nối dòng như bash trước khi tách lệnh: đích hay xargs ở dòng sau vẫn tính: {must!r}")
+# Không thụt lề thì bash dán `src` vào đích trước: chỉ xoá /tmp/xsrc, vẫn trong thư mục tạm.
+check("rm -rf /tmp/x\\\nsrc" not in A, "`\\` + xuống dòng không thụt lề nối thành một đích /tmp/xsrc: vô hại")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -646,6 +656,34 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
+for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
+    got = [full for _p, full, _c, _s in a.segments(cmd)]
+    check(got == want, f"segments nối dòng như bash (`\\` + xuống dòng bị bỏ, `\\\\` + xuống dòng là hai lệnh): {cmd!r} -> {got!r}")
+# PowerShell nối dòng bằng backtick, `\` cuối dòng chỉ là dấu phân cách đường dẫn.
+got = [full for _p, full, _c, _s in a.segments("Remove-Item -Recurse C:\\x\\\nsrc", "PowerShell")]
+check(got == ["Remove-Item -Recurse C:\\x\\", "src"], f"PowerShell không nối dòng tại `\\`: {got!r}")
+# Chỗ bash KHÔNG nối dòng: `\` trong comment là chữ, `\` cuối thân heredoc hay cuối dòng mở heredoc không nối qua ranh giới.
+# Bản nối dòng đọc sai các ca này, bản không nối dòng vẫn bắt được.
+for cmd in ("cd proj # vao thu muc \\\nrm -rf src ./node_modules", "cd proj;# x \\\nrm -rf src /tmp/x"):
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"`\\` cuối comment là chữ: bash chạy rm ở dòng sau như lệnh riêng, ở thư mục proj: {cmd!r}")
+check(a.suspicious_labels("bash <<'EOF'\ncd proj \\\nEOF\nrm -rf src ./node_modules", a.SUSPICIOUS),
+      "thân heredoc đưa vào bash kết thúc ở EOF: `\\` cuối thân không nối với rm, rm chạy ở thư mục cũ")
+check(a.suspicious_labels("cd node_modules <<'EOF' \\\nx\nEOF\nrm -rf src", a.SUSPICIOUS),
+      "`\\` cuối dòng mở heredoc kéo `x` vào lệnh (cd node_modules x: cd lỗi), rm chạy ở thư mục cũ")
+# `#` trong nháy không mở comment: bash vẫn nối dòng, `src` và `--force` ở dòng sau thuộc cùng lệnh.
+for cmd in ("rm -rf \"/tmp/a #1\" \\\n  src", "git push -o merge_request.title=\"Fix #12\" origin feat \\\n  --force"):
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"`#` trong nháy không phải comment: vẫn nối dòng, phải nghi: {cmd!r}")
+# Thân heredoc đưa vào shell chạy ở shell con: cd trong thân không đổi thư mục của lệnh sau EOF. Ca này vẫn nghi
+# nhờ bản không nối dòng: `\` còn dính vào thư mục cd (`node_modules \`).
+check(a.suspicious_labels("bash <<'EOF'\ncd node_modules \\\nEOF\nrm -rf src", a.SUSPICIOUS),
+      "cd trong thân heredoc chạy ở shell con, rm sau EOF chạy ở thư mục cũ")
+check(not a.suspicious_labels("cd /tmp/w && bash <<'EOF'\nrm -rf y\nEOF", a.SUSPICIOUS),
+      "shell con thừa hưởng thư mục: cd trước heredoc vẫn áp cho lệnh trong thân")
+# Bản nối dòng chỉ thêm nghi ngờ: lệnh nghi khi đọc không nối dòng vẫn nghi, dù nối dòng dán dòng sau vào cd,
+# vào thân heredoc hay làm nháy `'` ghép qua nhiều dòng.
+for cmd in ("bash <<'EOF'\ncd node_modules \\\n  && npm ci\n# don't touch src\nEOF\ngit add -A && git commit -m 'wip'\nrm -rf src",
+            "# don't do this\nrm -rf src\ncat > f <<'EOF' \\\n  && echo 'done'\nbody\nEOF", "cd /tmp/x \\\npopd\nrm -rf src"):
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"bản nối dòng chỉ thêm nghi ngờ: lệnh nghi khi không nối dòng vẫn nghi: {cmd!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
