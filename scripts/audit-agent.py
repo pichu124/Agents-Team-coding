@@ -313,7 +313,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if sep != "&&" and not inherit:
                 ctx = ""
             inherit = False
-        sep = None
+        after_or_pipe, sep = sep in ("||", "|"), None
         full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
@@ -327,9 +327,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
             # Chỉ tin đích một token, không mở bằng `-` (kể cả "-L") hay `+` (pushd +1 xoay ngăn xếp), không còn `$` hay backtick
-            # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.): còn lại không biết thư mục
-            if CD_WORD.match(lead) and not target.startswith(("-", "+")) and not re.search(r"[$`]", target) \
-                    and ".." not in re.sub(r"[\"'\\]", "", target):
+            # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.), cd không ngay sau `||` (`(a || cd x) && rm` bỏ qua
+            # cd khi a thành công) hay `|` (cd chạy ở shell con của ống): còn lại không biết thư mục
+            if CD_WORD.match(lead) and not after_or_pipe and not target.startswith(("-", "+")) \
+                    and not re.search(r"[$`]", target) and ".." not in re.sub(r"[\"'\\]", "", target):
                 ctx = target if is_absolute(target) else (ctx + "/" + target)
             else:
                 ctx = ""
