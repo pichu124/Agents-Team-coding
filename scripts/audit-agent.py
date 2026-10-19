@@ -286,10 +286,10 @@ class Session:
     def __init__(self):
         self.calls = {}        # tool_use_id -> dict
         self.guard = {}        # tool_use_id -> {"asked": bool, "reason": str}
-        self.hook_errors = []  # dict
-        self.stop_runs = []    # ms
-        self.stop_blocks = []  # "1/3"
-        self.stop_releases = 0
+        self.hook_errors = {}  # khoá dòng -> dict
+        self.stop_runs = {}    # khoá dòng -> ms
+        self.stop_blocks = {}  # (khoá dòng, thứ tự trong dòng) -> "1/3"
+        self.stop_releases = set()  # khoá dòng
         self.bad_lines = 0
         self.old_entries = 0
         self.events = {}       # mục I, J: khoá khử trùng -> dict {kind, ts, cwd, file, ...}
@@ -460,6 +460,10 @@ def parse_entry(e, s, path, who, cutoff, only_under):
     if not fresh:
         s.old_entries += 1
         return
+    # Khoá dòng cho mục E, F: dòng chép sang file khác giữ uuid, đếm một lần (xem add_event). Không có uuid thì mỗi
+    # dòng một khoá riêng, không gộp theo nội dung: hai lần chạy giống hệt nhau vẫn là hai lần.
+    u = e.get("uuid")
+    key = u if isinstance(u, str) and u else object()
     if t == "assistant":
         wire = e.get("wireToolInputs") or {}
         for c in msg.get("content") or []:
@@ -496,23 +500,25 @@ def parse_entry(e, s, path, who, cutoff, only_under):
                 s.guard[a["toolUseID"]] = {"asked": '"ask"' in out, "reason": m.group(1) if m else ""}
         if at == "hook_system_message" and a.get("hookEvent") == "Stop" and \
                 re.search(r"vẫn đỏ sau \d+ lần chặn", a.get("content") or ""):
-            s.stop_releases += 1
+            s.stop_releases.add(key)
         if at in ("hook_non_blocking_error", "hook_error") or (
                 at.startswith("hook_") and a.get("exitCode") not in (None, 0, 2)):
             if ".claude/hooks/" in cmd.replace("\\", "/") or "/plugin/run-hook.sh" in cmd.replace("\\", "/"):
-                s.hook_errors.append({"hook": a.get("hookName") or cmd, "stderr": (a.get("stderr") or "").strip(),
-                                      "exit": a.get("exitCode"), "ts": e.get("timestamp") or "", "file": str(path)})
+                s.hook_errors[key] = {"hook": a.get("hookName") or cmd, "stderr": (a.get("stderr") or "").strip(),
+                                      "exit": a.get("exitCode"), "ts": e.get("timestamp") or "", "file": str(path)}
     elif t == "system" and e.get("subtype") == "stop_hook_summary":
         # Dự án tự cài kit mà máy có plugin: một lần Stop có cả bản dự án lẫn bản plugin (nhường, vài ms). Tính một lần.
         runs = [h["durationMs"] for h in e.get("hookInfos") or []
                 if "stop-gate" in (h.get("command") or "") and isinstance(h.get("durationMs"), (int, float))]
         if runs:
-            s.stop_runs.append(max(runs))
+            s.stop_runs[key] = max(runs)
         # Mỗi lần chặn có cả user isMeta "Stop hook feedback" lẫn hookErrors: chỉ đếm hookErrors.
+        n = 0  # thứ tự lần chặn trong dòng
         for err in e.get("hookErrors") or []:
             if isinstance(err, str):
                 for m in re.finditer(r"check\.sh đang đỏ.*?lần chặn (\d+)/(\d+)", err, re.DOTALL):
-                    s.stop_blocks.append(f"{m.group(1)}/{m.group(2)}")
+                    s.stop_blocks[key, n] = f"{m.group(1)}/{m.group(2)}"
+                    n += 1
                     if in_scope(e.get("cwd"), only_under):
                         add_event(s, e, path, "stop_block")
 
@@ -753,12 +759,12 @@ def main():
         "shell_commands": len(s.calls), "replay": bool(can_replay),
         "A_possible_misses": rows["A"], "B_regressions": rows["B"], "C_asked_approved": rows["C"],
         "D_asked_rejected": rows["D"], "G_rejected_not_asked": rows["G"], "H_ran_unguarded": rows["H"],
-        "hook_errors": s.hook_errors, "old_entries_skipped": s.old_entries,
+        "hook_errors": list(s.hook_errors.values()), "old_entries_skipped": s.old_entries,
         "guard_records": len(s.guard),
         "replay_errors": sorted({r["error"] for r in replayed.values() if r.get("error")})[:5],
-        "stop_gate": {"runs": len(s.stop_runs), "blocks": s.stop_blocks, "released_after_max": s.stop_releases,
-                      "median_s": round(statistics.median(s.stop_runs) / 1000, 1) if s.stop_runs else None,
-                      "max_s": round(max(s.stop_runs) / 1000, 1) if s.stop_runs else None},
+        "stop_gate": {"runs": len(s.stop_runs), "blocks": list(s.stop_blocks.values()), "released_after_max": len(s.stop_releases),
+                      "median_s": round(statistics.median(s.stop_runs.values()) / 1000, 1) if s.stop_runs else None,
+                      "max_s": round(max(s.stop_runs.values()) / 1000, 1) if s.stop_runs else None},
     }
     names = {}
 
