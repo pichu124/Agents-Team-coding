@@ -111,6 +111,15 @@ QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng \ ("C:\x\" là một chuỗi trọn)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
+# cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
+CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
+# Lệnh đổi thư mục ở vị trí lệnh bất kỳ trong đoạn (`builtin cd`, `time cd`, `FOO=1 cd`, `source`), hoặc `.` đầu lệnh.
+CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:cd|pushd|popd|set-location|sl|push-location|pop-location|source)"
+                   r"(?=[\s;&|(){}<>`\"']|$)"
+                   r"|^(?:[({!`]\s*|(?:[A-Za-z_]\w*=\S*|builtin|command|time|-p|if|then|do|else|elif|while|until)\s+)*\.(?=\s|$)",
+                   re.IGNORECASE)
+# Lệnh chỉ là một shell đọc stdin: keep_shell_heredocs đặt thân heredoc đưa vào nó ngay sau, cách bằng xuống dòng.
+STDIN_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
@@ -166,11 +175,20 @@ def segments(cmd, tool="Bash", join=True):
     shell_c = bool(SHELL_C.search(body))
     quoted = QUOTED_PS if tool == "PowerShell" else QUOTED
     marked = body if shell_c else quoted.sub(keep, body)
-    out, ctx, env = [], "", {}
-    for seg in SPLIT.split(marked):
+    out, ctx, env, sep = [], "", {}, None
+    for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
+        if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
+            if sep in (None, "\n"):
+                sep = seg
+            continue
         seg = seg.strip()
         if not seg:
             continue
+        # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng thân
+        # heredoc đưa vào shell (`cd x && bash <<'EOF'`) chạy trong shell đó, ở thư mục của nó.
+        if sep != "&&" and not (sep == "\n" and out and STDIN_SHELL.match(out[-1][0])):
+            ctx = ""
+        sep = None
         raw = re.sub(r"\0(\d+)\0", lambda m: store[int(m.group(1))], seg)
         full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
@@ -178,14 +196,24 @@ def segments(cmd, tool="Bash", join=True):
             plain = re.sub(r"[\"']", " ", plain)
         for name, val in ASSIGN.findall(full):
             env[name] = val.strip("\"'")
-        head = full.lstrip("({ ")
+        head, lead = full.lstrip("({ "), plain.lstrip("({ ")
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
-            ctx = target if is_absolute(target) else (ctx + "/" + target)
+            # Chỉ tin đích một token, không mở bằng `-` (kể cả "-L") hay `+` (pushd +1 xoay ngăn xếp), không còn `$` hay backtick
+            # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.): còn lại không biết thư mục
+            if CD_WORD.match(lead) and not target.startswith(("-", "+")) and not re.search(r"[$`]", target) \
+                    and ".." not in re.sub(r"[\"'\\]", "", target):
+                ctx = target if is_absolute(target) else (ctx + "/" + target)
+            else:
+                ctx = ""
         elif full[:1] in "({" or re.match(r"^(cd|popd|pop-location|pushd|set-location|sl)\s*(-\s*)?$", head, re.IGNORECASE):
             ctx = ""  # cd không tham số, cd -, popd, subshell: không còn biết thư mục
+        if CHDIR.search(lead[len(m.group(1)):] if m else lead):
+            ctx = ""  # đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục
         out.append((plain, full, ctx, "$" in raw))
+        if re.search(r"[)}]", seg):
+            ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
     return out
 
 
