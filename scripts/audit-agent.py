@@ -186,11 +186,12 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
+def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, exact=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE, SNAP thay chỗ toán tử trên dòng mở. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như
     bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
+    raw_marks: như 695e799, byte dấu có sẵn trong lệnh giữ nguyên (đọc thành dấu), không đặt SNAP.
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
     thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`."""
@@ -217,8 +218,9 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
-        return "\n".join((SNAP + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    if scoped:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính để không đọc thành dấu
+        snap = "" if raw_marks else SNAP
+        return "\n".join((snap + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+    if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
 
@@ -236,7 +238,8 @@ def unwrap_shell_c(text):
     return SHELL_C_BODY.sub(sub, text)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, exact=False):
+def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
+             exact=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -249,6 +252,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     `$D` trong thân trước khi shell con chạy); thân <<'EOF' thấy biến của shell cha như đã export, kể cả gán tạm trước
     lệnh, biến gán trong thân vẫn áp.
     comments=False: che nháy như 6f32d5a, không biết comment (nháy trong `# don't` mở chuỗi).
+    raw_marks (chỉ có nghĩa khi scoped): như 695e799, byte \\x01–\\x04 có sẵn trong lệnh đọc thành dấu, không có SNAP.
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
@@ -257,7 +261,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped, exact)
+    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, exact)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = LINE_JOIN.sub(r"\1", body)
     if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng
@@ -295,7 +299,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             continue
         raw = re.sub(r"\0(\d+)\0", unkeep, seg)
         # Đoạn có toán tử heredoc đưa vào shell: bỏ SNAP rồi đọc như cũ, ghi env trước và sau phép gán của đoạn.
-        snapped = scoped and SNAP in raw
+        snapped = scoped and not raw_marks and SNAP in raw
         if snapped:
             seg, raw, pre = seg.replace(SNAP, "").strip(), raw.replace(SNAP, "").strip(), dict(env)
             if not seg:
@@ -447,15 +451,21 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # `\$D` thì shell con thay, chỉ cách scoped đọc đúng), thân <<'EOF' thấy biến của shell cha như đã export (cách
     # scoped=False cũng vậy nhưng không kéo dòng nên không thấy thân chỉ được đưa vào shell nhờ `\` cuối dòng mở).
     # Che nháy đọc hai cách: như 6f32d5a (comments=False) và biết comment (`# don't` không mở chuỗi nuốt dòng sau).
+    # Lệnh có sẵn byte \x01–\x05: cách đọc scoped đọc thêm như 695e799 (raw_marks: byte thành dấu, không SNAP). Bash coi
+    # byte là chữ, nhưng dấu giả xoá env bù được lỗi khác làm lệnh xoá trông vô hại (gán tạm, heredoc lồng).
     # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở, `\$` hay nháy theo hướng làm lệnh xoá trông vô hại,
     # nên chỉ lấy hợp. Cách gần bản cũ xét trước. PowerShell không nối dòng tại `\`.
     # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
     # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
+    # Lệnh có byte dấu: exact cũng đọc thêm raw_marks, tức như PR #5 trước khi byte dấu có sẵn được trung hoà.
     joins = (True,) if tool == "PowerShell" else (False, True)
+    marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     segs = [s for comments in (False, True) for scoped, parent_env in ((False, False), (True, False), (True, True))
-            for join in joins for s in segments(cmd, tool, join, scoped, parent_env, comments)]
-    segs += [s for join in joins for s in segments(cmd, tool, join, exact=True)]
+            for raw_marks in (marks if scoped else (False,)) for join in joins
+            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks)]
+    segs += [s for raw_marks in marks for join in joins for s in segments(cmd, tool, join, raw_marks=raw_marks,
+                                                                         exact=True)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):

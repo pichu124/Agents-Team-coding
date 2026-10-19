@@ -321,6 +321,12 @@ call("hb7", "bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF")                         
 call("hb8", "bash <<EOF && D=/tmp/x\nrm -rf $D/src\nEOF")                       # bash xoá /src
 call("hb9", "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF")                        # bash xoá ./src
 call("hb10", "D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF")                     # bash xoá /srv/x/src
+# Byte \x01–\x04 có sẵn là chữ với bash, nhưng cách đọc coi chúng là dấu (như 695e799) vẫn trong phép hợp: nó báo được các
+# lệnh này nhờ byte giả xoá env, gốc lỗi ở chỗ khác. Bash chạy cả ba với $D rỗng: xoá /src.
+call("hf1", "\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x # don't\nrm -rf $D/src")  # `\\`: D gán tạm cho lệnh `\`
+call("hf2", "'\necho 'a b'\n\x02\n#'\necho ${#x} | D=/tmp/x/ # x \\\nrm -rf $D/src; echo \\#z \\",
+     tool="PowerShell")                       # chỉ bản PowerShell mất nhãn; với bash, D gán ở shell con của ống
+call("hf3", "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)")       # thân <<EOF lồng được thay trước khi gán D
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -841,6 +847,10 @@ for must in ("bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF", "bash <<EOF && D=/tmp/x
              "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF"):
     check(must in A, f"shell cha thay biến trong thân <<EOF tại toán tử heredoc, trước lệnh sau nó, không thấy gán tạm: {must!r}")
 check("D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF" in A, "thân <<'EOF': shell con thấy phép gán tạm của chính nó")
+for must in ("\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x # don't\nrm -rf $D/src",
+             "'\necho 'a b'\n\x02\n#'\necho ${#x} | D=/tmp/x/ # x \\\nrm -rf $D/src; echo \\#z \\",
+             "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)"):
+    check(must in A, f"cách đọc byte \\x01–\\x04 có sẵn thành dấu như 695e799 vẫn trong phép hợp: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
