@@ -576,6 +576,10 @@ def agent_worktree(p):
 
 def benign_delete(full, ctx, worktree=True, tool="Bash"):
     """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi)."""
+    # Biến hay lệnh lồng chưa thay được có thể chứa `..`, đường tuyệt đối hay khoảng trắng (tách thành đích khác, kể cả từ
+    # token trông như cờ: `-$X`), dù đứng sau thư mục tạm hay tên lành.
+    if re.search(r"[$`]", full):
+        return False
     toks = [t.strip("\"'") for t in TOKEN.findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
@@ -609,10 +613,10 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
             return False  # rm đi theo symlink ở thành phần cuối: xoá nội dung thư mục mà link trỏ tới, tên nào cũng vậy
         if benign_path(t):
             continue
-        # Chỉ tin thư mục cd khi đích chắc là tương đối và ở trong thư mục đó. Biến, lệnh lồng, brace, extglob (`$D/a`, `{a,/}`,
-        # `+(.)`): bash thay trước khi rm chạy, có thể thành đường tuyệt đối hay có `..`. Glob khớp được `..` ở bash < 5.2 (chưa
-        # có globskipdots): `?`, `[` ở bất kỳ đâu, hay thành phần mở bằng `.` có `*` (`.?/.?/home`, `.[.]/src`, `.*/src`);
-        # `*.o` vẫn tin được.
+        # Chỉ tin thư mục cd khi đích chắc là tương đối và ở trong thư mục đó. Brace, extglob (`{a,/}`, `+(.)`; biến, lệnh lồng
+        # đã loại ở đầu hàm): bash thay trước khi rm chạy, có thể thành đường tuyệt đối hay có `..`. Glob khớp được `..` ở
+        # bash < 5.2 (chưa có globskipdots): `?`, `[` ở bất kỳ đâu, hay thành phần mở bằng `.` có `*` (`.?/.?/home`,
+        # `.[.]/src`, `.*/src`); `*.o` vẫn tin được.
         rel = not is_absolute(t) and not is_absolute(u) and not re.search(r"[$`{(?\[]", t) \
             and not any(x.startswith(".") and "*" in x for x in re.split(r"[\\/]+", u))
         if rel and ctx and benign_path(ctx):

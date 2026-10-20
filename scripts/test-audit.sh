@@ -434,6 +434,12 @@ call("s72", "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
 call("s73", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF')
 call("s77", "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF")
 call("s83", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF")
+# Biến audit không thay được (không gán trong lệnh, gán trong subshell) có thể chứa `..`, khoảng trắng (tách thành đích khác)
+# hay đường tuyệt đối, dù nằm sau thư mục tạm hay tên lành (blissful-dirac 749e0c6). Bash 5.2 với biến kế thừa rỗng: s92 xoá
+# /tmp/; s93, s94 vô hại (báo thừa có chủ ý: biến kế thừa có thể là `..`).
+call("s92", "rm -rf /tmp/$X")
+call("s93", "cd /tmp && rm -rf node_modules/$X")
+call("s94", "(D=..); rm -rf node_modules/$D")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1165,6 +1171,9 @@ for must in ("cat <<'EOF'\nEOF\nrm -rf src", "cd /tmp && rm -rf $D",
              "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF',
              "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF"):
     check(must in A, f"lệnh blissful-dirac nền bỏ sót, port youthful-fermi phải bắt: {must!r}")
+for must in ("rm -rf /tmp/$X", "cd /tmp && rm -rf node_modules/$X", "(D=..); rm -rf node_modules/$D"):
+    check(must in A, f"biến audit không thay được có thể chứa `..`, khoảng trắng hay đường tuyệt đối, dù sau thư mục tạm hay "
+                     f"tên lành: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
