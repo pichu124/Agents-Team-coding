@@ -61,15 +61,28 @@ modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
 mode=auto
 ask_count=0
+nl=$'\n'
+# bash 3.2 (macOS) tới 4.2 giữ dấu nháy của chuỗi thay trong "${x//a/"b"}" (ra "b" kèm nháy). BASH_COMPAT=42
+# bắt bash 4.3+ làm y như vậy, để máy Linux/Windows cũng bắt được lỗi chỉ lộ ra trên macOS.
+bash42=""
+# shellcheck disable=SC2016  # biểu thức được bash con mở rộng
+[ "$(BASH_COMPAT=42 bash -c 'x=a; printf %s "${x/a/"b"}"' 2>/dev/null)" = '"b"' ] && bash42=42
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode]"
+  local want="$1" cmd="$2" dir="${3:-$work}" inp
   inp="$(bash_input "$cmd" "$dir")"
-  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
-  if [ "$want" = ask ]; then
-    [ "$mode" = auto ] && ask_count=$((ask_count + 1))
-    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd → [$out], input: $inp" ;; esac
+  [ "$want" = ask ] && [ "$mode" = auto ] && ask_count=$((ask_count + 1))
+  check_guard "$want" "$cmd" "$inp" ""
+  # Lệnh có dấu nối dòng: guard nối dòng bằng ${x//a/b}, chạy thêm như bash 3.2-4.2.
+  case "$mode:$bash42:$cmd" in auto:42:*"\\$nl"* | auto:42:*"\`$nl"*) check_guard "$want" "$cmd" "$inp" 42 ;; esac
+}
+# check_guard <ask|allow> <lệnh> <input JSON> <BASH_COMPAT cho guard, rỗng là mặc định>
+check_guard() {
+  local out tag=" [$mode${4:+, BASH_COMPAT=$4}]"
+  out="$(printf '%s\n' "$3" | BASH_COMPAT="$4" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  if [ "$1" = ask ]; then
+    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $2 → [$out], input: $3" ;; esac
   else
-    assert "guard không được chặn$tag: $cmd → $out" [ -z "$out" ]
+    assert "guard không được chặn$tag: $2 → $out" [ -z "$out" ]
   fi
 }
 
