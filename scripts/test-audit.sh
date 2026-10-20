@@ -372,6 +372,15 @@ call("s39", "true | # x\ncd /tmp && rm -rf src")
 call("s40", "true || # a ; b\ncd /tmp/w && rm -rf src")
 call("s41", "true || # a && b\ncd /tmp/w && rm -rf src")
 call("s42", "true | # a | b\ncd /tmp && rm -rf src")
+# Phép gán trong phần chạy nền (`&` chạy cả danh sách hay cả nhóm `{ …; }` ở shell con) hay trong subshell `( … )` không đổi
+# biến của shell cha (blissful-dirac 9734b56; ca cuối từ oracle bash của nhánh đó). Bash 5.2: rm xoá /src hay ./src.
+call("s59", "{ D=/tmp/x; } &\nrm -rf $D/src\nwait")
+call("s60", "D=/tmp/x && true &\nrm -rf $D/src\nwait")
+call("s61", "D=/tmp/x && true & true; rm -rf $D/src\nwait")
+call("s62", "D=src; { D=/tmp/x; } &\nrm -rf $D\nwait")
+call("sb1", "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait")
+call("sb2", "( D=/tmp/x; ); rm -rf $D/src")
+call("sb3", "D=/tmp/x; { true; } &\nrm -rf $D/src\nwait")                 # vô hại: D gán ở shell cha
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -920,6 +929,11 @@ check("D=/tmp/x/; true && D=/srv/; rm -rf ${D}src" in A,
 for must in ("true || # x\ncd /tmp/w && rm -rf src", "true | # x\ncd /tmp && rm -rf src", "true || # a ; b\ncd /tmp/w && rm -rf src",
              "true || # a && b\ncd /tmp/w && rm -rf src", "true | # a | b\ncd /tmp && rm -rf src"):
     check(must in A, f"comment sau `||`/`|` không ngắt: cd ở dòng sau có thể không chạy hay chạy ở shell con: {must!r}")
+for must in ("{ D=/tmp/x; } &\nrm -rf $D/src\nwait", "D=/tmp/x && true &\nrm -rf $D/src\nwait",
+             "D=/tmp/x && true & true; rm -rf $D/src\nwait", "D=src; { D=/tmp/x; } &\nrm -rf $D\nwait",
+             "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait", "( D=/tmp/x; ); rm -rf $D/src"):
+    check(must in A, f"phép gán trong phần chạy nền hay subshell không đổi biến của shell cha: {must!r}")
+check("D=/tmp/x; { true; } &\nrm -rf $D/src\nwait" not in A, "phép gán ở shell cha trước phần chạy nền vẫn áp: vô hại")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd

@@ -305,6 +305,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # Comment chạy tới xuống dòng kế: `;`, `&&`, `|` trong nó không ngắt lệnh, cd trong nó không chạy. comment: phần đang
     # xét nằm trong comment mở ở phần trước; csep: dấu ngắt thật ngay trước comment mở đầu phần (`true || # x`).
     comment, csep = False, None
+    # strict_assign: phép gán trong subshell `( … )`, trong nhóm hay danh sách chạy nền (`{ …; } &`, `D=x && a &`) chạy ở
+    # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
+    # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới).
+    groups, lst, bg = [], {}, False
     parts = re.split("(" + SPLIT.pattern + ")", marked)
     for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
@@ -341,7 +345,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 ctx = ""
             inherit = False
         # Gán sau `&&`, `||` có thể không chạy; trong ống (`|` trước hay sau) hay chạy nền (`&`) thì chạy ở shell con.
-        detached = sep in ("&&", "||", "|") or parts[i + 1:i + 2] == ["|"] or re.search(r"[^<>|&]&(?![>&])", seg)
+        background = re.search(r"[^<>|&]&(?![>&])", seg)
+        detached = sep in ("&&", "||", "|") or parts[i + 1:i + 2] == ["|"] or background
+        opens = re.match(r"[({\s]*", seg).group().replace(" ", "").replace("\t", "") if strict_assign else ""
+        closes = re.findall(r"(?:^|[\s;])\}(?=[\s;&|)]|$)|\)", seg) if strict_assign else []
+        closes = closes[seg.count("$(") + seg.count("$(("):]  # bỏ `)` đóng `$(…)`, `$((…))`
+        if strict_assign and not groups and (sep in (None, ";", "\n") or bg) and not mark_only:
+            lst = dict(env)  # mở danh sách mới ở ngoài mọi nhóm
+        if strict_assign and background and not groups and not opens and not closes:
+            env = dict(lst)  # `D=x && a & rm $D`: cả danh sách trước `&` chạy nền, lệnh sau `&` thấy env lúc mở danh sách
+        groups += [(o, dict(env)) for o in opens]
+        bg = bool(background)
         after_or_pipe, sep = sep in ("||", "|"), None
         full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
@@ -352,6 +366,12 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             env[name] = val.strip("\"'")
         if snapped:
             snap = pre, dict(env)
+        for _c in closes:  # subshell đóng, hay nhóm chạy nền: phép gán bên trong không ra ngoài
+            o, at = groups.pop() if groups else ("(", dict(lst))
+            if o == "(" or background:
+                env = at
+        if strict_assign and background and not groups and (opens or closes):
+            env = dict(lst)
         head, lead = full.lstrip("({ "), plain.lstrip("({ ")
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
