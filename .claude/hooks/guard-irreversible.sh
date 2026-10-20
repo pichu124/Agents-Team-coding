@@ -161,8 +161,9 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   dirs="$base$nl"
   unknown=""
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
-  # here-doc: như <<< ở text_grep (lib.sh), here-doc lớn (và mọi here-doc trên bash < 5.1) đi qua
-  # file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push lọt qua.
+  # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
+  # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
+  # lọt qua.
   set -f
   IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS"; do

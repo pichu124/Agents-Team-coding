@@ -352,7 +352,8 @@ for mode in $modes; do
 done
 # Bash không tạo được file tạm (đĩa đầy, TMPDIR không ghi được): here-doc báo "cannot create temp
 # file", vòng đọc nó không chạy lần nào, git push trên nhánh chính từng lọt qua im lặng. Bash < 5.1
-# luôn ghi here-doc ra file tạm, bash ≥ 5.1 khi here-doc từ 64 KiB hoặc BASH_COMPAT=50 (nofile50).
+# luôn ghi here-doc ra file tạm, bash ≥ 5.1 khi here-doc lớn hơn pipe buffer (64 KiB trên Linux)
+# hoặc BASH_COMPAT=50 (nofile50).
 # Giả lập bằng ulimit -f 0, bỏ qua SIGXFSZ để write báo EFBIG thay vì giết tiến trình. Không có
 # ulimit -f (Git Bash) thì guard chạy như thường, ca vẫn phải đúng.
 nofile() { (trap '' XFSZ; ulimit -f 0 2>/dev/null; "$@"); }
