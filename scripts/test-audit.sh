@@ -894,6 +894,22 @@ for cmd in ("sh -" + "c" * 30000, "bash -" + "c" * 16000, "bash" + " -o" * 5000 
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên cụm cờ dài (đầu lệnh, giây): {slow}")
+# Shell có tiền tố chữ nối bằng `-` (git-bash của Git for Windows) vẫn gỡ thân -c như 96f49a6. Cách đọc khác không bù
+# được: SHELL_C không nhận cụm `-lc`, còn với `-c` trơn chúng thế env của cha vào thân.
+for cmd in ("git-bash -lc 'rm -rf /'", "git-bash.exe -lc 'rm -rf /'", "D=/tmp/w; git-bash -c 'D=/; rm -rf $D'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"shell có tiền tố chữ nối bằng `-`: thân -c vẫn là lệnh: {cmd!r}: {got!r}")
+# Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
+# từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
+# `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
+slow = []
+for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -o x-bash" * 3000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ có shell sau `-` (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))

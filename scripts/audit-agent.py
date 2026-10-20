@@ -122,13 +122,15 @@ COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
-# đơn hay kép. Cờ trước cụm c: `-x`, cờ dài `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`,
-# `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`: `-o -o …` chỉ tách được một cách, không backtrack mũ. Shell không
-# đứng sau `-`, tên không là shell: lần khớp từ một shell không đi qua shell khác (`bash -o bash -o …`, `--bash --bash …`
-# quét lại tới cuối từ mỗi shell: bậc hai). Cụm c tìm chữ c bằng lookahead rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack
-# bậc hai trên cụm dài nhiều chữ c.
-SHELL_C_BODY = re.compile(r"(?<![\w-])((?:bash|sh|zsh|dash)(?:\.exe)?)"
-                          r"(?:\s+(?:-\w+|--\w[\w-]*|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
+# đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ trước cụm c: `-x`,
+# `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`:
+# `-o -o …` chỉ tách được một cách, không backtrack mũ. Không `-` nào trong cờ đứng ngay trước shell + khoảng trắng, tên
+# không là shell: lần khớp từ một shell không đi qua chỗ một shell khác mở (`bash -o bash -o …`, `--bash --bash …`,
+# `--x-bash …` quét lại tới cuối từ mỗi shell: bậc hai), thân vẫn được gỡ từ shell sau. Cụm c tìm chữ c bằng lookahead
+# rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
+SHELL_C_BODY = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
+                          r"(?:\s+(?:--?(?!(?:bash|sh|zsh|dash)\s)\w(?:\w|-(?!(?:bash|sh|zsh|dash)\s))*"
+                          r"|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
                           r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
