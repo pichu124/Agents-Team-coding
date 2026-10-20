@@ -122,7 +122,8 @@ COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), rồi chuỗi nháy đơn hay kép.
-SHELL_C_BODY = re.compile(r"\b((?:bash|sh|zsh|dash)(?:\.exe)?)(?:\s+-\w+)*?\s+-[A-Za-z]*c[A-Za-z]*\s+"
+# Cụm c tìm chữ c bằng lookahead rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
+SHELL_C_BODY = re.compile(r"\b((?:bash|sh|zsh|dash)(?:\.exe)?)(?:\s+-\w+)*?\s+-(?=[A-Za-z]*c)[A-Za-z]+\s+"
                           r"('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)

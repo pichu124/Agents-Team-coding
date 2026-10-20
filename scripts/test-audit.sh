@@ -870,6 +870,18 @@ for cmd in ("bash \\\n<<'EOF'\nrm -rf src\nEOF", "bash \\\n  -s <<'EOF'\nrm -rf 
     check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"dòng mở heredoc nối qua `\\`: thân đưa vào bash là lệnh: {cmd!r}")
 # `\` cuối comment là chữ, bash chạy rm ở dòng sau: cách đọc exact cũng phải đọc không nối dòng (nối thì rm vào comment).
 check(a.suspicious_labels("# don't \\\nrm -rf src 'x'", a.SUSPICIOUS), "`\\` cuối comment có nháy lẻ: rm ở dòng sau vẫn nghi")
+# Cụm cờ dài hay chuỗi cờ dài không làm audit chậm: regex thân -c không được backtrack bậc hai hay mũ (cụm c
+# `-[A-Za-z]*c[A-Za-z]*` mất ~20 giây với 30000 chữ c). Bản tuyến tính mất dưới 0,2 giây mỗi ca.
+import time
+slow = []
+for cmd in ("sh -" + "c" * 30000, "bash -" + "c" * 16000, "bash" + " -o" * 5000 + " x", "bash" + " --a" * 5000,
+            "bash" + " -euo pipefail" * 3000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên cụm cờ dài (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
