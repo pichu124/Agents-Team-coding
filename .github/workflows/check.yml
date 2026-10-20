@@ -40,6 +40,27 @@ jobs:
           command -v grep && grep --version 2>&1 | head -n 1
           for c in jq python3 python py git shellcheck; do printf '%s: %s\n' "$c" "$(command -v "$c")"; done
           git config --show-origin core.autocrlf || true
+      - name: Thời gian guard theo độ dài lệnh (chẩn đoán)
+        if: ${{ !cancelled() }}
+        run: |
+          for n in 0 1000 4000 12000; do
+            f="$RUNNER_TEMP/len-$n.json"
+            {
+              printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"npm run deploy' "$PWD"
+              [ "$n" -gt 0 ] && printf '\\necho line-%s' $(seq "$n")
+              printf '"}}\n'
+            } > "$f"
+            for mode in auto python sed; do
+              s=$(date +%s)
+              out="$(KIT_JSON_TOOL=$mode perl -e 'alarm shift; exec @ARGV' 300 .claude/hooks/guard-irreversible.sh < "$f")"
+              case "$out" in *'"ask"'*) a=hỏi ;; *) a=KHÔNG-hỏi ;; esac
+              echo "n=$n $(wc -c < "$f")B mode=$mode: $(($(date +%s) - s))s $a"
+            done
+          done
+          # Bước nào tốn thời gian: vết bash -x kèm $SECONDS, in dòng ngay trước mỗi lần nhảy giây.
+          PS4='+${SECONDS} ' KIT_JSON_TOOL=sed perl -e 'alarm shift; exec @ARGV' 300 \
+            bash -x .claude/hooks/guard-irreversible.sh < "$RUNNER_TEMP/len-12000.json" 2>&1 >/dev/null \
+            | cut -c1-160 | awk '/^\++[0-9]+ / { t = $1; sub(/^\++/, "", t); if (t != last) print prev " ==> " t "s"; last = t; prev = $0 }' | head -n 60
       - name: validate-kit
         if: ${{ !cancelled() }}
         run: ./scripts/validate-kit.sh
