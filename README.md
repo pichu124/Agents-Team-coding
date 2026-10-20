@@ -37,7 +37,7 @@ plugin/                           hooks.json + run-hook.sh: hook của plugin (S
     post-edit-format.sh           PostToolUse: format bằng formatter dự án đã cấu hình
 scripts/
   check.sh                        THE check: một lệnh cho agent, hook và CI
-  validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell (chỉ file của kit)
+  validate-kit.sh                 kiểm tra frontmatter, link, hook, cú pháp shell, grep -q đọc từ pipe (chỉ file của kit)
   test-hooks.sh                   test hành vi của 3 hook
   guard-ask-floor                 sàn số ca "phải hỏi" của guard: được tăng, không được giảm
   audit-agent.sh / .py            dò sự cố, lần bạn phải sửa agent, chỉ số tuần từ file phiên Claude Code (chỉ đọc)

@@ -62,11 +62,12 @@ modes="auto sed"
 mode=auto
 ask_count=0
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$work}" out tag=" [$mode]"
-  out="$(bash_input "$cmd" "$dir" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode]"
+  inp="$(bash_input "$cmd" "$dir")"
+  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   if [ "$want" = ask ]; then
     [ "$mode" = auto ] && ask_count=$((ask_count + 1))
-    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd" ;; esac
+    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd → [$out], input: $inp" ;; esac
   else
     assert "guard không được chặn$tag: $cmd → $out" [ -z "$out" ]
   fi
@@ -309,6 +310,38 @@ EOF
   TOOL=Unknown expect_guard ask $'Set-Location C:\\\nRemove-Item -Recurse -Force *'
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force `\n  C:\\'
 done
+# Lệnh dài hơn pipe buffer (64 KiB), phần nguy hiểm ở dòng đầu: grep -q thoát ở dòng khớp đầu
+# tiên, printf còn ghi dở thì chết vì SIGPIPE, pipefail từng biến "khớp" thành "không khớp".
+# Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
+# kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
+# JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
+# long_input <dòng đầu> <cwd>: dòng đầu, rồi 12000 dòng `echo line-N`.
+long_input() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
+  printf '\\necho line-%s' {1..12000}
+  printf '","description":"test"}}\n'
+}
+long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
+long_input 'git push' "$on_main" > "$tmp/long-push.json"
+for mode in $modes; do
+  for f in long-deploy long-push; do
+    out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
+    case "$out" in
+      *'"permissionDecision":"ask"'*) ok ;;
+      *) bad "guard phải hỏi [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+    esac
+  done
+done
+# Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
+# ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
+for mode in $modes; do
+  out="$( (trap '' PIPE; KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-deploy.json") 2>"$tmp/sigpipe.err")"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi [$mode] khi SIGPIPE bị bỏ qua: lệnh dài hơn pipe buffer → [$out]" ;;
+  esac
+  assert "guard không được in ra stderr [$mode] khi SIGPIPE bị bỏ qua → $(cat "$tmp/sigpipe.err")" [ ! -s "$tmp/sigpipe.err" ]
+done
 if [ -n "$py" ]; then
   # Windows: Python đọc stdin theo cp1252, chữ "Đ" từng làm hỏng việc đọc lệnh.
   out="$(bash_input 'git commit -m "Đổi tên" && git push origin' "$on_main" \
@@ -338,7 +371,7 @@ stop_input() { printf '{"hook_event_name":"Stop","session_id":"%s","cwd":"%s","s
 run_stop() { stop_input "${1:-$repo}" | AGENT_STOP_GATE_MAX=2 "$hooks/stop-gate.sh" 2>/dev/null; }
 # Chặn = JSON {"decision":"block"} với exit 0, hoặc exit 2 khi không có jq/Python.
 blocked() {
-  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q '"decision": *"block"'; }
+  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && text_grep "$out" -q '"decision": *"block"'; }
 }
 
 out="$(run_stop)"; code=$?
@@ -358,7 +391,7 @@ case "$out" in *"1/2)"*) ok ;; *) bad "stop-gate: lý do chặn phải ghi số 
 out="$(run_stop)"; code=$?
 assert "stop-gate: lần chặn thứ 2 vẫn phải chặn (exit $code)" blocked
 out="$(run_stop)"; code=$?
-if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
+if [ "$code" -eq 0 ] && text_grep "$out" -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
 
 # Bộ đếm phải về 0 khi không còn thay đổi: chặn 1 lần, bỏ thay đổi, rồi đỏ lại → bắt đầu từ 1.
 run_stop >/dev/null
