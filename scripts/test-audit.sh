@@ -1032,6 +1032,16 @@ for cmd in ("echo $# 'x\nrm -rf src\n'", "echo ${#x} 'x\nrm -rf src\n'", "echo a
             "a=#x 'x\nrm -rf src\n'", "echo x\\ # don't\nrm -rf src\n'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(got == [], f"`#` không ở đầu từ không mở comment, rm nằm trong chuỗi: {cmd!r}: {got!r}")
+# `<<NAME` trên dòng cuối không có `\n` không mở được heredoc: mỗi lần thử không được quét lại cả dòng theo nhóm
+# `(?:[^\n\\]|\\[^\n])*` (8ccdb8e), chậm hơn `[^\n]*` cỡ trăm lần. 20/10/2026 (4 nhân), dòng rm rồi 2000 lần `<<EOF `:
+# b13bd51 37,3 s, f5bc021 0,74 s, bản có lookahead 0,47 s (trung vị 9 lần). Ngưỡng 4 s cách hai bản ~8–9 lần. Bash chạy rm ở
+# dòng đầu rồi dừng ở dòng 2 (maximum here-document count exceeded).
+cmd = "rm -rf src\n" + "<<EOF " * 2000
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 4 and "xoá đệ quy" in got,
+      f"2000 lần `<<EOF ` trên dòng không có `\\n` phải xong dưới 4 s, rm ở dòng trước vẫn nghi: {dt:.1f} s, {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
