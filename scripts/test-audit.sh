@@ -916,10 +916,12 @@ MUST_FLAG = [
     # biến chưa gán ở đầu đích: bash thay bằng rỗng, đích thành tuyệt đối
     "cd /tmp/w && rm -rf $D/a",                                  # xoá /a
     "echo 'a b' && cd /tmp/w && sh -c 'rm -rf $D/a' # don't",     # xoá /a
+    "cd /tmp && rm -rf $D/a",                                     # docs/viec-can-lam.md 2.2 ý 6: xoá /a
     # phép gán hay cd trong một khâu của ống chạy ở shell con, không tới khâu sau hay lệnh sau ống
     "unset D && D=/tmp/w/ | rm -rf ${D}src",                      # xoá src của dự án
     "D=/tmp/w/ | true; rm -rf ${D}src",                           # xoá src của dự án
     "rm -rf /tmp/w/x | cd /tmp/w && rm -rf src",                  # xoá src của dự án
+    "export D=/tmp/w | rm -rf ${D}src",                           # docs/viec-can-lam.md 2.2 ý 6: xoá src của dự án
     # thân heredoc rỗng: dòng EOF ngay sau dòng mở là dấu đóng, lệnh sau nó là lệnh
     ": <<'EOF'\nEOF\nbash <<EOF\nrm -rf src # don't",             # xoá src của dự án
     "cat <<'EOF'\nEOF\nbash -c 'cd /tmp/w && rm -rf src'; bash -c \"rm -rf $D/a\"",  # xoá /a
@@ -928,6 +930,7 @@ MUST_FLAG = [
     "cd / || cd /tmp/nope && rm -rf /tmp/w\\\n  src",             # cd / thành công, bỏ qua cd sau ||: xoá /src
     "true || cd /tmp/w && rm -rf src",                            # xoá src của dự án
     "true || D=/tmp/w/ && rm -rf ${D}src",                        # gán sau || không chạy: xoá src của dự án
+    "D=/tmp/w || cd /tmp/w && rm -rf src",                        # docs/viec-can-lam.md 2.2 ý 6: xoá src của dự án
 ]
 for cmd in MUST_FLAG:
     check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash xoá đích ngoài thư mục tạm, mục A phải báo: {cmd!r}")
