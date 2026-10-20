@@ -31,20 +31,22 @@ case "$cmd" in
       PowerShell) marks='`' ;;
       *) marks='\`' ;;
     esac
-    src="${cmd//"$bs$bs"/"$ph"}"
+    # Vế phải KHÔNG bọc nháy kép: trong "${x//a/"b"}", bash 3.2 (macOS) tới 4.2 giữ cả dấu nháy của
+    # chuỗi thay, \ nối dòng thành `" "` và guard bỏ sót. Nháy quanh chuỗi thay vẫn cần (bash 5.2 đọc &).
+    src=${cmd//"$bs$bs"/"$ph"}
     joined="$src"
     kept="$src"
     both="$src"
     for ((i = 0; i < ${#marks}; i++)); do
       m="${marks:i:1}"
-      joined="${joined//"$m$nl"/" "}"
-      kept="${kept//"$m$nl"/"$nl"}"
+      joined=${joined//"$m$nl"/" "}
+      kept=${kept//"$m$nl"/"$nl"}
     done
-    both="${both//"$bs$nl"/" "}"
-    both="${both//"\`$nl"/" "}"
-    joined="${joined//"$ph"/"$bs$bs"}"
-    kept="${kept//"$ph"/"$bs$bs"}"
-    both="${both//"$ph"/"$bs$bs"}"
+    both=${both//"$bs$nl"/" "}
+    both=${both//"\`$nl"/" "}
+    joined=${joined//"$ph"/"$bs$bs"}
+    kept=${kept//"$ph"/"$bs$bs"}
+    both=${both//"$ph"/"$bs$bs"}
     forms=("$kept" "$joined" "$both")
     case "$tool" in
       Bash | PowerShell) cmd="$joined$nl$kept$nl$both" ;;
