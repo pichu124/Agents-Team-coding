@@ -194,6 +194,22 @@ call("s3", "rm -rf -- /tmp/x")                                          # `--` k
 call("s4", "(cd /tmp && true); rm -rf -- -x")                           # cd trong subshell không đổi thư mục: xoá ./-x của dự án
 call("s5", "cd dist && cd .. && rm -rf -- -x")                          # về lại thư mục dự án: xoá ./-x
 call("s6", "cd /tmp/w; rm -rf -- -x")                                   # cd lỗi thì `;` vẫn chạy rm: xoá ./-x của dự án
+# Đích còn biến chưa biết, lệnh lồng hay brace: bash thay trước khi rm chạy, kết quả không phải đường tương đối với thư mục cd.
+call("bc1", "cd /tmp/x && rm -rf $D/src")                               # D chưa gán: bash xoá /src
+call("bc2", "cd /tmp/x && rm -rf `pwd`src")                             # bash xoá /tmp/xsrc: lệnh lồng cho đường tuyệt đối
+call("bc3", "cd /tmp/x && rm -rf {/,}src")                              # brace: bash xoá /src và ./src
+call("bc4", "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src") # xoá src ở gốc repo
+# rm của BSD/macOS (getopt POSIX, không hoán vị) thôi nhận cờ ở toán hạng đầu tiên: token sau đó là đích dù mở bằng `-`.
+# Không áp cho PowerShell (`rm` là Remove-Item, tham số đứng sau đích được) và cmd (`rd /s`), trừ khi chạy qua wsl.
+call("bc5", "rm -rf /tmp/x -important")                                 # macOS xoá cả ./-important
+call("bc6", "wsl rm -rf /tmp/x -important", tool="PowerShell")          # rm chạy trong Linux: đọc như lệnh Bash
+call("bc7", "rm C:\\tmp\\x -Recurse", tool="PowerShell")                # vô hại: -Recurse là tham số của Remove-Item
+call("bc8", "rd /s /q C:\\tmp\\x")                                       # vô hại: /s /q là cờ của cmd
+# `/` cuối đích làm rm đi theo symlink ở thành phần cuối (`stat link` → symbolic link, `stat link/` → directory): xoá nội dung
+# thư mục mà link trỏ tới, dù tên hay thư mục cd trông như thư mục tạm. Đích ghi trọn là worktree agent vẫn được `/` cuối (d5).
+call("bc9", "rm -rf /tmp/link/")
+call("bc10", "cd /tmp/x && rm -rf link/")
+call("bc11", "rm -rf node_modules/")
 # Thư mục cd chỉ áp cho lệnh nối sau nó bằng `&&` trong cùng phạm vi. Các ca sau, bash chạy rm ở thư mục dự án.
 call("cx1", "(cd /tmp && true); rm -rf src")                            # cd trong subshell
 call("cx2", "(cd /tmp && true) && rm -rf src")
@@ -222,6 +238,17 @@ call("cy8", "cd /tmp/x && command cd / && rm -rf home")
 call("cy9", "cd /tmp/x && source ./env.sh && rm -rf src")
 call("cy10", "cd /tmp/x && . ./env.sh && rm -rf src")
 call("cy11", "pushd /tmp/x && pushd +1 && rm -rf src")
+# Tên lệnh đổi thư mục có nháy hay `\` vẫn là lệnh đó sau khi bash bỏ nháy: rm chạy ở /home/p (`.` thì ở nơi env.sh cd tới).
+call("ce1", 'cd /tmp/x && "cd" /home/p && rm -rf src')
+call("ce2", "cd /tmp/x && 'cd' /home/p && rm -rf src")
+call("ce3", 'cd /tmp/x && c"d" /home/p && rm -rf src')
+call("ce4", "cd /tmp/x && c\\d /home/p && rm -rf src")
+call("ce5", "cd /tmp/x && $'cd' /home/p && rm -rf src")
+call("ce6", 'cd /tmp/x && "." ./env.sh && rm -rf src')
+call("ce7", "cd /tmp/x && chdir /home/p && rm -rf src")                  # zsh: chdir là builtin như cd
+# `&` đơn chạy nền cả danh sách trước nó (`cd /tmp/x && true`) ở shell con: lệnh sau `&` chạy ở thư mục cũ.
+call("ce8", "cd /tmp/x && true & rm -rf src")                            # bash xoá ./src của dự án
+call("ce9", "cd /tmp/x && rm -rf y &")                                   # vô hại: cả danh sách chạy nền, rm ở /tmp/x
 # Thân heredoc đưa vào shell chạy ở shell con: biến gán trong thân không ra ngoài, biến không export của shell cha rỗng trong
 # thân <<'EOF' (<<EOF thì shell cha thay trước), chỉ shell cục bộ trơn chạy thân ở thư mục cd, thân chạy trước lệnh sau shell
 # trên dòng mở. `\` cuối dòng mở kéo dòng kế (`| bash`) vào lệnh. Shell trơn không có heredoc không đọc dòng sau.
@@ -254,10 +281,159 @@ call("hz12", "cd /tmp/x && cd '-' && rm -rf src")
 call("hz13", "cd /tmp/x || rm -rf src")                                      # rm chỉ chạy khi cd lỗi
 call("hz14", "cd /tmp/x | rm -rf src")                                       # cd ở shell con của ống
 call("hz15", "D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src")        # vô hại: D có từ trước thân, giữ /tmp/y/
+# <<EOF không nháy: shell cha thay biến trong thân bằng giá trị của chính nó trước khi shell con chạy, nên biến gán trong thân
+# không đổi phép thay đó. `\$` thoát thì shell con mới thay, khi đó thấy biến gán trong thân.
+call("hv1", "bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF")                     # D rỗng ở shell cha: bash xoá /src
+call("hv2", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")          # shell cha thay D=/srv/: xoá /srv/src
+call("hv3", "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF")        # D rỗng: xoá /src (chạy ở /tmp/x)
+call("hv4", "D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF")        # `\$`: shell con thay, xoá /srv/src
+call("hv5", "D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF")                   # bash xoá /tmp/y/src, audit báo thừa (s86–s91)
+# Thân <<'EOF' chỉ được đưa vào bash nhờ `\` cuối dòng mở kéo `| bash`: biến đã export của shell cha vẫn thấy trong thân.
+call("hv6", "export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF")  # xoá /srv/src (chạy ở /tmp/x)
+call("hv7", "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF")               # xoá /srv/src
 # PowerShell cũng đọc thêm thân heredoc theo cách cũ rồi lấy hợp; byte \x01–\x04 có sẵn trong lệnh không phải dấu ở cách
 # đọc cũ. Guard không hỏi cả hai lệnh: vào A, không vào H.
 call("hp1", "wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'", tool="PowerShell")  # xoá /srv/app/src
 call("hp2", "D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x")                        # bash xoá /srv/atmp/x
+# Thân heredoc rỗng: dòng ngay sau dòng mở là dấu đóng, lệnh sau đó chạy ở shell cha. Chưa đóng thì thân tới hết chuỗi.
+call("ha1", "cat > f <<'EOF'\nEOF\nrm -rf src")                               # bash xoá src ở thư mục dự án
+call("ha2", "cat > f <<EOF\nEOF\nrm -rf src")
+call("ha3", "cat > f <<-EOF\n\tEOF\nrm -rf src")                              # <<- bỏ tab đầu dòng đóng
+call("ha4", "cat > f <<'EOF'\nEOF\nrm -rf src\nEOF")                          # EOF đầu đã đóng thân: bash xoá src
+call("ha5", "bash <<'EOF'\nEOF\nrm -rf src")                                  # bash nhận thân rỗng, rm chạy ở shell cha
+call("ha6", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src")                     # rm sau xuống dòng: cd lỗi thì xoá src của dự án
+call("ha7", "bash <<'EOF'\nrm -rf src")                                       # chưa đóng, thân đưa vào bash: bash xoá src
+# Dòng đầu chỉ đóng thân khi đúng là dấu đóng: `<<EOF` không bỏ tab, `\tEOF` là lệnh của thân, EOF sau mới đóng.
+call("ha8", "bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX")             # bash xoá src
+# `#` đầu từ ngoài nháy mở comment tới hết dòng: nháy trong comment không mở chuỗi, dòng sau vẫn là lệnh.
+call("hb1", "# don't\nrm -rf src\necho 'x'")                                # bash xoá src ở thư mục dự án
+call("hb2", "cd /tmp/x # don't\nrm -rf src\necho 'ok'")                     # rm sau xuống dòng: cd lỗi thì xoá src của dự án
+call("hb3", "echo a \\\\\n# don't\nrm -rf src\necho 'x'")                   # `\\` là một `\` thường: `#` ở đầu dòng mới
+# Cách che nháy cũ (không biết comment) vẫn trong hợp, kể cả ở cách đọc kéo dòng: chỉ nó báo ca này, nhờ `#'` ghép với
+# nháy của dòng được `\` kéo vào làm `$x` lọt vào đích.
+call("hb4", "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF")  # cd ở shell con của ống: bash xoá ./y
+# Byte \x01–\x04 có sẵn trong lệnh là chữ thường với bash, không phải dấu đóng/mở thân của cách đọc scoped.
+call("hb5", "D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF")             # D không export: bash xoá ./src
+call("hb6", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src")             # D chỉ gán trong thân: bash xoá ./src
+# Shell cha thay biến trong thân <<EOF ngay tại toán tử heredoc: trước lệnh sau toán tử trên dòng mở, không thấy gán tạm
+# trước lệnh. Thân <<'EOF' thì shell con thay, thấy gán tạm của chính nó.
+call("hb7", "bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF")                         # D chưa gán khi thay: bash xoá /src
+call("hb8", "bash <<EOF && D=/tmp/x\nrm -rf $D/src\nEOF")                       # bash xoá /src
+call("hb9", "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF")                        # bash xoá ./src
+call("hb10", "D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF")                     # bash xoá /srv/x/src
+# Byte \x01–\x04 có sẵn là chữ với bash, nhưng cách đọc coi chúng là dấu (như 695e799) vẫn trong phép hợp: nó báo được các
+# lệnh này nhờ byte giả xoá env, gốc lỗi ở chỗ khác. Bash chạy cả ba với $D rỗng: xoá /src.
+call("hf1", "\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x # don't\nrm -rf $D/src")  # `\\`: D gán tạm cho lệnh `\`
+call("hf2", "'\necho 'a b'\n\x02\n#'\necho ${#x} | D=/tmp/x/ # x \\\nrm -rf $D/src; echo \\#z \\",
+     tool="PowerShell")                       # chỉ bản PowerShell mất nhãn; với bash, D gán ở shell con của ống
+call("hf3", "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)")       # thân <<EOF lồng được thay trước khi gán D
+# cd ngay sau `||` hay `|` không đặt thư mục cho lệnh sau `&&`: `(true || cd x) && rm` bỏ qua cd, cd trong ống chạy ở shell con.
+call("hf4", "true || cd /tmp/x && rm -rf y")                                  # bash xoá ./y ở thư mục dự án
+call("hf5", "true | cd /tmp/x && rm -rf y")                                   # bash xoá ./y ở thư mục dự án
+# Gán tạm trước lệnh khác và `NAME=VALUE` là tham số của lệnh khác không đổi biến của shell: chỉ đoạn toàn phép gán, hay tham
+# số của export/declare/typeset/local/readonly mới đổi.
+call("hf6", "D=/tmp/x/ true; rm -rf ${D}src")                                # D chỉ có trong env của true: bash xoá ./src
+call("hf7", "echo D=/tmp/x/; rm -rf ${D}src")                                # D=/tmp/x/ là tham số của echo: bash xoá ./src
+call("hf8", "env D=/tmp/x/ true; rm -rf ${D}src")                            # bash xoá ./src
+call("hf9", "true;D=/tmp/x/ true;rm -rf ${D}src")                            # bash xoá ./src (`;D=` không có khoảng trắng)
+call("hf10", "D=/tmp/x/; rm -rf ${D}src")                                    # vô hại: bash xoá /tmp/x/src
+call("hf11", "export D=/tmp/x/; rm -rf ${D}src")                             # vô hại: bash xoá /tmp/x/src
+# `\` lẻ cuối dòng mở heredoc nối dòng EOF ngay sau vào lệnh (thành tham số), không phải dấu đóng thân rỗng: thân là các dòng
+# sau đó tới EOF kế.
+call("hg1", "D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF")   # D không export: bash xoá ./src
+call("hg2", "D=/tmp/x/; sh <<'EOF' -s \\\nEOF\nrm -rf ${D}src\nEOF")     # bash xoá ./src
+call("hg3", "bash -s <<EOF \\\nEOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")      # shell cha thay ${D} rỗng trước: bash xoá ./src
+call("hg4", "cat > f <<'EOF' \\\\\nEOF\nrm -rf src")                       # `\\` là một `\` thường: thân rỗng, bash xoá ./src
+# Cách đọc scoped với heredoc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp khi hai cách đọc heredoc khác nhau.
+# hg5, hg6 nay còn được cách đọc strict_assign (b377b11) phủ: bỏ cách đọc empty_body=False vẫn báo cả hai. hh1, hh2 canh nó.
+call("hg5", "false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src")      # D không được gán: bash xoá ./src
+call("hg6", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF")  # D gán ở shell con của ống: bash xoá ./src
+# Phép gán sau `&&`, `||` có thể không chạy; trong ống (`|` trước hay sau) hay chạy nền (`&`) thì chạy ở shell con: không đổi
+# biến của shell.
+call("hg7", "false && D=/tmp/x/; rm -rf ${D}src")                         # gán không chạy: bash xoá ./src
+call("hg8", "true || D=/tmp/x/; rm -rf ${D}src")                          # gán không chạy: bash xoá ./src
+call("hg9", "D=/tmp/x/ | true; rm -rf ${D}src")                           # gán ở shell con của ống: bash xoá ./src
+call("hg10", "true | D=/tmp/x/; rm -rf ${D}src")                          # bash xoá ./src
+call("hg11", "D=/tmp/x/&\nrm -rf ${D}src")                                # gán ở shell con chạy nền: bash xoá ./src
+call("hg12", "export D=/tmp/x/ &\nrm -rf ${D}src")                        # bash xoá ./src
+# Escape ANSI-C trong `$'…'` cho ra tên lệnh bất kỳ: `$'\x63d'` là cd.
+call("hg13", "cd /tmp/x && $'\\x63d' /home/p && rm -rf src")              # bash xoá src ở /home/p
+# Hai heredoc trên một dòng: thân <<'A' rỗng, thân <<'EOF' đưa vào bash. Audit chỉ xét toán tử đầu: cách đọc nhận thân rỗng
+# để rm ở shell cha (D=/tmp/x/), chỉ cách đọc như 6f32d5a (empty_body=False) đưa rm vào thân, nơi D không export là rỗng.
+call("hh1", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF")      # bash xoá ./src
+call("hh2", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA")   # bash xoá ./src (dòng A cuối: command not found)
+# Phép gán sau `&&` chạy khi lệnh trước thành công: cách đọc gán chặt (strict_assign) bỏ qua nó nên thấy D=/tmp/x/, chỉ cách
+# đọc gán lỏng như f5bc021 (strict_assign=False) thấy D=/srv/.
+call("hi1", "D=/tmp/x/; true && D=/srv/; rm -rf ${D}src")                 # true thành công nên gán chạy: bash xoá /srv/src
+# Comment sau `||`/`|` không phải dấu ngắt: cd ở dòng sau vẫn là vế phải của `||` hay chạy trong ống; `;`, `&&`, `|` trong
+# comment cũng không ngắt (blissful-dirac 8fbb100, efa2ed3). Bash 5.2: rm chạy ở thư mục dự án.
+call("s38", "true || # x\ncd /tmp/w && rm -rf src")
+call("s39", "true | # x\ncd /tmp && rm -rf src")
+call("s40", "true || # a ; b\ncd /tmp/w && rm -rf src")
+call("s41", "true || # a && b\ncd /tmp/w && rm -rf src")
+call("s42", "true | # a | b\ncd /tmp && rm -rf src")
+# Phép gán trong phần chạy nền (`&` chạy cả danh sách hay cả nhóm `{ …; }` ở shell con) hay trong subshell `( … )` không đổi
+# biến của shell cha (blissful-dirac 9734b56; ca cuối từ oracle bash của nhánh đó). Bash 5.2: rm xoá /src hay ./src.
+call("s59", "{ D=/tmp/x; } &\nrm -rf $D/src\nwait")
+call("s60", "D=/tmp/x && true &\nrm -rf $D/src\nwait")
+call("s61", "D=/tmp/x && true & true; rm -rf $D/src\nwait")
+call("s62", "D=src; { D=/tmp/x; } &\nrm -rf $D\nwait")
+call("sb1", "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait")
+call("sb2", "( D=/tmp/x; ); rm -rf $D/src")
+call("sb3", "D=/tmp/x; { true; } &\nrm -rf $D/src\nwait")                 # vô hại: D gán ở shell cha
+# `\$` trong thân `<<EOF` không nháy là `$` chữ: shell cha không thay, shell con thay bằng env của nó, nơi D không export
+# là rỗng (blissful-dirac 9734b56). Bash 5.2: rm xoá /src.
+call("s65", "D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF")
+# Shell cha thay thân `<<EOF` bằng biến của nó lúc chạy lệnh mở: chỉ tin biến mà phép gán chắc đã chạy (blissful-dirac
+# 5f2f9c2): sau `if false`, trong thân dữ liệu audit đọc lệch (`<<\EOF`, dòng ` EOF`), trong nháy ở chế độ `| bash`, biến bị
+# unset, declare -u, cd đổi PWD, `$[D=5]` trong lệnh mở, biến bash tự đặt (RANDOM, `_`). Bash 5.2: rm xoá /src hay src.
+call("s74", "if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s75", "cat <<\\EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s76", "cat <<EOF >/dev/null\nx\n EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s78", "echo 'a;D=/tmp/x;b'; cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s79", "D=/tmp/x; unset D; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s80", "declare -u D; D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s81", "PWD=/tmp/x; cd src; bash <<EOF\nrm -rf $PWD\nEOF")
+call("s82", "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF")
+call("s84", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF")
+call("s85", "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF")
+call("sc1", "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")                     # bash xoá /tmp/x/src, audit báo thừa (s86–s91)
+# Audit không đoán biến của shell cha trong thân `<<EOF` không nháy (blissful-dirac cd828ea): vòng lặp thế lại thân mỗi lần
+# chạy, bash lấy cả từ `EOF.x`, `EOF-1`, `EOF\r` làm delimiter (audit chỉ đọc `EOF`), shell con brace-expand giá trị đã thế.
+# Bash 5.2: rm xoá /src hay /x/src.
+call("s86", "D=/tmp/x\nwhile bash <<EOF\nrm -rf $D/src\ntest -n \"$D\"\nEOF\ndo unset D\ndone")
+call("s87", "D=/tmp/x\nbash <<EOF.x\ntrue\nEOF.x\nunset D\nrm -rf $D/src")
+call("s88", "D=/tmp/x\nbash <<EOF-1\nEOF-1\nD=\nrm -rf $D/src")
+call("s89", "D=/tmp/x\nbash <<EOF\r\ntrue\nEOF\r\nunset D\nrm -rf $D/src")
+call("s90", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s91", "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF")
+# Các lệnh khác của blissful-dirac mà nền (mặc định + PR #5) bỏ sót, nay bắt được nhờ các bản port youthful-fermi tương
+# ứng (thân rỗng, đích còn biến, cd sau `||`/`|`/trước `&`, biến trong thân <<EOF, gán tạm/sau &&/trong ống). Bash 5.2: rm
+# chạy ở thư mục dự án hay xoá /src.
+call("s16", "cat <<'EOF'\nEOF\nrm -rf src")
+call("s21", "cd /tmp && rm -rf $D")
+call("s23", "true | cd /tmp && rm -rf src")
+call("s26", "( D=/tmp/x ); rm -rf $D/src")
+call("s30", "true || cd /tmp/w && rm -rf src")
+call("s31", "test -d /tmp/w || cd /tmp/w && rm -rf src")
+call("s32", "cd src || cd /tmp/w && rm -rf build2")
+call("s33", "cd /tmp/w && true & rm -rf src")
+call("s34", "cd /tmp/w && rm -rf a & rm -rf src")
+call("s56", "bash <<EOF\nD=/tmp/x; rm -rf $D/src\nEOF")
+call("s57", "cat <<EOF | bash\nexport D=/tmp/x\nrm -rf $D/src\nEOF")
+call("s58", "D=src; bash <<EOF\nD=/tmp/x; rm -rf $D\nEOF")
+call("s63", "bash <<EOF; D=dist\nrm -rf $D/src\nEOF")
+call("s64", "bash <<EOF && cd dist\nD=/tmp/x; rm -rf $D/src\nEOF")
+call("s66", "D=/tmp/x bash <<EOF\nrm -rf $D/src\nEOF")
+call("s67", "D=/tmp/x cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s68", "false && D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s69", "true || D=/tmp/x\ncat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s70", "D=src | D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s71", "echo D=/tmp/x; cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s72", "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s73", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF')
+call("s77", "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s83", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -689,6 +865,15 @@ check("rm -rf /tmp/x\\\nsrc" not in A, "`\\` + xuống dòng không thụt lề 
 for must in ("rm -rf -- -important /tmp/x", "rm -rf /tmp/x -- -y"):
     check(must in A, f"token sau `--` là đích dù mở bằng `-`: {must!r}")
 check("rm -rf -- /tmp/x" not in A, "bản thân `--` không phải đích: rm -rf -- /tmp/x vô hại")
+for must in ("cd /tmp/x && rm -rf $D/src", "cd /tmp/x && rm -rf `pwd`src", "cd /tmp/x && rm -rf {/,}src",
+             "cd /tmp/x && rm -rf $(git rev-parse --show-toplevel)/src"):
+    check(must in A, f"đích còn `$`, backtick, `{{` hay `(` không phải đường tương đối với thư mục cd: {must!r}")
+for must in ("rm -rf /tmp/x -important", "wsl rm -rf /tmp/x -important"):
+    check(must in A, f"rm của BSD thôi nhận cờ ở toán hạng đầu tiên: token sau đó là đích dù mở bằng `-`: {must!r}")
+for benign in ("rm C:\\tmp\\x -Recurse", "rd /s /q C:\\tmp\\x"):
+    check(benign not in A, f"Remove-Item của PowerShell và cmd nhận tham số sau đích: vô hại: {benign!r}")
+for must in ("rm -rf /tmp/link/", "cd /tmp/x && rm -rf link/", "rm -rf node_modules/"):
+    check(must in A, f"`/` cuối đích làm rm đi theo symlink, xoá nội dung thư mục mà link trỏ tới: {must!r}")
 # Chốt "không có đích ngoài cờ thì báo" của bản cũ phải giữ: thư mục suy từ cd có thể sai (subshell, cd .., cd lỗi)
 # và bản cũ báo các ca này chỉ nhờ chốt đó.
 for must in ("(cd /tmp && true); rm -rf -- -x", "cd dist && cd .. && rm -rf -- -x", "cd /tmp/w; rm -rf -- -x"):
@@ -708,6 +893,13 @@ for must in ("cd /tmp/x && builtin cd .. && rm -rf src", "cd /tmp/x && time cd /
              "cd /tmp/x && source ./env.sh && rm -rf src", "cd /tmp/x && . ./env.sh && rm -rf src"):
     check(must in A, f"lệnh đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục: {must!r}")
 check("pushd /tmp/x && pushd +1 && rm -rf src" in A, "đích pushd mở bằng `+` xoay ngăn xếp thư mục: không biết thư mục")
+for must in ('cd /tmp/x && "cd" /home/p && rm -rf src', "cd /tmp/x && 'cd' /home/p && rm -rf src",
+             'cd /tmp/x && c"d" /home/p && rm -rf src', "cd /tmp/x && c\\d /home/p && rm -rf src",
+             "cd /tmp/x && $'cd' /home/p && rm -rf src", 'cd /tmp/x && "." ./env.sh && rm -rf src'):
+    check(must in A, f"tên lệnh đổi thư mục có nháy hay `\\` vẫn đổi thư mục: không biết thư mục: {must!r}")
+check("cd /tmp/x && chdir /home/p && rm -rf src" in A, "zsh có builtin chdir đổi thư mục như cd: không biết thư mục")
+check("cd /tmp/x && true & rm -rf src" in A, "`&` chạy nền danh sách có cd ở shell con: lệnh sau `&` chạy ở thư mục cũ")
+check("cd /tmp/x && rm -rf y &" not in A, "`&` cuối đoạn chạy nền cả danh sách, rm vẫn ở thư mục cd: vô hại")
 for must in ("bash <<'EOF'\nD=/tmp/x\nEOF\nrm -rf $D/src", "bash <<'EOF'\nD=/tmp/x\n# don't\nEOF\necho 'ok'; rm -rf $D/src",
              "bash <<'EOF'; D=/tmp/x\nrm -rf $D/src\nEOF"):
     check(must in A, f"biến gán trong thân heredoc đưa vào shell không ra ngoài, thân chạy trước lệnh sau shell: {must!r}")
@@ -735,9 +927,95 @@ for must in ("cd /tmp/x && cd \"-\" && rm -rf src", "cd /tmp/x && cd '-' && rm -
 for must in ("cd /tmp/x || rm -rf src", "cd /tmp/x | rm -rf src"):
     check(must in A, f"`||` và `|` không giữ thư mục cd: {must!r}")
 check("D=/tmp/y/; bash <<'EOF'\necho hi\nEOF\nrm -rf ${D}src" not in A, "biến có từ trước thân heredoc giữ giá trị sau thân")
+for must in ("bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF",
+             "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF"):
+    check(must in A, f"heredoc không nháy: shell cha thay biến trước, biến gán trong thân không đổi phép thay: {must!r}")
+check("D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF" in A, "`\\$` trong thân heredoc không nháy: shell con thay biến")
+# Báo thừa chấp nhận (như blissful-dirac cd828ea đổi assert của nó): bash xoá /tmp/y/src, nhưng audit không đoán biến của shell
+# cha trong thân `<<EOF` không nháy (s86–s91: giá trị đoán từng sai).
+check("D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF" in A, "thân `<<EOF` không nháy: audit không đoán `$D` mà shell cha dùng để thế")
+for must in ("export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF",
+             "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"`\\` cuối dòng mở kéo `| bash`: thân <<'EOF' thấy biến đã export của shell cha: {must!r}")
 check("wsl bash -c 'export D=/srv/app/; cd /tmp/x && bash <<\"EOF\"\nrm -rf ${D}src\nEOF'" in A,
       "PowerShell cũng đọc thân heredoc theo cách cũ rồi lấy hợp")
 check("D=/srv/a; echo '\x03'; rm -rf ${D}tmp/x" in A, "byte \\x03 có sẵn trong lệnh không phải dấu ở cách đọc cũ")
+for must in ("cat > f <<'EOF'\nEOF\nrm -rf src", "cat > f <<EOF\nEOF\nrm -rf src", "cat > f <<-EOF\n\tEOF\nrm -rf src",
+             "cat > f <<'EOF'\nEOF\nrm -rf src\nEOF"):
+    check(must in A, f"thân heredoc rỗng: dòng ngay sau dòng mở là dấu đóng, lệnh sau đó vẫn chạy: {must!r}")
+for must in ("bash <<'EOF'\nEOF\nrm -rf src", "cd /tmp/x && bash <<'EOF'\nEOF\nrm -rf src", "bash <<'EOF'\nrm -rf src"):
+    check(must in A, f"thân rỗng hay chưa đóng đưa vào shell vẫn nghi: {must!r}")
+check("bash <<EOF\n\tEOF\ncat > f <<'X'\nEOF\nrm -rf src\nX" in A, "`<<EOF` không bỏ tab: `\\tEOF` ở dòng đầu không đóng thân")
+for must in ("# don't\nrm -rf src\necho 'x'", "cd /tmp/x # don't\nrm -rf src\necho 'ok'", "echo a \\\\\n# don't\nrm -rf src\necho 'x'"):
+    check(must in A, f"nháy trong comment không mở chuỗi: lệnh ở dòng sau vẫn được xét: {must!r}")
+check("true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF" in A,
+      "cách che nháy cũ (không biết comment) vẫn ở trong phép hợp, kể cả ở cách đọc kéo dòng")
+for must in ("D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF", "bash <<'EOF'\nD=/tmp/x/\n\x02\nEOF\nrm -rf ${D}src"):
+    check(must in A, f"byte \\x01–\\x04 có sẵn trong lệnh không phải dấu của cách đọc scoped: {must!r}")
+for must in ("bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF", "bash <<EOF && D=/tmp/x\nrm -rf $D/src\nEOF",
+             "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"shell cha thay biến trong thân <<EOF tại toán tử heredoc, trước lệnh sau nó, không thấy gán tạm: {must!r}")
+check("D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF" in A, "thân <<'EOF': shell con thấy phép gán tạm của chính nó")
+for must in ("\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x # don't\nrm -rf $D/src",
+             "'\necho 'a b'\n\x02\n#'\necho ${#x} | D=/tmp/x/ # x \\\nrm -rf $D/src; echo \\#z \\",
+             "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)"):
+    check(must in A, f"cách đọc byte \\x01–\\x04 có sẵn thành dấu như 695e799 vẫn trong phép hợp: {must!r}")
+for must in ("true || cd /tmp/x && rm -rf y", "true | cd /tmp/x && rm -rf y"):
+    check(must in A, f"cd sau `||` có thể bị bỏ qua, cd trong ống chạy ở shell con: không biết thư mục: {must!r}")
+for must in ("D=/tmp/x/ true; rm -rf ${D}src", "echo D=/tmp/x/; rm -rf ${D}src", "env D=/tmp/x/ true; rm -rf ${D}src",
+             "true;D=/tmp/x/ true;rm -rf ${D}src"):
+    check(must in A, f"gán tạm trước lệnh khác hay NAME=VALUE là tham số của lệnh khác không đổi biến của shell: {must!r}")
+for benign in ("D=/tmp/x/; rm -rf ${D}src", "export D=/tmp/x/; rm -rf ${D}src"):
+    check(benign not in A, f"phép gán đứng riêng hay qua export đổi biến của shell: vô hại: {benign!r}")
+for must in ("D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF", "D=/tmp/x/; sh <<'EOF' -s \\\nEOF\nrm -rf ${D}src\nEOF",
+             "bash -s <<EOF \\\nEOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"`\\` cuối dòng mở heredoc nối dòng EOF ngay sau vào lệnh, không đóng thân rỗng: {must!r}")
+check("cat > f <<'EOF' \\\\\nEOF\nrm -rf src" in A, "`\\\\` chẵn cuối dòng mở heredoc không nối dòng: EOF ngay sau đóng thân rỗng")
+for must in ("false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"cách đọc scoped với heredoc không nhận thân rỗng (như 6f32d5a) vẫn ở trong phép hợp: {must!r}")
+for must in ("false && D=/tmp/x/; rm -rf ${D}src", "true || D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/ | true; rm -rf ${D}src",
+             "true | D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/&\nrm -rf ${D}src", "export D=/tmp/x/ &\nrm -rf ${D}src"):
+    check(must in A, f"phép gán sau `&&`/`||`, trong ống hay chạy nền không đổi biến của shell: {must!r}")
+check("cd /tmp/x && $'\\x63d' /home/p && rm -rf src" in A, "từ `$'…'` có escape ANSI-C có thể là cd: không biết thư mục")
+for must in ("D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA"):
+    check(must in A, f"hai heredoc trên một dòng: cách đọc heredoc không nhận thân rỗng (empty_body=False) vẫn trong phép hợp: {must!r}")
+check("D=/tmp/x/; true && D=/srv/; rm -rf ${D}src" in A,
+      "phép gán sau `&&` có thể chạy: cách đọc gán lỏng (strict_assign=False) vẫn trong phép hợp")
+for must in ("true || # x\ncd /tmp/w && rm -rf src", "true | # x\ncd /tmp && rm -rf src", "true || # a ; b\ncd /tmp/w && rm -rf src",
+             "true || # a && b\ncd /tmp/w && rm -rf src", "true | # a | b\ncd /tmp && rm -rf src"):
+    check(must in A, f"comment sau `||`/`|` không ngắt: cd ở dòng sau có thể không chạy hay chạy ở shell con: {must!r}")
+for must in ("{ D=/tmp/x; } &\nrm -rf $D/src\nwait", "D=/tmp/x && true &\nrm -rf $D/src\nwait",
+             "D=/tmp/x && true & true; rm -rf $D/src\nwait", "D=src; { D=/tmp/x; } &\nrm -rf $D\nwait",
+             "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait", "( D=/tmp/x; ); rm -rf $D/src"):
+    check(must in A, f"phép gán trong phần chạy nền hay subshell không đổi biến của shell cha: {must!r}")
+check("D=/tmp/x; { true; } &\nrm -rf $D/src\nwait" not in A, "phép gán ở shell cha trước phần chạy nền vẫn áp: vô hại")
+check("D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF" in A, "`\\$` trong thân `<<EOF` không nháy: shell con thay bằng env của nó")
+for must in ("if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF", "cat <<\\EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "cat <<EOF >/dev/null\nx\n EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "echo 'a;D=/tmp/x;b'; cat <<EOF | bash\nrm -rf $D/src\nEOF", "D=/tmp/x; unset D; bash <<EOF\nrm -rf $D/src\nEOF",
+             "declare -u D; D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF", "PWD=/tmp/x; cd src; bash <<EOF\nrm -rf $PWD\nEOF",
+             "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF",
+             "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF"):
+    check(must in A, f"thân `<<EOF` không nháy chỉ thấy biến mà phép gán chắc đã chạy ở shell cha: {must!r}")
+check("D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF" in A, "thân `<<EOF` không nháy: audit không đoán `$D` mà shell cha dùng để thế")
+for must in ("D=/tmp/x\nwhile bash <<EOF\nrm -rf $D/src\ntest -n \"$D\"\nEOF\ndo unset D\ndone",
+             "D=/tmp/x\nbash <<EOF.x\ntrue\nEOF.x\nunset D\nrm -rf $D/src", "D=/tmp/x\nbash <<EOF-1\nEOF-1\nD=\nrm -rf $D/src",
+             "D=/tmp/x\nbash <<EOF\r\ntrue\nEOF\r\nunset D\nrm -rf $D/src", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF"):
+    check(must in A, f"audit không đoán biến của shell cha trong thân `<<EOF` không nháy (vòng lặp, delimiter lạ, brace): {must!r}")
+for must in ("cat <<'EOF'\nEOF\nrm -rf src", "cd /tmp && rm -rf $D",
+             "true | cd /tmp && rm -rf src", "( D=/tmp/x ); rm -rf $D/src",
+             "true || cd /tmp/w && rm -rf src", "test -d /tmp/w || cd /tmp/w && rm -rf src",
+             "cd src || cd /tmp/w && rm -rf build2", "cd /tmp/w && true & rm -rf src",
+             "cd /tmp/w && rm -rf a & rm -rf src", "bash <<EOF\nD=/tmp/x; rm -rf $D/src\nEOF",
+             "cat <<EOF | bash\nexport D=/tmp/x\nrm -rf $D/src\nEOF", "D=src; bash <<EOF\nD=/tmp/x; rm -rf $D\nEOF",
+             "bash <<EOF; D=dist\nrm -rf $D/src\nEOF", "bash <<EOF && cd dist\nD=/tmp/x; rm -rf $D/src\nEOF",
+             "D=/tmp/x bash <<EOF\nrm -rf $D/src\nEOF", "D=/tmp/x cat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "false && D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", "true || D=/tmp/x\ncat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "D=src | D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", "echo D=/tmp/x; cat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF',
+             "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF"):
+    check(must in A, f"lệnh blissful-dirac nền bỏ sót, port youthful-fermi phải bắt: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -808,6 +1086,9 @@ for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\n
 # PowerShell nối dòng bằng backtick, `\` cuối dòng chỉ là dấu phân cách đường dẫn.
 got = [full for _p, full, _c, _s in a.segments("Remove-Item -Recurse C:\\x\\\nsrc", "PowerShell")]
 check(got == ["Remove-Item -Recurse C:\\x\\", "src"], f"PowerShell không nối dòng tại `\\`: {got!r}")
+# Guard hỏi lệnh này (` /)` trông như đích /), nên không vào A: kiểm thẳng. Bash thay $(echo /) rồi xoá /src.
+check("xoá đệ quy" in a.suspicious_labels("cd /tmp/x && rm -rf $(echo /)src", a.SUSPICIOUS),
+      "đích mở bằng lệnh lồng không phải đường tương đối với thư mục cd: cd /tmp/x && rm -rf $(echo /)src")
 # Chỗ bash KHÔNG nối dòng: `\` trong comment là chữ, `\` cuối thân heredoc hay cuối dòng mở heredoc không nối qua ranh giới.
 # Bản nối dòng đọc sai các ca này, bản không nối dòng vẫn bắt được.
 for cmd in ("cd proj # vao thu muc \\\nrm -rf src ./node_modules", "cd proj;# x \\\nrm -rf src /tmp/x"):
@@ -899,6 +1180,20 @@ check(not slow, f"suspicious_labels quá 3 giây trên cụm cờ dài (đầu l
 for cmd in ("git-bash -lc 'rm -rf /'", "git-bash.exe -lc 'rm -rf /'", "D=/tmp/w; git-bash -c 'D=/; rm -rf $D'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"shell có tiền tố chữ nối bằng `-`: thân -c vẫn là lệnh: {cmd!r}: {got!r}")
+# Dấu SNAP (chỗ toán tử heredoc, 8dc3d0d) chỉ đặt ở cách đọc parent_env: chen giữa shell và cờ (`bash <<EOF -c '…'`) nó làm
+# cách đọc exact không gỡ được thân -c (reviewer). Bash 5.2: thân -c chạy, xoá $HOME/proj, ~ hay / (X không export).
+for cmd in ("D=/tmp/x; bash <<EOF -c 'D=$HOME/proj; rm -rf $D'\nEOF", "D=/tmp/x; bash <<'EOF' -lc 'D=~; rm -rf $D'\nEOF",
+            "X=/tmp/a; bash <<EOF -c 'rm -rf $X'\nEOF"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"toán tử heredoc giữa shell và -c: thân -c vẫn là phạm vi shell con: {cmd!r}: {got!r}")
+# Thân <<EOF có sẵn mọi ký tự mà cách đọc parent_env từng dùng làm chỗ giữ cho `\$` (reviewer): không được ném lỗi làm sập
+# cả báo cáo, rm vẫn nghi.
+for cmd in ("bash <<EOF\nrm -rf src \x06\ue000\ue001\ue002\nEOF", "D=/tmp/x; bash <<EOF\nrm -rf \\$D/src \x06\ue000\ue001\ue002\nEOF"):
+    try:
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    except Exception as exc:
+        got = exc
+    check(isinstance(got, list) and "xoá đệ quy" in got, f"ký tự lạ trong thân <<EOF không làm audit chết, rm vẫn nghi: {cmd!r}: {got!r}")
 # Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
 # từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
 # `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
@@ -941,6 +1236,57 @@ for cmd in (
     "cd /tmp/w && rm -rf src || true",
 ):
     check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash chỉ xoá trong thư mục tạm, không được thành nghi: {cmd!r}")
+# `\` cuối mỗi dòng thân kéo dòng kế vào lệnh: kéo từng dòng không được tốn thời gian bậc hai theo số dòng. Bản bậc hai
+# (trước b7ccd40) mất ~45 s với 40000 dòng, bản tuyến tính ~0,5 s (12 cách đọc; 20/10/2026: nhỏ nhất 0,51 s, trung vị 0,53 s
+# qua 9 lần đo). Ngưỡng 5 s cách cả hai khoảng 9 lần, để máy CI chậm hơn không đỏ giả. Bash nối cả 40002 dòng thành lệnh
+# mở, thân rỗng, rm chạy sau EOF.
+import time
+cmd = "cat <<'EOF' \\\n" + "x \\\n" * 40000 + "| bash\nEOF\nrm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 5 and "xoá đệ quy" in got,
+      f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 5 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
+# Heredoc chưa đóng: bash đọc thân tới hết chuỗi (cảnh báo delimited by end-of-file), rm là dữ liệu của cat, không chạy.
+got = a.suspicious_labels("cat > f <<'EOF'\nrm -rf src", a.SUSPICIOUS)
+check(got == [], f"heredoc chưa đóng nuốt tới hết chuỗi như bash: {got!r}")
+# Cách đọc như 6f32d5a (không nhận thân rỗng, thân tới hết chuỗi) vẫn ở trong phép hợp: chỉ nó thấy rm ở đây. `\` nối
+# D=/tmp/x/ thành tham số của true nên D rỗng: bash xoá src và `\`. Guard hỏi lệnh này (vào H) nên gọi trực tiếp.
+got = a.suspicious_labels("bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\", a.SUSPICIOUS)
+check("xoá đệ quy" in got, f"cách đọc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp: {got!r}")
+# cd nằm trong comment giữa đoạn không chạy, kể cả khi thân đưa vào `| bash` (chế độ không che nháy hay comment): oracle bash
+# của blissful-dirac, bash xoá thư mục dự án. Guard hỏi lệnh này (`rm -rf .`) nên không vào A: kiểm thẳng.
+cmd = "cat <<'EOF' | bash\n( : # x; cd /tmp/w &&\nrm -rf . )\nEOF"
+check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"cd trong comment không chạy: không biết thư mục: {cmd!r}")
+# `#` không ở đầu từ (`$#`, `${#x}`, `a#b`, `a=#x`, sau `\ `) không mở comment: nháy sau nó mở chuỗi, bash không chạy rm.
+for cmd in ("echo $# 'x\nrm -rf src\n'", "echo ${#x} 'x\nrm -rf src\n'", "echo a#b 'x\nrm -rf src\n'",
+            "a=#x 'x\nrm -rf src\n'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(got == [], f"`#` không ở đầu từ không mở comment, rm nằm trong chuỗi: {cmd!r}: {got!r}")
+# Sau `\ ` (khoảng trắng đã thoát) cũng vậy, nhưng cách đọc exact (PR #5) coi `#` sau mọi khoảng trắng là comment nên báo
+# thừa lệnh này: phép hợp có nhãn. Canh các cách đọc không exact, nơi cách che biết comment được thêm vào.
+cmd = "echo x\\ # don't\nrm -rf src\n'"
+got = [p for comments in (False, True) for scoped, pe in ((False, False), (True, False), (True, True)) for j in (False, True)
+       for p, _f, _c, _s in a.segments(cmd, "Bash", j, scoped, pe, comments) if "rm" in p]
+check(got == [], f"`#` sau `\\ ` không mở comment ở các cách đọc không exact, rm nằm trong chuỗi: {cmd!r}: {got!r}")
+# `<<NAME` trên dòng cuối không có `\n` không mở được heredoc: mỗi lần thử không được quét lại cả dòng theo nhóm
+# `(?:[^\n\\]|\\[^\n])*` (8ccdb8e), chậm hơn `[^\n]*` cỡ trăm lần. 20/10/2026 (4 nhân), dòng rm rồi 2000 lần `<<EOF `:
+# b13bd51 37,3 s, f5bc021 0,74 s, bản có lookahead 0,47 s (trung vị 9 lần). Ngưỡng 4 s cách hai bản ~8–9 lần. Bash chạy rm ở
+# dòng đầu rồi dừng ở dòng 2 (maximum here-document count exceeded).
+cmd = "rm -rf src\n" + "<<EOF " * 2000
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 4 and "xoá đệ quy" in got,
+      f"2000 lần `<<EOF ` trên dòng không có `\\n` phải xong dưới 4 s, rm ở dòng trước vẫn nghi: {dt:.1f} s, {got!r}")
+# expand không được chạy re.sub cho mọi biến của env ở mỗi đoạn: quá 512 tên khác nhau thì bộ đệm regex của `re` không giữ
+# nổi, regex bị dịch lại mỗi lần. 20/10/2026 (4 nhân), 600 phép gán khác tên rồi rm: 0437c0b 69,9 s, bản bỏ qua tên vắng
+# trong text 0,60 s (trung vị 9 lần). Ngưỡng 6 s cách hai bản ~10–12 lần. Bash xoá ./src.
+cmd = "; ".join("V%d=/tmp/x" % i for i in range(600)) + "; rm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 6 and "xoá đệ quy" in got, f"600 phép gán khác tên rồi rm phải xong dưới 6 s, rm vẫn nghi: {dt:.1f} s, {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -1175,7 +1521,34 @@ def line2():
         rnd2.choice(SUB if rnd2.random() < 0.6 else CORE + STEP) for _ in range(rnd2.randint(1, 3)))
     return s + rnd2.choice(TAIL)
 fuzz += ["\n".join(line2() for _ in range(rnd2.randint(1, 5))) for _ in range(1000)]
-pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
+# Lệnh thêm (3000 lệnh trên giữ nguyên): một lõi chỉ nguy hiểm tuỳ cách đọc (biến, thư mục cd) giữa 0–4 dòng ngữ cảnh ghép
+# từ cấu trúc mà từng cách đọc trong phép hợp của suspicious_labels được thêm vào để bắt: heredoc thân rỗng, `\`/`\\` cuối
+# dòng mở rồi EOF, hai heredoc một dòng, <<EOF có biến trong thân, gán trước toán tử, gán sau `&&` có chạy, byte dấu, comment
+# có nháy, `"cd"`, `&`, `$'\x63d'`. Lõi nguy hiểm ở mọi cách đọc (như CORE) che mất cách đọc riêng lẻ. Bỏ một giá trị của một
+# chiều trong phép hợp (stricts, comments, scoped/parent_env, marks, empties, joins), kể cả cách đọc gốc như
+# strict_assign=False, thì bước này phải đỏ khi so với bản còn giá trị đó; riêng raw_marks=False chỉ nhờ lệnh fixture có byte
+# \x01–\x04. Chỉ Bash: đủ mọi chiều, đỡ thời gian.
+NCORE = ["rm -rf ${D}src", "rm -rf $D/src", "rm -rf y"]
+NSTEP = ["D=/tmp/x/", "export D=/tmp/x/", "D=/tmp/x/ | true", "false && D=/tmp/x/", "D=/tmp/x/ true", "echo D=/tmp/x/",
+         "D=/srv/", "cd /tmp/x", '"cd" /home/p', "$'\\x63d' /home/p", "true", "echo 'a b'", "echo '\x01'"]
+NLINE = ["bash <<'EOF'", "bash <<EOF", "bash <<'EOF'\nEOF", "cat > f <<'EOF'\nEOF", "bash -s <<'EOF' \\\nEOF",
+         "cat > f <<'EOF' \\\\\nEOF", "bash <<'A' <<'EOF'\nA", "A", "EOF", "\x01", "\x02", "\x03", "# don't", "echo 'x",
+         "D=/tmp/x/\nbash <<'EOF'\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA", "bash <<'EOF'\nD=/srv/\nEOF", "bash <<EOF\nD=/tmp/x/",
+         "D=/tmp/x/\n\x01", "D=/tmp/x/\ntrue && D=/srv/"]
+NTAIL = ["", "", "", " \\", " \\\\", " # don't", " &"]
+NSEP = [" && ", "; ", " || ", " | ", " & "]
+def line3():
+    if rnd.random() < 0.4:
+        return rnd.choice(NLINE)
+    s = rnd.choice(NSEP).join(rnd.choice(NSTEP) for _ in range(rnd.randint(1, 2)))
+    return ("(" + s + ")" if rnd.random() < 0.05 else s) + rnd.choice(NTAIL)
+def cmd3():
+    ls = [line3() for _ in range(rnd.randint(0, 4))]
+    ls.insert(rnd.randint(0, len(ls)), rnd.choice(["", "cd /tmp/x && "]) + rnd.choice(NCORE) + rnd.choice(NTAIL))
+    return "\n".join(ls)
+fuzz_bash = [cmd3() for _ in range(2000)]
+pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]
+                           + [("Bash", c) for c in fuzz_bash]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
 lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0
@@ -1247,7 +1620,7 @@ else
       base_why="không có scripts/test-audit.sh ở $ref"
     fi
   fi
-  "$py" -I -B - "$tmp/oracle" "$base_test" "$base_why" <<'PYEOF' || status=1
+  "$py" -I -B - "$tmp/oracle-pr8" "$base_test" "$base_why" <<'PYEOF' || status=1
 import ast, glob, importlib.util, os, random, re, shutil, signal, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 for s in (sys.stdout, sys.stderr):
@@ -1264,10 +1637,12 @@ spec.loader.exec_module(a)
 fails = []
 known = dict(KNOWN_MISSES)
 ratchet = f"bỏ qua: {base_why}"
+# Dòng đầu của bước này. Oracle bash của blissful-dirac (bước kế) cũng mở bằng "# Oracle bash:" mà không có KNOWN_MISSES.
+MARK = "# Oracle bash: đối chiếu mục A với chính bash."
 if base_test:
     text = open(base_test, encoding="utf-8").read()
     before = None
-    if "# Oracle bash:" not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
+    if MARK not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
         ratchet = f"bản ở {base_why} chưa có bước oracle"
     else:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được, kể
         # cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
@@ -1440,6 +1815,281 @@ finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy
        f"(chỉ được giảm: {ratchet}; {time.monotonic() - t0:.0f} giây)")
 PYEOF
 fi
+# Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
+# Phân tích lệnh của mục A từng đọc khác bash thật hơn mười lần (1e9882a và 3 lần vá, 3dab000, 5083855, 52233e5..9734b56,
+# reviewer chặn nhiều vòng). Bước này sinh lệnh tất định từ một ngữ pháp CHỈ gồm thứ an toàn, chạy bằng bash thật với rm giả
+# (`fakerm` ghi $PWD và đích vào log, không xoá gì; PATH chỉ có bash và cat; env tối giản; stdin /dev/null), rồi đòi mục A
+# báo mọi lệnh mà bash thật xoá ngoài thư mục tạm/build.
+"$py" -I -B - "$tmp/oracle" <<'PYEOF' || status=1
+import importlib.util, os, random, re, shlex, shutil, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor
+for s in (sys.stdout, sys.stderr):
+    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
+sbx = sys.argv[1]
+# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng sàn này. Đo trên
+# bash 5.2: 2481, trong đó 156 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với cd nhiều tham số, còn bash 3.2 (/bin/bash của
+# macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là 2481 - 156 = 2325, làm tròn xuống. CHỈ ĐƯỢC NÂNG. Hạ
+# sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì sửa phân tích lệnh
+# trong audit-agent.py.
+ORACLE_FLOOR = 2300
+N = 4000  # khoảng 10 giây trên 4 CPU
+# KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
+# cấu trúc tương ứng vào ngữ pháp cùng lúc.
+#   - nháy (' hay ") trong comment hay trong thân heredoc (ngữ pháp không có nháy nào ngoài 'EOF')
+#   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
+#   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
+#   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
+#   - gán biến trong pipeline, gán tạm (`D=x cmd`), gán sau `&&`/`||`, kể cả nhóm `{ }` có phép gán ở các chỗ đó
+#   - `..` có nháy hay thoát
+#   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
+if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
+    print(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
+    sys.exit(0)
+spec = importlib.util.spec_from_file_location("audit_oracle", "scripts/audit-agent.py")
+au = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(au)
+t0 = time.time()
+# Sandbox nằm dưới thư mục tạm của hệ thống, nên audit coi MỌI đường tuyệt đối trong đó là thư mục tạm. Vì thế đường tuyệt
+# đối duy nhất trong ngữ pháp là REAL (thư mục tạm có thật) và GONE (không tồn tại, chỉ làm đích cd: cd lỗi).
+REAL, GONE, PROJ, HOME, BIN, LOG = (os.path.join(sbx, n) for n in ("tmpw", "khongco", "proj", "home", "bin", "log"))
+for d in (REAL + "/src", REAL + "/dist", HOME, BIN, LOG) + tuple(PROJ + "/" + n for n in ("src", "dist", "node_modules", "build")):
+    os.makedirs(d, exist_ok=True)
+for tool in ("bash", "cat"):
+    os.symlink(shutil.which(tool), os.path.join(BIN, tool))
+
+RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là `fakerm`
+rnd = random.Random(7)
+pick = rnd.choice
+CD_T = [REAL] * 6 + [GONE] * 3 + ["dist", "node_modules", "src", "..", "/", "~", "-"]
+RM_T = ["src"] * 6 + [".", "$D", "$D/src", "-- -x", "dist src", "dist", "node_modules/x", "build", REAL + "/x", "~/x", "../src"]
+D_V = [REAL, REAL, "src", "dist", "/", "~"]
+COMMENT = ["# a", "# a ; b", "# a && b", "# a | b", "# x &&", "# x |", "# cd " + REAL + " &&", "# cd dist"]
+OTHER = ["true"] * 4 + ["false"] * 2 + [":", "echo a", "popd", "wait", "echo a\\|#b", "echo a\\|#b"]
+P_HD, P_COMP, P_CD, P_RM, P_OTHER = .15, .25, .35, .3, .25
+P_OPC, P_TRC, P_LINEC = .3, .3, .1  # comment sau &&/||/|, cuối dòng, dòng riêng
+TOPLEN = [1, 2, 2, 3, 3, 4]
+P_TRAP = .5
+
+
+def cd():
+    r = rnd.random()
+    if r < 0.08:
+        return "cd"
+    if r < 0.14:
+        return "cd %s %s" % (pick(CD_T), pick(CD_T))
+    w = pick(["cd"] * 6 + ["builtin cd", "pushd"])
+    return w + " " + pick([t for t in CD_T if t != "-"] if w == "builtin cd" else CD_T)  # builtin cd - in ra stdout
+
+
+def simple(assign=True):
+    """(mảnh, là phép gán)."""
+    r = rnd.random()
+    if r < P_CD:
+        return [cd()], False
+    if r < P_CD + P_RM:
+        return [RM, " -rf " + pick(RM_T)], False
+    if r < P_CD + P_RM + P_OTHER or not assign:
+        return [pick(OTHER)], False
+    return [pick(["D=", "export D="]) + pick(D_V)], True
+
+
+def item(depth, top):
+    """(mảnh, loại, có phép gán chạy ở shell này): loại "assign" (phép gán trơn), "heredoc" hay ""."""
+    r = rnd.random()
+    if top and r < P_HD:
+        return heredoc(), "heredoc", False
+    if depth < 2 and r < P_HD + P_COMP:
+        inner, ga = lst(depth + 1, False)
+        k = rnd.randrange(4)
+        if k == 0:
+            return ["( "] + inner + [" )"], "", False
+        if k == 1:
+            return ["{ "] + inner + ["; }"], "", ga
+        return [pick(["true $( ", "echo $( "])] + inner + [" )"], "", False
+    p, a = simple()
+    return p, "assign" if a else "", a
+
+
+def heredoc():
+    """Heredoc đưa vào shell, độ sâu 1: thân rỗng hay là một danh sách lệnh của chính ngữ pháp."""
+    opener = pick(["bash <<'EOF'", "bash <<EOF", "cat <<'EOF' | bash", "cat <<EOF | bash", "cat <<'EOF' \\\n| bash"])
+    r = rnd.random()
+    if r < 0.15:
+        suffix = [pick([" && ", " || "])] + simple(assign=False)[0]
+    elif r < 0.25:
+        suffix = ["; "] + simple()[0]
+    else:
+        suffix = []
+    body = [] if rnd.random() < 0.2 else lst(1, False)[0]
+    return [opener] + suffix + ["\n"] + body + (["\n"] if body else []) + ["EOF"]
+
+
+def trap_items(depth, top):
+    """Bẫy: nhiễu, một chỗ làm audit tin là thư mục tạm (cd vào REAL/GONE, D=REAL, comment có cd vào REAL), nhiễu, rồi rm
+    đích tương đối. Ngẫu nhiên thuần gần như không sinh ra được các cấu trúc từng làm mục A bỏ sót."""
+    items = [item(depth, top) for _ in range(rnd.randint(0, 2))]
+    t = rnd.random()
+    if t < 0.6:
+        items.append(([pick(["cd ", "cd ", "pushd ", "builtin cd "]) + pick([REAL, GONE])], "", False))
+    elif t < 0.8:
+        items.append(([pick(["D=", "export D="]) + REAL], "assign", True))
+    else:
+        p = simple(assign=False)[0]
+        items.append((p + [" # " + pick(["a && ", "", "x; "]) + "cd " + REAL + pick([" &&", "", " |", ";"])], "comment", False))
+    if rnd.random() < 0.7:
+        items.append(([pick(["true", "false", "echo a\\|#b", "echo a\\|#b"])], "", False) if rnd.random() < 0.6
+                     else item(depth, top))
+    items.append(([RM, " -rf " + pick(["src", "src", ".", "-- -x", "$D", "$D/src"])], "", False))
+    return items
+
+
+def lst(depth, top):
+    """(mảnh, có phép gán chạy ở shell này)."""
+    if rnd.random() < P_TRAP:
+        items = trap_items(depth, top)
+    else:
+        items = [item(depth, top) for _ in range(pick(TOPLEN) if top else rnd.randint(1, 3))]
+    out, bg = [], False
+    for i, (p, kind, ga) in enumerate(items):
+        out += p
+        if i == len(items) - 1:
+            break
+        nga = items[i + 1][2]
+        if kind in ("heredoc", "comment"):
+            sep = "\n"  # sau EOF hay comment chỉ có xuống dòng
+        else:
+            sep = pick(["&&", "||", ";", "|", "\n", "&"])
+            if (ga and sep == "|") or (nga and sep in ("&&", "||", "|")):
+                sep = ";"  # KNOWN_GAPS: gán trong pipeline, gán sau &&/||
+        bg = bg or sep == "&"
+        if sep == "\n":
+            if kind not in ("heredoc", "comment") and rnd.random() < P_TRC:
+                out.append(" " + pick(COMMENT))
+            out.append("\n")
+            if rnd.random() < P_LINEC:
+                out.append(pick(COMMENT) + "\n")
+        elif sep in ("&&", "||", "|") and rnd.random() < P_OPC:
+            out.append(" %s %s\n" % (sep, pick(COMMENT)))
+        else:
+            out.append(" " + sep + " " if sep != ";" else "; ")
+    if bg:
+        out.append("\nwait")  # đợi việc chạy nền ghi log xong
+    return out, any(ga for _p, _k, ga in items)
+
+
+def render(p, word):
+    return "".join(word if x is RM else x for x in p)
+
+
+cmds = list(dict.fromkeys(tuple(lst(0, True)[0]) for _ in range(N)))
+# Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
+# `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
+# "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
+# pid của `jobs -p` (pid không phải con thì builtin trả về ngay) và trả 0 như wait không đối số.
+PRELUDE = r"""fakerm() {
+  local a e=
+  printf 'C\t%s\n' "$PWD" >> LOG
+  for a in "$@"; do
+    if [ -z "$e" ]; then
+      if [ "$a" = -- ]; then e=1; continue; fi
+      case $a in -?*) continue;; esac
+    fi
+    printf 'T\t%s\t%s\n' "$PWD" "$a" >> LOG
+  done
+}
+cd() { builtin cd "$@" >/dev/null; }
+pushd() { builtin pushd "$@" >/dev/null; }
+popd() { builtin popd "$@" >/dev/null; }
+echo() { builtin echo "$@" >/dev/null; }
+wait() {
+  if [ $# -eq 0 ]; then
+    set -- $(jobs -p)
+    [ $# -eq 0 ] || builtin wait "$@" 2>/dev/null
+    return 0
+  fi
+  builtin wait "$@"
+}
+export -f fakerm cd pushd popd echo wait
+"""
+
+
+def run(i):
+    log = os.path.join(LOG, "%d.log" % i)
+    open(log, "w").close()
+    script = os.path.join(LOG, "%d.sh" % i)
+    with open(script, "w") as f:
+        f.write(PRELUDE.replace("LOG", shlex.quote(log)) + render(cmds[i], "fakerm") + "\n")
+    try:
+        r = subprocess.run([os.path.join(BIN, "bash"), script], cwd=PROJ, env={"HOME": HOME, "PATH": BIN},
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
+        err, to = r.stderr.decode("utf-8", "replace"), False
+    except subprocess.TimeoutExpired:
+        err, to = "", True
+    with open(log) as f:
+        calls = [ln.rstrip("\n").split("\t")[1:] for ln in f if ln.startswith("T\t")]
+    return calls, err, to
+
+
+with ThreadPoolExecutor(max_workers=(os.cpu_count() or 2) * 2) as ex:
+    results = list(ex.map(run, range(len(cmds))))
+rreal, rsbx = os.path.realpath(REAL), os.path.realpath(sbx)
+
+
+def inside(p, d):
+    return p == d or p.startswith(d + os.sep)
+
+
+def dangerous(pwd, t):
+    """Nguy hiểm trừ khi đích thật nằm trong REAL hay có thành phần dist/node_modules/build sau sandbox (audit coi tên đó
+    vô hại ở mọi chỗ: đó là luật của audit, không phải lỗi đọc lệnh). Dự án giả, src, HOME, cha dự án, /, /src: nguy hiểm."""
+    p = os.path.realpath(os.path.join(pwd, t))
+    if inside(p, rreal):
+        return False
+    parts = os.path.relpath(p, rsbx) if inside(p, rsbx) else p
+    return not set(parts.split(os.sep)) & {"dist", "node_modules", "build"}
+
+
+danger, miss, timeouts = 0, [], []
+for i, (calls, err, to) in enumerate(results):
+    c = render(cmds[i], "rm")
+    if to:
+        timeouts.append(c)
+    bad = [(pwd, t) for pwd, t in calls if dangerous(pwd, t)]
+    if not bad:
+        continue
+    danger += 1
+    if "xoá đệ quy" not in au.suspicious_labels(c, au.SUSPICIOUS, "Bash"):
+        miss.append((len(c), c, bad, err))
+el = time.time() - t0
+fail = False
+short = lambda s: s.replace(sbx, "$SBX")
+for c in timeouts[:5]:
+    print(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}", file=sys.stderr)
+    fail = True
+if miss:
+    fail = True
+    print(f"✘ audit: mục A bỏ sót {len(miss)}/{danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ($SBX={sbx}, cwd "
+          "$SBX/proj, $SBX/tmpw là thư mục tạm có thật), ngắn nhất trước:", file=sys.stderr)
+    for _n, c, bad, err in sorted(miss)[:None if os.environ.get("AUDIT_LOST_ALL") else 10]:
+        print(f"  {short(c)!r}", file=sys.stderr)
+        for pwd, t in bad[:3]:
+            print(f"    bash: PWD={short(pwd)} đích={short(t)}", file=sys.stderr)
+        if err.strip():
+            print("    stderr: " + short(err.strip())[:300].replace("\n", "\n            "), file=sys.stderr)
+    print("  Sửa phân tích lệnh trong audit-agent.py (segments, benign_delete) cho tới khi mục A báo các lệnh này, và thêm "
+          "ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp, trừ khi đó là lỗ có việc riêng: khi đó ghi vào "
+          "KNOWN_GAPS. AUDIT_LOST_ALL=1 in đủ.", file=sys.stderr)
+if danger < ORACLE_FLOOR:
+    fail = True
+    print(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa bị "
+          "thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ sàn.",
+          file=sys.stderr)
+if fail:
+    sys.exit(1)
+print(f"✔ audit: oracle bash: mục A báo đủ {danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, "
+      f"sàn {ORACLE_FLOOR}, {el:.1f}s)")
+PYEOF
+rm -rf "$tmp/oracle"
 
 # Bất biến khi có bản chép: worker khởi động lại hay resume chép phiên sang file khác, các dòng giữ uuid. Bộ đếm cộng dồn
 # đếm chúng hai lần; đã vá từng bộ một (3e86d90 mục I/J, PR #1 mục E/F, rồi old_entries_skipped) vì không test nào canh

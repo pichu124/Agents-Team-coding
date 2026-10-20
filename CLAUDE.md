@@ -44,4 +44,5 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Sửa phân tích lệnh của audit không được làm mục A bỏ sót lệnh mà bản trước vẫn báo | `scripts/test-audit.sh` (so với bản trước trên lệnh fixture và fuzz; `NARROWING_OK` cho thu hẹp có chủ ý) |
 | Lệnh mà bash thật xoá đích ngoài thư mục tạm thì mục A phải báo; `KNOWN_MISSES` chỉ được giảm | `scripts/test-audit.sh` (bước oracle: lệnh fuzz cố định chạy bằng bash, `rm` thay bằng stub chỉ ghi đích; đỏ khi sót ca ngoài `KNOWN_MISSES`, khi ca trong đó đã hết sót, hoặc khi danh sách thêm ca so với bản trước) |
 | Phiên có bản chép (cùng uuid ở nhiều file) không được đếm hai lần trong báo cáo audit | `scripts/test-audit.sh` (chạy lại mọi fixture kèm một bản chép đầy đủ, báo cáo phải y hệt) |
+| Mục A không được bỏ sót lệnh xoá mà bash thật chạy ngoài thư mục tạm/build | `scripts/test-audit.sh` (oracle bash: lệnh sinh từ ngữ pháp an toàn, chạy bằng bash thật với rm giả; `ORACLE_FLOOR`, `KNOWN_GAPS`) |
 | Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |
