@@ -160,6 +160,15 @@ Kết quả mong đợi:
 
 Nếu installer báo trùng file, nó dừng mà không chép gì. Đọc tên file trong thông báo rồi quyết định. Chỉ dùng `--force` khi bạn chắc chắn muốn ghi đè.
 
+Cập nhật kit về sau: `git pull` trong thư mục kit, rồi chạy lại installer với `--force`.
+
+```bash
+git -C /c/tools/Agents-Team-coding pull
+/c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force
+```
+
+File `.claude/rules/agent-team.md` chỉ bị thay phần của kit, từ đầu file tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng của dự án (ví dụ bộ check nhanh) thì viết dưới dòng đó, installer giữ nguyên. Bản cài cũ chưa có dòng này thì installer giữ các mục `#`/`##` không có trong template, phần còn lại bị thay. Xem `git diff` trước khi commit.
+
 ## 5. Chạy check
 
 ```bash

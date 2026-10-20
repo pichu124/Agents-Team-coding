@@ -3,7 +3,8 @@
 #   ./scripts/install-kit.sh <repo-đích> [--force]
 # - Chép agents, hooks, 4 skill của kit, scripts/{check,validate-kit,test-hooks,audit-agent,test-audit}.sh, audit-agent.py, guard-ask-floor.
 # - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
-# - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md.
+# - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md. Cài lại chỉ thay phần
+#   của kit (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
 # - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
@@ -122,10 +123,70 @@ else
   echo "⚠ không có Python: hãy gộp tay phần permissions + hooks từ $kit/.claude/settings.json" >&2
 fi
 
+# .claude/rules/agent-team.md: phần của kit chạy từ đầu file tới dòng dấu (dòng cuối của template).
+rules_tpl="$kit/templates/agent-team-rules.md"
+rules_mark='<!-- agent-team:kit-end'
+# own_part <file cũ> <có dấu 0|1>: in phần dự án tự viết trong file cũ.
+# Có dấu: mọi thứ sau dòng dấu đầu tiên, nguyên văn. Không có dấu (bản cài cũ): dòng trống + các mục
+# heading # hoặc ## (ngoài code fence) mà template không có, nguyên văn; ### trở xuống thuộc mục cha.
+own_part() {
+  awk -v has_mark="$2" -v mark="$rules_mark" '
+    function is_heading(s,   t, c, n) { # cập nhật trạng thái code fence; 1 nếu s là heading cấp 1-2 ngoài fence
+      t = s # fence được thụt tối đa 3 dấu cách (không dùng / ? ? ?/: mawk 1.3.4 chỉ khớp 1 dấu cách)
+      if (match(t, /^ +/) && RLENGTH <= 3) t = substr(t, RLENGTH + 1)
+      c = substr(t, 1, 1)
+      n = 0
+      if (c == "`" || c == "~") while (substr(t, n + 1, 1) == c) n++
+      if (fence != "") {
+        if (c == substr(fence, 1, 1) && n >= length(fence) && substr(t, n + 1) ~ /^[ \t]*$/) fence = ""
+        return 0
+      }
+      if (n >= 3) {
+        fence = substr(t, 1, n)
+        return 0
+      }
+      return s ~ /^##?[ \t]/ || s ~ /^##?$/
+    }
+    FNR == 1 { fence = "" }
+    { line = $0; sub(/\r$/, "", line) }
+    NR == FNR { if (is_heading(line)) { sub(/[ \t]+$/, "", line); kit[line] = 1 }; next }
+    has_mark == 1 { if (after) print; else after = index(line, mark) == 1; next }
+    is_heading(line) {
+      sub(/[ \t]+$/, "", line)
+      keep = !(line in kit)
+      if (keep && !kept++) print ""
+    }
+    keep
+  ' "$rules_tpl" "$1"
+}
+
 if [ -f "$target/CLAUDE.md" ]; then
+  rules="$target/.claude/rules/agent-team.md"
   mkdir -p "$target/.claude/rules"
-  cp "$kit/templates/agent-team-rules.md" "$target/.claude/rules/agent-team.md"
-  echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
+  if [ ! -f "$rules" ]; then
+    cp "$rules_tpl" "$rules"
+    echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
+  else
+    has_mark=0
+    grep -q "^$rules_mark" "$rules" && has_mark=1
+    # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
+    if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
+      echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
+      exit 1
+    fi
+    own="${own%x}"
+    # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
+    { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
+    if [ -n "$own" ]; then
+      n=$(($(printf '%s' "$own" | wc -l)))
+      echo "✔ CLAUDE.md đã có nên giữ nguyên; .claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
+    else
+      echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
+    fi
+    if [ "$has_mark" = 0 ]; then
+      echo "  (bản cài cũ chưa có dòng $rules_mark -->: chỉ giữ được mục #/## mà template không có, sửa trong phần của kit đã bị thay; xem git diff)"
+    fi
+  fi
 else
   cp "$kit/CLAUDE.md" "$target/CLAUDE.md"
   echo "✔ tạo CLAUDE.md (điền các mục TODO)"

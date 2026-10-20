@@ -59,7 +59,7 @@ git switch -c chore/agent-team
 - Chép agents, hooks, 3 skill và các script check của kit. Nếu có file trùng tên mà khác nội dung, nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
 - Stage các script `.sh` của kit với quyền chạy, để commit từ Windows vẫn giữ được quyền này.
 - Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
-- Nếu dự án chưa có CLAUDE.md thì tạo mới. Nếu đã có thì giữ nguyên, và đặt quy ước của đội vào `.claude/rules/agent-team.md`.
+- Nếu dự án chưa có CLAUDE.md thì tạo mới. Nếu đã có thì giữ nguyên, và đặt quy ước của đội vào `.claude/rules/agent-team.md`. Khi chạy lại để cập nhật kit, nó chỉ thay phần của kit trong file này, tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng viết dưới dòng đó được giữ. Bản cài cũ chưa có dòng này thì giữ các mục `#`/`##` không có trong template.
 - Thêm `*.sh text eol=lf` vào `.gitattributes`, để script không bị đổi sang CRLF trên Windows.
 - Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ dạng `!thư-mục/`. Các luật như `.env` hay `*.log` vẫn giữ hiệu lực.
 - Thêm `artifacts/` vào `.gitignore`: đó là nơi verifier lưu bằng chứng. Không ignore thì Stop gate coi đó là thay đổi và chạy check ở mọi lượt.
