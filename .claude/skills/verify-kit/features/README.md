@@ -11,7 +11,7 @@ Mỗi file là một tính năng người dùng thấy được, theo mẫu 4 m�
 
 ## Điều kiện nền
 
-- bash 4+ (Git Bash trên Windows được), git, `seq`, `mktemp`. Có jq hoặc Python 3 để dựng JSON lớn. Có cả hai thì mới phủ đủ ba mode `auto` (jq), `python`, `sed` của guard.
+- bash 3.2+ (macOS, Git Bash trên Windows đều được), git, `seq`, `mktemp`. Có jq hoặc Python 3 để dựng JSON lớn. Có cả hai thì mới phủ đủ ba mode `auto` (jq), `python`, `sed` của guard.
 - Repo kit sạch hoặc bạn biết rõ thay đổi đang thử. `doctor` in commit của kit và cảnh báo khi hooks/scripts có thay đổi chưa commit.
 - Một sandbox mới cho mỗi lần kiểm chứng: `launch` → `doctor` → hành trình → `cleanup`.
 

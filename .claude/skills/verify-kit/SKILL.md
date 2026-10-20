@@ -16,6 +16,8 @@ H=.claude/skills/verify-kit/helpers/sandbox.sh
 SBX="$($H launch)"; echo "$SBX"
 ```
 
+Sandbox nằm trong `TMPDIR` (mặc định `/tmp`). Phiên có thư mục scratchpad riêng thì đặt nó cho `launch`: `SBX="$(TMPDIR=<scratchpad> $H launch)"`. Gọi stop-gate thì đặt cùng `TMPDIR` (gate ghi bộ đếm vào `$TMPDIR/agent-stop-gate/`).
+
 `launch` tạo thư mục mới bằng `mktemp -d` (theo `TMPDIR`), trong đó có:
 - `app/`: repo git ở nhánh `feat/verify`, đã chạy `scripts/install-kit.sh` và commit bản cài.
 - `on-main/`: repo git rỗng ở nhánh `main`, làm `cwd` cho ca push lên nhánh chính.
@@ -35,12 +37,12 @@ Chỉ đọc. Nó kiểm tra: sandbox có dấu của đúng repo kit này; hook
 
 ## Drive
 
-Chọn tính năng trong [features/README.md](features/README.md), mở file của tính năng và làm đúng các bước trong mục `Driving it with ...`. Các lệnh con của helper:
+Chọn tính năng trong [features/README.md](features/README.md) (từ gốc repo kit: `.claude/skills/verify-kit/features/`), mở file của tính năng và làm đúng các bước trong mục `Driving it with ...`. Các lệnh con của helper:
 
 | Lệnh | Làm gì |
 |---|---|
 | `$H big-input <file ra> <dòng đầu> <cwd> [số dòng=20000]` | JSON PreToolUse: dòng đầu là lệnh nguy hiểm, sau đó N dòng `echo line-N`. Lệnh được ghi vào file rồi mới đưa vào JSON (`jq --rawfile`, hoặc Python đọc file), không đi qua argv. |
-| `$H guard-loop "$SBX" <input.json> [số lần=10]` | Chạy `app/.claude/hooks/guard-irreversible.sh` với `CLAUDE_PROJECT_DIR=app`, mỗi `KIT_JSON_TOOL=auto\|python\|sed`. In `n/N "permissionDecision":"ask"`, lý do và số byte stderr. Exit 0 chỉ khi mọi lần đều hỏi và stderr rỗng. `IGNORE_SIGPIPE=1` chạy guard trong `( trap '' PIPE; ... )`. |
+| `$H guard-loop "$SBX" <input.json> [số lần=10]` | Chạy `app/.claude/hooks/guard-irreversible.sh` với `CLAUDE_PROJECT_DIR=app`, mỗi `KIT_JSON_TOOL=auto\|python\|sed`. In `n/N "permissionDecision":"ask"`, lý do và số byte stderr. Exit 0 chỉ khi mọi lần đều hỏi và stderr rỗng. `EXPECT_REASON='<lý do>'` chỉ đếm lần hỏi đúng lý do đó. `IGNORE_SIGPIPE=1` chạy guard trong `( trap '' PIPE; ... )`. `VIA_PLUGIN=1` gọi qua `plugin/run-hook.sh`. |
 | `$H load "$SBX" <thư mục log> [số vòng=4] [số bản=6]` | Mỗi vòng chạy song song N bản `./scripts/test-hooks.sh` trong `app/`, mỗi bản một log riêng. Ghi `summary.txt`. Exit 0 khi 0 lần đỏ. Khoảng 4 phút mỗi vòng trên 4 CPU, nên chạy nền. |
 
 ## Evidence

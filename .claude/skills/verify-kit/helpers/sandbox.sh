@@ -8,7 +8,8 @@
 #   sandbox.sh load <sbx> <thư mục log> [số vòng] [số bản]   test-hooks.sh song song trong repo đã cài
 #   sandbox.sh cleanup <sbx>                            xoá sandbox (chỉ sandbox có dấu của launch)
 # guard-loop: IGNORE_SIGPIPE=1 chạy guard trong (trap '' PIPE; ...), con kế thừa việc bỏ qua SIGPIPE;
-# VIA_PLUGIN=1 gọi qua plugin/run-hook.sh của repo kit (entry point của bản plugin) thay vì hook đã cài.
+# VIA_PLUGIN=1 gọi qua plugin/run-hook.sh của repo kit (entry point của bản plugin) thay vì hook đã cài;
+# EXPECT_REASON='<lý do>' chỉ đếm lần hỏi đúng lý do đó (hỏi vì mẫu khác không chứng minh được mẫu đang thử).
 set -uo pipefail
 
 kit="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -76,8 +77,13 @@ cmd_doctor() {
 cmd_big_input() {
   local out="${1:-}" first="${2:-}" cwd="${3:-}" n="${4:-20000}" py
   [ -n "$out" ] && [ -n "$first" ] && [ -n "$cwd" ] || die "cách dùng: big-input <file ra> <dòng đầu> <cwd> [số dòng]"
+  case "$n" in '' | *[!0-9]*) die "số dòng phải là số nguyên không âm: $n" ;; esac
   # Lệnh ghi vào file rồi mới đưa vào JSON: lệnh ~300 KiB đi qua argv thì vượt giới hạn đối số (Windows ~32K).
-  { printf '%s\n' "$first"; seq -f 'echo line-%g' "$n"; } > "$out.cmd" || die "không ghi được $out.cmd"
+  # Không gọi seq với 0: seq của BSD/macOS đếm lùi và in "1" "0".
+  {
+    printf '%s\n' "$first"
+    if [ "$n" -gt 0 ]; then seq -f 'echo line-%g' "$n"; fi
+  } > "$out.cmd" || die "không ghi được $out.cmd"
   if command -v jq >/dev/null 2>&1; then
     jq -cn --rawfile c "$out.cmd" --arg d "$cwd" \
       '{hook_event_name: "PreToolUse", session_id: "verify-kit", cwd: $d, tool_name: "Bash", tool_input: {command: $c, description: "verify-kit"}}' > "$out"
@@ -94,14 +100,16 @@ print(json.dumps({"hook_event_name": "PreToolUse", "session_id": "verify-kit", "
 
 cmd_guard_loop() {
   own "$1"
-  local sbx="$1" input="${2:-}" times="${3:-10}" m i n out reason fail=0 err
+  local sbx="$1" input="${2:-}" times="${3:-10}" m i n wrong r out reason fail=0 err
   [ -f "$input" ] || die "không có input: $input"
+  case "$times" in '' | *[!0-9]* | 0) die "số lần phải là số nguyên dương: $times" ;; esac
   local run=("$sbx/app/.claude/hooks/guard-irreversible.sh")
   [ "${VIA_PLUGIN:-0}" = 1 ] && run=(bash "$kit/plugin/run-hook.sh" guard-irreversible)
   printf 'entry point: %s%s\n' "${run[*]}" "$([ "${IGNORE_SIGPIPE:-0}" = 1 ] && echo " (trap '' PIPE)")"
   err="$sbx/guard.err"
   for m in auto python sed; do
     n=0
+    wrong=0
     reason=""
     : > "$err"
     for ((i = 0; i < times; i++)); do
@@ -112,14 +120,20 @@ cmd_guard_loop() {
       fi
       case "$out" in
         *'"permissionDecision":"ask"'*)
-          n=$((n + 1))
-          reason="${out#*'Hành động không đảo ngược được ('}"
-          reason="${reason%%'). Cần người'*}"
+          r="${out#*'Hành động không đảo ngược được ('}"
+          r="${r%%'). Cần người'*}"
+          reason="$r"
+          if [ -n "${EXPECT_REASON:-}" ] && [ "$r" != "$EXPECT_REASON" ]; then
+            wrong=$((wrong + 1))
+          else
+            n=$((n + 1))
+          fi
           ;;
       esac
     done
     printf '%s: %s/%s "permissionDecision":"ask" (lý do: %s), stderr %s byte\n' "$m" "$n" "$times" "${reason:-không có}" "$(wc -c < "$err" | tr -d ' ')"
     [ -s "$err" ] && head -n 2 "$err" | cut -c 1-240 | sed 's/^/  stderr: /'
+    [ "$wrong" = 0 ] || printf '  ✘ %s lần hỏi vì lý do khác "%s", không được đếm\n' "$wrong" "$EXPECT_REASON"
     [ "$n" = "$times" ] && [ ! -s "$err" ] || fail=1
   done
   rm -f "$err"
@@ -163,5 +177,5 @@ case "$sub" in
   guard-loop) cmd_guard_loop "$@" ;;
   load) cmd_load "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
-  *) sed -n '2,11p' "$0" >&2; exit 2 ;;
+  *) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0" >&2; exit 2 ;;
 esac

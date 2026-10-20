@@ -22,8 +22,9 @@ Preconditions:
 
 - Đã `launch`: chính `launch` là hành trình `fresh` (log ở `$SBX/install.log`, đọc ở `$SBX/ready.log`). `doctor` xanh.
 - Có Python, vì installer cần nó để gộp settings.json. Có jq để đọc lại.
+- Không có `load` nào đang chạy trên sandbox này: cài lại ghi đè hook đã cài, bản test-hooks đang chạy có thể đọc phải file đang ghi dở.
 
-- **fresh.** `cat "$SBX/install.log"`. Kỳ vọng: `✔ đã chép 26 file của kit`, `✔ tạo .claude/settings.json`, `✔ tạo CLAUDE.md`. Đọc lại: `jq -c '[.hooks[][].hooks[].command]' "$SBX/app/.claude/settings.json"` có đúng 3 lệnh `guard-irreversible.sh`, `post-edit-format.sh`, `stop-gate.sh`. `git -C "$SBX/app" check-ignore -q artifacts/verify/x && echo ignored` in `ignored`.
+- **fresh.** `cat "$SBX/install.log"`. Kỳ vọng: `✔ đã chép 26 file của kit`, `✔ tạo .claude/settings.json`, `✔ tạo CLAUDE.md (điền các mục TODO)`. Đọc lại: `jq -c '[.hooks[][].hooks[].command]' "$SBX/app/.claude/settings.json"` có đúng 3 lệnh `guard-irreversible.sh`, `post-edit-format.sh`, `stop-gate.sh`. `git -C "$SBX/app" check-ignore -q artifacts/verify/x && echo ignored` in `ignored`.
 - **kit-skills-only.** `ls "$SBX/app/.claude/skills"`. Kỳ vọng: đúng `agent-audit correct create-verify-skill team-lead`, không có `verify-kit`.
 - **merge-settings + own-claude-md.** Repo thứ hai có settings và CLAUDE.md riêng:
   `git init -q "$SBX/merge" && git -C "$SBX/merge" -c user.email=v@v -c user.name=v -c commit.gpgsign=false commit -q --allow-empty -m init`,
