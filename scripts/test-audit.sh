@@ -946,7 +946,8 @@ for cmd in ("git-bash -lc 'rm -rf /'", "git-bash.exe -lc 'rm -rf /'", "D=/tmp/w;
     check("xoá đệ quy" in got, f"shell có tiền tố chữ nối bằng `-`: thân -c vẫn là lệnh: {cmd!r}: {got!r}")
 # Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
 # từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
-# `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
+# `bash -bash …`, `git-bash --x-git-bash …` (chậm từ 27727f5 do SHELL_C và mẫu filter-branch) có assert riêng ở khối sau
+# "chuỗi trùng chỗ giữ nháy".
 slow = []
 for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -o x-bash" * 3000):
     t = time.monotonic()
@@ -992,6 +993,16 @@ for cmd in ("bash -c" + " -x" * 10000, "bash" + " -c" * 10000, "bash" + " +c" * 
     if t > 3:
         slow.append((cmd[:24], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ `+`, cờ sau cụm c, tên, --rcfile (đầu lệnh, giây): {slow}")
+# Cách đọc strict: thân -c gỡ bằng regex mở rộng của 0a8cd90 (cách đọc exact giữ regex của 1667825). `-` lẻ sau cụm c kết
+# thúc cờ như `--`: bash 5.2 vẫn chạy thân (`bash - -c` thì không). Đích bash xoá thật ghi bên cạnh (rm thay bằng echo).
+for cmd, tool in (("bash -c - 'rm -rf /'", "Bash"), ("bash -lc - 'rm -rf /'", "Bash"),
+                  ("D=/tmp/w; bash -c - 'D=/; rm -rf $D'", "Bash"),  # xoá /
+                  ("D=/tmp/w; sh -c - 'rm -rf $D/a'", "Bash"),       # xoá /a
+                  ("D=/tmp/w; bash -lc - 'rm -rf $D/a'", "Bash"),    # xoá /a
+                  # PowerShell cũng đọc strict: không thì mất phần gỡ thân của 0a8cd90 (cờ `+`) mà exact không còn làm
+                  ("bash +e -c 'rm -rf /'", "PowerShell"), ("bash -lc - 'rm -rf /'", "PowerShell")):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool)
+    check("xoá đệ quy" in got, f"`-` lẻ sau cụm c, cờ `+`: thân -c vẫn là lệnh: {tool} {cmd!r}: {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -1239,7 +1250,36 @@ def line3():
             + "".join(" " + rnd3.choice(["-x", "+e", "-o pipefail", "--"]) for _ in range(rnd3.randint(0, 2)))
             + " " + rnd3.choice(BODY) + rnd3.choice(["", "; rm -rf $D", " && rm -rf src"]))
 fuzz += ["\n".join(line3() for _ in range(1 if rnd3.random() < 0.7 else 2)) for _ in range(600)]
-pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
+# Lệnh lồng (`bash … -c "… sh -c '…'"`) mà sửa regex thân -c tại chỗ (0a8cd90) từng làm mất nhãn so với 1667825: cách đọc
+# exact phải giữ regex thân -c của bản trước, regex mở rộng chỉ dùng ở cách đọc strict.
+fuzz += [
+    'BASH +c -x --rcfile x "cd /tmp/w && bash -ce \'rm -rf src\'"',
+    'D=/tmp/w; bash -o "pipefail" -x-c -c -ce -o pipefail -o \'pipefail\' "D=/tmp/w; git-bash -xc \'echo hi\'; rm -rf \\$D" \'tail\'',
+    'D=/tmp/w; dash +bash --norc --rcfile /dev/null -cO extglob -e +e "cd /tmp/w && bash -x -o pipefail -c \'rm -rf src\'"',
+    'X=1 bash -o "pipefail" +x -C -cO extglob "true; D=/tmp/w; sh -xc \'echo hi\'; rm -rf \\$D" \'tail\'',
+    'bash -oc pipefail -o pipefail -o pipefail "cd /tmp/w && sh -o pipefail -c \'rm -rf \\$D/a\'"',
+    'cd /tmp/w && bash -o interactive-comments -c -x "D=/tmp/w; git-bash -co \'pipefail\' -o pipefail \'echo hi\'; rm -rf \\$D" \'tail\'',
+    'cd /tmp/w && bash.exe -co pipefail "cd /tmp/w && sh -ec \'rm -rf $D/a\'"',
+    "cd /tmp/w && dash -co 'pipefail' 'rm -rf src' | bash",
+    'cd /tmp/w && x-bash -co \'pipefail\' "D=/tmp/w; bash -ec \'echo hi\'; rm -rf \\$D"\nD=/; bash.exe -i --rcfile /dev/null +ec - -o \'pipefail\' "D=/tmp/w" \'tail\'',
+    'cd /tmp/w && x-bash -o bash +c "D=/tmp/w; sh -co \'pipefail\' \'echo hi\'; rm -rf \\$D"',
+    'cd /tmp/w && zsh -co \'pipefail\' +O extglob "rm -rf \\$D/a" | bash',
+    'git-bash --init-file x -xc "cd /tmp/w && bash -o pipefail -o pipefail -cl \'rm -rf $D/a\'" \'tail\'',
+    'bash +O extglob -c -o pipefail -x "cd /tmp/w && bash +O extglob -c \'rm -rf \\$D/a\'"',
+    'bash -lc -o pipefail -o pipefail "cd /tmp/w && sh -ec \'rm -rf \\$D/a\'"',
+    'bash -o \'pipefail\' -o pipefail -ec +e -o pipefail "cd /tmp/w && bash -x -ec \'rm -rf \\$D/a\'"\nbash --init-file x -co pipefail -- -- "rm -rf \\$D/a"',
+    'cd /tmp/w && bash +O extglob --init-file x -ec "cd /tmp/w && bash +O extglob -o pipefail -c \'rm -rf \\$D/a\'"\ncd /tmp/w && sh -o \'pipefail\' -c \'rm -rf $D/a\'',
+    'cd /tmp/w && bash +c "cd /tmp/w && bash -o pipefail -o pipefail -ec -- \'rm -rf \\$D/a\'"',
+    'cd /tmp/w && bash -ec -x "sh -ec \'rm -rf \\$D/a\'"',
+    'cd /tmp/w && git-bash +c "cd /tmp/w && sh -ec \'rm -rf \\$D/a\'"',
+    'cd /tmp/w && git-bash --init-file x -lc -o pipefail -o pipefail "cd /tmp/w && bash -x -ec \'rm -rf \\$D/a\'"',
+    'cd /tmp/w && git-bash -ec -x -o pipefail "D=/tmp/w; bash +O extglob +O extglob -c \'cd /tmp/w && rm -rf src\'; rm -rf \\$D"',
+    'cd /tmp/w && sh +c -o pipefail +e "D=/tmp/w; git-bash --login -lc -- \'cd /tmp/w && rm -rf src\'; rm -rf \\$D"',
+    'cd /tmp/w && sh --rcfile /dev/null -x -ec -x "D=/tmp/w; git-bash -lc \'echo hi\'; rm -rf \\$D"',
+    'sh +c +e -x "D=/tmp/w; bash +O extglob -ec \'cd /tmp/w && rm -rf src\'; rm -rf \\$D"',
+    'sh --init-file x -lc "D=/tmp/w; sh -lc \'echo hi\'; rm -rf \\$D"',
+]
+pairs =list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
 lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0

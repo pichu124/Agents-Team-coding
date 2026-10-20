@@ -129,8 +129,8 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng
 COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
-# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` nếu
-# có, rồi chuỗi nháy đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
+# Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
+# `-` lẻ nếu có, rồi chuỗi nháy đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`, `-o 'pipefail'`), `--rcfile`/
 # `--init-file` kèm tham số. Cụm c là token giống cụm c đầu tiên như bash đọc (có o thì thử kèm tên trước); cờ trước nó
 # không được giống cụm c, không thì `bash -c -c …` (không thân) thử cụm c ở từng `-c` rồi quét tới cuối, bậc hai. Cờ kèm tên
@@ -150,7 +150,13 @@ _FLAG = rf"(?:[-+][A-Za-z]*o\s+{_NAME}|--(?:rcfile|init-file)\s+{_ARG}|(?:--?|\+
 _C = r"[-+](?=[A-Za-z]*c)"
 SHELL_C_BODY = re.compile(rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
                           rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
-                          rf"(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+                          rf"(?:\s+--?)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+# Regex thân -c của 1667825, nguyên văn: cách đọc exact dùng nó để y hệt bản trước. Sửa nó tại chỗ từng làm lệnh lồng
+# (`bash … -c "… sh -c '…'"`) mất nhãn; regex mở rộng ở trên chỉ dùng ở cách đọc strict.
+SHELL_C_BODY_EXACT = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
+                                r"(?:\s+(?:--?(?!(?:bash|sh|zsh|dash)\s)\w(?:\w|-(?!(?:bash|sh|zsh|dash)\s))*"
+                                r"|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
+                                r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
@@ -213,20 +219,20 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
     return HEREDOC.sub(sub, cmd)
 
 
-def unwrap_shell_c(text):
-    """Thay `bash -c '<thân>'` bằng shell rồi thân giữa dòng OPEN_RAW và dòng CLOSE: thân là phạm vi shell con như thân
-    <<'EOF'. Thân nháy kép được gỡ thoát như bash (`\\$`, `\\``, `\\"`, `\\\\` thành ký tự, `\\` + xuống dòng bỏ hẳn) mà vẫn
-    dùng OPEN_RAW: biến cha không thoát mà cha tự thay cũng thành rỗng. Báo thừa, vì các cách đọc không gỡ vẫn thay giá trị
-    của cha. Thân lồng nhau gỡ đệ quy."""
+def unwrap_shell_c(text, rx):
+    """Thay `bash -c '<thân>'` (rx: SHELL_C_BODY hay SHELL_C_BODY_EXACT) bằng shell rồi thân giữa dòng OPEN_RAW và dòng
+    CLOSE: thân là phạm vi shell con như thân <<'EOF'. Thân nháy kép được gỡ thoát như bash (`\\$`, `\\``, `\\"`, `\\\\` thành
+    ký tự, `\\` + xuống dòng bỏ hẳn) mà vẫn dùng OPEN_RAW: biến cha không thoát mà cha tự thay cũng thành rỗng. Báo thừa, vì
+    các cách đọc không gỡ vẫn thay giá trị của cha. Thân lồng nhau gỡ đệ quy bằng cùng rx."""
     def sub(m):
         body = m.group(2)[1:-1]
         if m.group(2)[0] == '"':
             body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
-        return "\n".join((m.group(1), OPEN_RAW, unwrap_shell_c(body), CLOSE, ""))
-    return SHELL_C_BODY.sub(sub, text)
+        return "\n".join((m.group(1), OPEN_RAW, unwrap_shell_c(body, rx), CLOSE, ""))
+    return rx.sub(sub, text)
 
 
-def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
+def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -240,13 +246,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
+    strict=True (dùng với exact): đọc sát bash thêm ở chỗ exact giữ y như bản trước, để thêm cách đọc mà không đổi cách cũ.
+    Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`); exact giữ regex
+    của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = LINE_JOIN.sub(r"\1", body)
     if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng
-        body = unwrap_shell_c(body)
+        body = unwrap_shell_c(body, SHELL_C_BODY if strict else SHELL_C_BODY_EXACT)
     store = []
 
     def keep(m):
@@ -387,11 +396,15 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Cách đọc exact (thân bash -c là phạm vi shell con, nháy che theo vùng giữa các dấu, comment che như chuỗi, dòng mở
     # heredoc là dòng logic) xét sau cùng, cũng chỉ lấy hợp: nó cho biến cha là rỗng cả khi đã export hay được cha thay
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
+    # Cách đọc strict (exact cộng các chỗ đọc sát bash hơn mà exact phải giữ như bản trước) xét sau cùng, chỉ lấy hợp:
+    # sửa một cách đọc tại chỗ từng làm mất nhãn ở lệnh mà cách cũ đọc đúng, thêm cách đọc thì không.
     if tool == "PowerShell":
         segs = segments(cmd, tool, scoped=False) + segments(cmd, tool) + segments(cmd, tool, exact=True)
+        segs += segments(cmd, tool, exact=True, strict=True)
     else:
         segs = [s for scoped in (False, True) for join in (False, True) for s in segments(cmd, tool, join, scoped)]
         segs += [s for join in (False, True) for s in segments(cmd, tool, join, exact=True)]
+        segs += [s for join in (False, True) for s in segments(cmd, tool, join, exact=True, strict=True)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
