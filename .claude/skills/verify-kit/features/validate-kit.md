@@ -20,7 +20,7 @@
 
 Preconditions:
 
-- Đã `launch`, `doctor` xanh. Mọi bước chạy trong `$SBX/app` (repo đã cài), không chạy trong repo kit: ở repo kit, `scripts/test-install.sh` là file của kit và **bị** kiểm.
+- Đã `launch`, `doctor` xanh, và không có `load` nào đang chạy trên sandbox này (bước dưới sửa `lib.sh` đã cài). Mọi bước chạy trong `$SBX/app` (repo đã cài), không chạy trong repo kit: ở repo kit, `scripts/test-install.sh` là file của kit và **bị** kiểm.
 
 - **Nền xanh.** `(cd "$SBX/app" && ./scripts/validate-kit.sh); echo "exit $?"`. Kỳ vọng: `✔ kit hợp lệ: 5 agents, 4 skills, 3 hooks, ...`, `exit 0`.
 - **pipe-quiet-grep (hành trình tái hiện 4, phần đỏ).** Sao lưu rồi chèn một dòng vi phạm vào hook của kit:

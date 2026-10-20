@@ -47,4 +47,5 @@ Preconditions:
 - Không có Python thì `KIT_JSON_TOOL=python` âm thầm dùng sed, không có jq thì `auto` không phải jq. Ba dòng vẫn in ra nhưng không phủ đủ ba cách đọc. Ghi theo dòng `công cụ:` của doctor.
 - `load` là bằng chứng xác suất. Trước khi sửa, tỉ lệ đỏ khoảng 1/6 bản trong 1 vòng trên 3–5 vòng, nên 4 vòng xanh vẫn để lọt bản lỗi với xác suất khoảng (3/4)^4 ≈ 32%. Hành trình tất định là `large-input`. Cần chắc hơn thì tăng số vòng (8 vòng ≈ 10%), không bao giờ giảm.
 - Trong lúc `load` chạy, mọi lệnh khác trên máy chậm đi nhiều lần. Chạy các bước tất định trước, hoặc sau khi `load` xong. Đừng chạy hai `load` cùng lúc rồi gộp kết quả.
+- `load` dùng hook đã cài trong `$SBX/app`. Hành trình nào sửa file trong đó (như `pipe-quiet-grep` của validate-kit) thì chạy trên một sandbox khác (`launch` lần nữa), không thì các bản test-hooks đang chạy đọc phải file đã sửa.
 - `IGNORE_SIGPIPE=1` chỉ có tác dụng trong subshell của helper. Đừng gõ `trap '' PIPE` trực tiếp trong shell của mình: các lệnh sau đó sẽ thừa hưởng.

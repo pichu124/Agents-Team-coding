@@ -119,7 +119,7 @@ cmd_guard_loop() {
       esac
     done
     printf '%s: %s/%s "permissionDecision":"ask" (lý do: %s), stderr %s byte\n' "$m" "$n" "$times" "${reason:-không có}" "$(wc -c < "$err" | tr -d ' ')"
-    [ -s "$err" ] && head -c 300 "$err" | sed 's/^/  stderr: /'
+    [ -s "$err" ] && head -n 2 "$err" | cut -c 1-240 | sed 's/^/  stderr: /'
     [ "$n" = "$times" ] && [ ! -s "$err" ] || fail=1
   done
   rm -f "$err"
