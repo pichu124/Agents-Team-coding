@@ -169,18 +169,16 @@ if [ -f "$target/CLAUDE.md" ]; then
   else
     has_mark=0
     grep -q "^$rules_mark" "$rules" && has_mark=1
-    # Đọc hết phần riêng ra file tạm trước khi ghi. Không qua $(...): bash của Git for Windows bỏ \r
-    # trong $(...), phần riêng CRLF sẽ bị đổi thành LF.
-    own="$(mktemp)" || exit 1
-    trap 'rm -f "${merged:-}" "${errf:-}" "$own"' EXIT
-    if ! own_part "$rules" "$has_mark" > "$own"; then
+    # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
+    if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
       echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
       exit 1
     fi
+    own="${own%x}"
     # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
-    cat "$rules_tpl" "$own" > "$rules"
-    if [ -s "$own" ]; then
-      n=$(($(wc -l < "$own")))
+    { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
+    if [ -n "$own" ]; then
+      n=$(($(printf '%s' "$own" | wc -l)))
       echo "✔ CLAUDE.md đã có nên giữ nguyên; .claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
     else
       echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
