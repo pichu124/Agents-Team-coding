@@ -11,7 +11,7 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 | Việc | Giữ | Đã dừng |
 |---|---|---|
 | Vá các ca mục A bỏ sót có từ trước | nhánh `claude/nice-hamilton-vdgw4v`. Nó soát các commit của `claude/vibrant-pascal-b81ljt`, port phần chỉ nhánh đó có, rồi ghi bảng "commit → đã có / đã port / bỏ qua vì sao" vào PR của nó | Session `claude/vibrant-pascal-b81ljt`. Nhánh giữ ở `970114a`; stash `r3-item3-wip` vẫn nằm trong container của session đó |
-| Vá mục A của youthful-fermi | Các bản sửa tới `c93ef33` đã vào qua PR #18 (`claude/brave-darwin-zqo4ws`, đã merge). Bạn chọn giữ PR #7 cho phần còn lại: merge nhánh mặc định `38bf5bb` vào, rồi diff chỉ còn phần riêng (commit hiệu năng bỏ cách đọc trùng, xem 2.7; fixture hj1–hj5) | Phần oracle bash ở session PR #7, chưa từng commit. Không gỡ phần youthful-fermi khỏi PR #18: nó đã merge |
+| Vá mục A của youthful-fermi | Các bản sửa tới `c93ef33` đã vào qua PR #18 (`claude/brave-darwin-zqo4ws`, đã merge). Nhánh `claude/youthful-fermi-1ydqg6` được dựng lại từ `38bf5bb` để làm mục 2.7 (hiệu năng của phép hợp) trong một PR nháp mới; PR đó xoá mục 2.7 khi xong. Fixture hj1–hj5 không port, vì `38bf5bb` đã báo cả 5 lệnh | PR #7, đã đóng ngày 20/10 kèm comment giải thích. Phần oracle bash của session đó cũng dừng, chưa từng commit |
 | Skill verify kèm hành trình tái hiện guard SIGPIPE | `claude/bold-tesla-s0rkpo` | Session `claude/verify-skill-sigpipe` (đã archive, chưa push gì) |
 | Cổng push của guard trên bash < 5.1 khi đĩa đầy | `claude/stoic-bell-kdjsfg` | Session trùng trên nhánh mặc định (đã archive, chưa push gì) |
 | check.sh không chạy test-plugin.sh của dự án đích | PR #9, đã merge | Session `claude/check-sh-kit-only-plugin` (đã archive) |
@@ -53,7 +53,7 @@ Việc đối chiếu đã xong ở `claude/brave-darwin-zqo4ws` (bảng "commit
   - 2 assert vô hại mới của `55a62d6` đỏ vì báo thừa: `D=/tmp/x # c | d` ⏎ `rm -rf $D/src`, `true # a |` ⏎ `D=/tmp/x` ⏎ `rm -rf $D/src`.
   - CI của nhánh đó đỏ ở mọi lần chạy kể từ `73558cd`: runner ubuntu-latest nay là Ubuntu 26.04 với bash 5.3, và `wait` không đối số trong `$( )` treo khi shell cha còn việc nền chưa thu (`true & x=$( wait )`), nên oracle báo "chạy quá 10 giây". `e103274` của brave-darwin bọc `wait` trong PRELUDE của oracle; nhánh đó hết đỏ khi merge nhánh mặc định mới. Oracle riêng của PR #8 cũng cần lớp bọc này nếu ngữ pháp của nó sinh `wait` trong `$( )`.
   - **Xong khi:** mỗi commit có dòng trong bảng như 2.3 cũ; ca còn tái hiện trên nhánh mặc định thì port như một cách đọc thêm, hợp nhãn, test đỏ trước.
-- **Dọn nhánh (cần bạn đồng ý, xoá nhánh phải hỏi người):** PR #7 giữ theo lựa chọn của bạn (mục 1.1), nên chỉ xoá `claude/youthful-fermi-1ydqg6` sau khi PR #7 merge hay đóng; xoá `claude/blissful-dirac-i6vpym` sau khi xử lý 4 commit trên; xoá `claude/intelligent-brahmagupta-ufrtr3` (PR #5 và PR #16 đã merge).
+- **Dọn nhánh (cần bạn đồng ý, xoá nhánh phải hỏi người):** PR #7 đã đóng, và `claude/youthful-fermi-1ydqg6` nay là nhánh làm mục 2.7, nên chỉ xoá nó sau khi PR của 2.7 merge; xoá `claude/blissful-dirac-i6vpym` sau khi xử lý 4 commit trên; xoá `claude/intelligent-brahmagupta-ufrtr3` (PR #5 và PR #16 đã merge).
 
 ### 2.4 Đường chậm bậc hai có từ trước
 - SHELL_C `(-\w+\s+)*` trên `"bash" + " -bash"*5000` hay `"sh" + " -sh"*5000`: 6–9 giây.
@@ -81,5 +81,13 @@ Bash xoá trong thư mục tạm mà mục A vẫn báo. Sửa là thu hẹp: ph
 
 | PR | Nội dung | Trạng thái |
 |---|---|---|
-| #7 | fix(audit): 9 dạng lệnh mục A bỏ sót (`claude/youthful-fermi-1ydqg6`) | Nháp. Mọi commit sửa tới `c93ef33` đã vào nhánh mặc định qua `claude/brave-darwin-zqo4ws` (cherry-pick -x); `fc27649` chỉ là merge nhánh mặc định. Giữ theo lựa chọn của bạn cho phần riêng còn lại (mục 1.1); phải merge `38bf5bb` trước |
 | #8 | fix(audit): oracle bash và 4 lớp lệnh xoá (`claude/practical-hawking-le9toi`) | Nháp. Phải merge nhánh mặc định mới (đã có phép hợp cách đọc mới và oracle của blissful-dirac), so nhãn với nhánh mặc định, quyết chuyện hai oracle ở mục 1 |
+
+## 4. Kit, ngoài audit
+
+### 4.1 Cài lại kit sinh quy ước đội ở hai nơi
+- **Vì sao:** chạy lại `scripts/install-kit.sh` trên repo mà lần cài đầu đã tạo `CLAUDE.md` thì sinh thêm `.claude/rules/agent-team.md`, nên quy ước đội nằm ở hai nơi. Điều này trái với dòng "Chạy lại nhiều lần vẫn cho cùng kết quả" ở đầu installer. Lỗi do PR #17 tìm ra và reviewer của nó đã tái hiện độc lập. Ca A của `scripts/test-install.sh` không có bước cài lại, nên test không bắt được.
+- **Xong khi:**
+  - ca A có bước cài lại, đỏ trước rồi xanh sau khi sửa installer;
+  - hành trình reinstall trong `.claude/skills/verify-kit/features/install-kit.md` (đang ghi FAIL có chủ ý) chuyển sang xanh;
+  - `KIT_SELFTEST=1 ./scripts/check.sh` exit 0.
