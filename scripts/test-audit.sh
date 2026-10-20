@@ -1256,6 +1256,72 @@ t0 = time.perf_counter()
 got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
 check(dt < 6 and "xoá đệ quy" in got, f"600 phép gán khác tên rồi rm phải xong dưới 6 s, rm vẫn nghi: {dt:.1f} s, {got!r}")
+# Lệnh bật mọi chiều của phép hợp cách đọc (NAME=, byte dấu, heredoc thân rỗng) không được đọc lại cả lệnh theo từng tổ hợp
+# khi các tổ hợp cho cùng kết quả. 20/10/2026 (4 nhân), 1000 dòng không `$`, `#`, `\` rồi heredoc thân rỗng, byte \x01,
+# `V=1 rm`: 38bf5bb 8,8 s (88 lần gọi segments), e5a6756 0,47 s (bỏ sót rm), bản gộp tổ hợp trùng 0,25 s (4 lần gọi),
+# trung vị 5 lần. Ngưỡng 3 s cách bản gộp ~12 lần, 38bf5bb ~2,9 lần. Bash xoá ./src.
+cmd = "\n".join(['echo "x" | grep -c x && ls -la /home/user'] * 1000) + "\ncat > f <<'EOF'\nEOF\necho '\x01'\nV=1 rm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 3 and got == ["xoá đệ quy"],
+      f"1000 dòng rồi heredoc thân rỗng, byte \\x01, `V=1 rm` phải xong dưới 3 s, nhãn đúng ['xoá đệ quy']: {dt:.1f} s, {got!r}")
+# Gộp tổ hợp đọc trùng (reading_key) không được đổi nhãn hay thứ tự nhãn: so với phép hợp đọc đủ mọi tổ hợp như 38bf5bb,
+# gọi thẳng segments. Bỏ một điều kiện của reading_key thì lệnh ghi chú bên cạnh đổi nhãn. Riêng điều kiện raw_marks
+# không lệnh nào canh được: các tổ hợp raw_marks khác nhau mà b có SNAP thì b đã khác (SNAP chèn chỉ khi raw_marks=False,
+# khi đó byte có sẵn đã bị trung hoà).
+import re
+def every_reading(cmd, tool="Bash"):
+    joins = (True,) if tool == "PowerShell" else (False, True)
+    marks = (False, True) if re.search("[\x01-\x05]", cmd) else (False,)
+    stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
+    empties = (True, False) if any(m["body"] is None for m in a.HEREDOC.finditer(cmd)) else (True,)
+    segs = [s for st in stricts for co in (False, True) for sc, pe in ((False, False), (True, False), (True, True))
+            for rm in (marks if sc else (False,)) for eb in (empties if sc else (True,)) for j in joins
+            for s in a.segments(cmd, tool, j, sc, pe, co, rm, st, eb)]
+    if re.search(r"<<-?\s*[A-Za-z_]", cmd):
+        segs += [s for j in joins for s in a.segments(cmd, tool, j, parent_env=True, blank=True)]
+    segs += [s for st in stricts for rm in marks for eb in empties for j in joins
+             for s in a.segments(cmd, tool, j, raw_marks=rm, strict_assign=st, empty_body=eb, exact=True)]
+    ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
+    for plain, full, ctx, subst in segs:
+        for rx, label in a.SUSPICIOUS:
+            if label in labels or not re.search(rx, plain, re.IGNORECASE):
+                continue
+            if label == "xoá đệ quy" and a.benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool):
+                continue
+            if label == "xoá nhánh local (-D)" and a.AGENT_BRANCH_DELETE.search(a.TAIL_REDIRECT.sub("", full)):
+                continue
+            labels.append(label)
+    return labels
+REPS = [("Bash", c) for c in (
+    "rm -rf dist\\\n  src",                                        # b có nối dòng
+    "D=/tmp/w; bash -c 'D=/; rm -rf $D'",                          # b của exact có gỡ thân -c
+    "echo x\\ # don't\nrm -rf src\n'",                             # exact khi b có `#`
+    "cd /tmp/w && bash <<'EOF'\necho don't\nEOF\nrm -rf src 'x'",  # exact khi b có byte dấu
+    "cd /tmp/x && \x01 x\\ # && rm -rf y",                         # scoped khi b có byte dấu
+    "A=s; B=${A}h; cd /tmp/x && $B\nrm -rf y",                     # scoped khi b có `$` (ghép ra shell trơn)
+    "cd /tmp/w && bash\nrm -rf src",                               # scoped khi b có "sh"
+    "echo >#'\nrm -rf src\n'",                                     # comments khi b có `#`
+    "D=/tmp/x/ true; rm -rf ${D}src",                              # strict_assign khi b có `$`
+    "D=/srv/\n\x02\nD=/tmp/x/\nrm -rf ${D}src",                    # parent_env khi b có `$` và dấu mở
+    "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF",                    # blank khi b có `$` và dấu mở
+    "echo \"x\" | grep -c x && ls -la /home/user\ncat > f <<'EOF'\nEOF\necho '\x01'\nV=1 rm -rf src",
+    "bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\",
+    "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF",
+    "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF", "D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF",
+    "bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF", "D=/tmp/x; bash <<EOF -c 'D=$HOME/proj; rm -rf $D'\nEOF",
+    "D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF", "bash \\\n<<'EOF'\n# x \\\nD=/; rm -rf $D\nEOF",
+    "cat <<'EOF' | bash\n( : # x; cd /tmp/w &&\nrm -rf . )\nEOF", "git push --force origin main && rm -rf src; git reset --hard",
+    "cd /tmp/x && rm -rf y", "rm -rf node_modules && rm -rf /tmp/build", "IFS=/; D=.claude/worktrees/agent-ab; rm -rf $D",
+    "git -C .claude/worktrees/agent-a1b2c3d4e5f60718 status && git branch -D worktree-agent-a1b2c3d4e5f60718",
+)] + [("PowerShell", c) for c in (
+    'Set-Location "C:\\vnstock\\"; Remove-Item -Recurse -Force data_warehouse\\prices', "cat <<'EOF' | bash\ngit stash drop\nEOF",
+    "D=/tmp/y/; bash <<'EOF'\n\x01\nrm -rf ${D}src\nEOF", "rm -rf dist\\\n  src # don't",
+)]
+for tool, cmd in REPS:
+    got, want = a.suspicious_labels(cmd, a.SUSPICIOUS, tool), every_reading(cmd, tool)
+    check(got == want, f"gộp tổ hợp đọc trùng không được đổi nhãn hay thứ tự nhãn: {tool} {cmd!r}: {got!r}, đọc đủ: {want!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
