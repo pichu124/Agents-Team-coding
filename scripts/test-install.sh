@@ -367,11 +367,12 @@ assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
 
 # O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
 #    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
-repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
+repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh
+  .claude/skills/verify-kit/helpers/sandbox.sh"
 o="$tmp/own scripts"
 new_repo "$o"
-mkdir -p "$o/scripts" "$o/plugin"
 for f in $repo_only; do
+  mkdir -p "$o/$(dirname "$f")"
   printf '#!/usr/bin/env bash\nif printf x %s grep -q x; then echo ok; fi\n' "$bar" > "$o/$f"
 done
 echo 'if then' >> "$o/plugin/run-hook.sh" # lỗi cú pháp: bash -n cũng không được chạy trên file của dự án
@@ -396,6 +397,57 @@ for f in $repo_only; do
     *) bad "O: ở repo kit phải báo $f:<dòng cuối> → $out" ;;
   esac
 done
+
+# P. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
+#    manifest plugin chỉ được phát 4 skill của kit (trỏ cả .claude/skills/ thì verify-kit lọt sang mọi
+#    dự án cài plugin). Ở repo đích, skill cùng tên là của dự án, không bị kiểm.
+q="$tmp/kit copy P"
+mkdir -p "$q/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$q/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$q/"
+vk="$q/.claude/skills/verify-kit"
+cp "$vk/SKILL.md" "$tmp/vk-skill.orig"
+cp "$vk/features/README.md" "$tmp/vk-features.orig"
+cp "$q/.claude-plugin/plugin.json" "$tmp/plugin.json.orig"
+(cd "$q" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "P: bản chép repo kit phải xanh trước khi sửa" [ $? -eq 0 ]
+sed 's/^name: verify-kit$/name: verify-khac/' "$tmp/vk-skill.orig" > "$vk/SKILL.md"
+out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: repo kit: verify-kit sai name phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/SKILL.md: name phải là 'verify-kit'"*) ok ;;
+  *) bad "P: phải báo name sai của verify-kit → $out" ;;
+esac
+cp "$tmp/vk-skill.orig" "$vk/SKILL.md"
+printf '\n[gãy](khong-co.md)\n' >> "$vk/features/README.md"
+out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: repo kit: link gãy trong feature map của verify-kit phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/features/README.md: link gãy → khong-co.md"*) ok ;;
+  *) bad "P: phải báo link gãy trong features/README.md → $out" ;;
+esac
+cp "$tmp/vk-features.orig" "$vk/features/README.md"
+"$py" - "$q/.claude-plugin/plugin.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["skills"] = "./.claude/skills/"
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PYEOF
+out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: plugin.json trỏ cả .claude/skills/ (phát luôn verify-kit) phải đỏ" [ $? -ne 0 ]
+case "$out" in *"plugin.json skills"*) ok ;; *) bad "P: phải báo plugin.json skills → $out" ;; esac
+cp "$tmp/plugin.json.orig" "$q/.claude-plugin/plugin.json"
+(cd "$q" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "P: bản chép repo kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+r="$tmp/own verify skill"
+new_repo "$r"
+mkdir -p "$r/.claude/skills/verify-kit"
+printf 'không có frontmatter\n[gãy](khong-co.md)\n' > "$r/.claude/skills/verify-kit/SKILL.md"
+install "$r"
+assert "P: install phải exit 0 khi dự án có skill verify-kit riêng" [ $? -eq 0 ]
+out="$(cd "$r" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
+case "$out" in *"4 skills"*) ok ;; *) bad "P: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
