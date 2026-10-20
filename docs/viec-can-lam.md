@@ -64,10 +64,6 @@ Bash xoá trong thư mục tạm mà mục A vẫn báo. Sửa là thu hẹp: ph
 - `cd /tmp/x && rm -rf y & wait`: BACKGROUND xoá thư mục cd khi còn lệnh sau `&` (port youthful-fermi `2e5b8bc`).
 - `D=/tmp/x; true & rm -rf $D/src`: benign_delete đọc cả đoạn, coi `true`, `&` là đích. Có từ trước.
 
-### 2.7 Hiệu năng của phép hợp cách đọc
-- **Vì sao:** `suspicious_labels` nay đọc tới khoảng 90 cách (strict_assign × comments × scoped/parent_env × raw_marks × empty_body × join, cộng blank và exact), nền cũ 6. Cổng (lệnh có `NAME=`, có byte \x01–\x05, có heredoc thân rỗng) giữ lệnh thường nhanh, nhưng lệnh bật đủ mọi chiều chậm khoảng 20 lần: reviewer đo 1000 dòng `echo "x" | grep -c x && ls -la /home/user` + heredoc thân rỗng + byte \x01 + `V=1 rm -rf src`: 8,3 s so với 0,4 s ở `e5a6756` (4000 dòng: 34 s so với 1,8 s).
-- **Xong khi:** gộp cách đọc trùng (vd. comments khi exact; raw_marks chỉ cho đoạn có byte), có assert hiệu năng cho ca trên, nhãn ⊇ bản trước trên fixture, fuzz và oracle.
-
 ## 3. PR đang mở (ảnh chụp)
 
 | PR | Nội dung | Trạng thái |
