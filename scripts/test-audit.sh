@@ -345,6 +345,7 @@ call("hg2", "D=/tmp/x/; sh <<'EOF' -s \\\nEOF\nrm -rf ${D}src\nEOF")     # bash 
 call("hg3", "bash -s <<EOF \\\nEOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")      # shell cha thay ${D} rỗng trước: bash xoá ./src
 call("hg4", "cat > f <<'EOF' \\\\\nEOF\nrm -rf src")                       # `\\` là một `\` thường: thân rỗng, bash xoá ./src
 # Cách đọc scoped với heredoc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp khi hai cách đọc heredoc khác nhau.
+# hg5, hg6 nay còn được cách đọc strict_assign (b377b11) phủ: bỏ cách đọc empty_body=False vẫn báo cả hai. hh1, hh2 canh nó.
 call("hg5", "false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src")      # D không được gán: bash xoá ./src
 call("hg6", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF")  # D gán ở shell con của ống: bash xoá ./src
 # Phép gán sau `&&`, `||` có thể không chạy; trong ống (`|` trước hay sau) hay chạy nền (`&`) thì chạy ở shell con: không đổi
@@ -357,6 +358,10 @@ call("hg11", "D=/tmp/x/&\nrm -rf ${D}src")                                # gán
 call("hg12", "export D=/tmp/x/ &\nrm -rf ${D}src")                        # bash xoá ./src
 # Escape ANSI-C trong `$'…'` cho ra tên lệnh bất kỳ: `$'\x63d'` là cd.
 call("hg13", "cd /tmp/x && $'\\x63d' /home/p && rm -rf src")              # bash xoá src ở /home/p
+# Hai heredoc trên một dòng: thân <<'A' rỗng, thân <<'EOF' đưa vào bash. Audit chỉ xét toán tử đầu: cách đọc nhận thân rỗng
+# để rm ở shell cha (D=/tmp/x/), chỉ cách đọc như 6f32d5a (empty_body=False) đưa rm vào thân, nơi D không export là rỗng.
+call("hh1", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF")      # bash xoá ./src
+call("hh2", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA")   # bash xoá ./src (dòng A cuối: command not found)
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -898,6 +903,8 @@ for must in ("false && D=/tmp/x/; rm -rf ${D}src", "true || D=/tmp/x/; rm -rf ${
              "true | D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/&\nrm -rf ${D}src", "export D=/tmp/x/ &\nrm -rf ${D}src"):
     check(must in A, f"phép gán sau `&&`/`||`, trong ống hay chạy nền không đổi biến của shell: {must!r}")
 check("cd /tmp/x && $'\\x63d' /home/p && rm -rf src" in A, "từ `$'…'` có escape ANSI-C có thể là cd: không biết thư mục")
+for must in ("D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA"):
+    check(must in A, f"hai heredoc trên một dòng: cách đọc heredoc không nhận thân rỗng (empty_body=False) vẫn trong phép hợp: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
