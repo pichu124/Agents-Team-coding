@@ -1499,6 +1499,269 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
 PYEOF
 fi
 
+# Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
+# Phân tích lệnh của mục A từng đọc khác bash thật hơn mười lần (1e9882a và 3 lần vá, 3dab000, 5083855, 52233e5..9734b56,
+# reviewer chặn nhiều vòng). Bước này sinh lệnh tất định từ một ngữ pháp CHỈ gồm thứ an toàn, chạy bằng bash thật với rm giả
+# (`fakerm` ghi $PWD và đích vào log, không xoá gì; PATH chỉ có bash và cat; env tối giản; stdin /dev/null), rồi đòi mục A
+# báo mọi lệnh mà bash thật xoá ngoài thư mục tạm/build.
+"$py" -I -B - "$tmp/oracle" <<'PYEOF' || status=1
+import importlib.util, os, random, re, shlex, shutil, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor
+for s in (sys.stdout, sys.stderr):
+    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
+sbx = sys.argv[1]
+# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng sàn này. Đo trên
+# bash 5.2: 2481, làm tròn xuống. CHỈ ĐƯỢC NÂNG. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt
+# test cho dễ: ca bỏ sót thì sửa phân tích lệnh trong audit-agent.py.
+ORACLE_FLOOR = 2400
+N = 4000  # khoảng 10 giây trên 4 CPU
+# KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
+# cấu trúc tương ứng vào ngữ pháp cùng lúc.
+#   - nháy (' hay ") trong comment hay trong thân heredoc (ngữ pháp không có nháy nào ngoài 'EOF')
+#   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
+#   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
+#   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
+#   - gán biến trong pipeline, gán tạm (`D=x cmd`), gán sau `&&`/`||`, kể cả nhóm `{ }` có phép gán ở các chỗ đó
+#   - `..` có nháy hay thoát
+#   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
+if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
+    print(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
+    sys.exit(0)
+spec = importlib.util.spec_from_file_location("audit_oracle", "scripts/audit-agent.py")
+au = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(au)
+t0 = time.time()
+# Sandbox nằm dưới thư mục tạm của hệ thống, nên audit coi MỌI đường tuyệt đối trong đó là thư mục tạm. Vì thế đường tuyệt
+# đối duy nhất trong ngữ pháp là REAL (thư mục tạm có thật) và GONE (không tồn tại, chỉ làm đích cd: cd lỗi).
+REAL, GONE, PROJ, HOME, BIN, LOG = (os.path.join(sbx, n) for n in ("tmpw", "khongco", "proj", "home", "bin", "log"))
+for d in (REAL + "/src", REAL + "/dist", HOME, BIN, LOG) + tuple(PROJ + "/" + n for n in ("src", "dist", "node_modules", "build")):
+    os.makedirs(d, exist_ok=True)
+for tool in ("bash", "cat"):
+    os.symlink(shutil.which(tool), os.path.join(BIN, tool))
+
+RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là `fakerm`
+rnd = random.Random(7)
+pick = rnd.choice
+CD_T = [REAL] * 6 + [GONE] * 3 + ["dist", "node_modules", "src", "..", "/", "~", "-"]
+RM_T = ["src"] * 6 + [".", "$D", "$D/src", "-- -x", "dist src", "dist", "node_modules/x", "build", REAL + "/x", "~/x", "../src"]
+D_V = [REAL, REAL, "src", "dist", "/", "~"]
+COMMENT = ["# a", "# a ; b", "# a && b", "# a | b", "# x &&", "# x |", "# cd " + REAL + " &&", "# cd dist"]
+OTHER = ["true"] * 4 + ["false"] * 2 + [":", "echo a", "popd", "wait", "echo a\\|#b", "echo a\\|#b"]
+P_HD, P_COMP, P_CD, P_RM, P_OTHER = .15, .25, .35, .3, .25
+P_OPC, P_TRC, P_LINEC = .3, .3, .1  # comment sau &&/||/|, cuối dòng, dòng riêng
+TOPLEN = [1, 2, 2, 3, 3, 4]
+P_TRAP = .5
+
+
+def cd():
+    r = rnd.random()
+    if r < 0.08:
+        return "cd"
+    if r < 0.14:
+        return "cd %s %s" % (pick(CD_T), pick(CD_T))
+    w = pick(["cd"] * 6 + ["builtin cd", "pushd"])
+    return w + " " + pick([t for t in CD_T if t != "-"] if w == "builtin cd" else CD_T)  # builtin cd - in ra stdout
+
+
+def simple(assign=True):
+    """(mảnh, là phép gán)."""
+    r = rnd.random()
+    if r < P_CD:
+        return [cd()], False
+    if r < P_CD + P_RM:
+        return [RM, " -rf " + pick(RM_T)], False
+    if r < P_CD + P_RM + P_OTHER or not assign:
+        return [pick(OTHER)], False
+    return [pick(["D=", "export D="]) + pick(D_V)], True
+
+
+def item(depth, top):
+    """(mảnh, loại, có phép gán chạy ở shell này): loại "assign" (phép gán trơn), "heredoc" hay ""."""
+    r = rnd.random()
+    if top and r < P_HD:
+        return heredoc(), "heredoc", False
+    if depth < 2 and r < P_HD + P_COMP:
+        inner, ga = lst(depth + 1, False)
+        k = rnd.randrange(4)
+        if k == 0:
+            return ["( "] + inner + [" )"], "", False
+        if k == 1:
+            return ["{ "] + inner + ["; }"], "", ga
+        return [pick(["true $( ", "echo $( "])] + inner + [" )"], "", False
+    p, a = simple()
+    return p, "assign" if a else "", a
+
+
+def heredoc():
+    """Heredoc đưa vào shell, độ sâu 1: thân rỗng hay là một danh sách lệnh của chính ngữ pháp."""
+    opener = pick(["bash <<'EOF'", "bash <<EOF", "cat <<'EOF' | bash", "cat <<EOF | bash", "cat <<'EOF' \\\n| bash"])
+    r = rnd.random()
+    if r < 0.15:
+        suffix = [pick([" && ", " || "])] + simple(assign=False)[0]
+    elif r < 0.25:
+        suffix = ["; "] + simple()[0]
+    else:
+        suffix = []
+    body = [] if rnd.random() < 0.2 else lst(1, False)[0]
+    return [opener] + suffix + ["\n"] + body + (["\n"] if body else []) + ["EOF"]
+
+
+def trap_items(depth, top):
+    """Bẫy: nhiễu, một chỗ làm audit tin là thư mục tạm (cd vào REAL/GONE, D=REAL, comment có cd vào REAL), nhiễu, rồi rm
+    đích tương đối. Ngẫu nhiên thuần gần như không sinh ra được các cấu trúc từng làm mục A bỏ sót."""
+    items = [item(depth, top) for _ in range(rnd.randint(0, 2))]
+    t = rnd.random()
+    if t < 0.6:
+        items.append(([pick(["cd ", "cd ", "pushd ", "builtin cd "]) + pick([REAL, GONE])], "", False))
+    elif t < 0.8:
+        items.append(([pick(["D=", "export D="]) + REAL], "assign", True))
+    else:
+        p = simple(assign=False)[0]
+        items.append((p + [" # " + pick(["a && ", "", "x; "]) + "cd " + REAL + pick([" &&", "", " |", ";"])], "comment", False))
+    if rnd.random() < 0.7:
+        items.append(([pick(["true", "false", "echo a\\|#b", "echo a\\|#b"])], "", False) if rnd.random() < 0.6
+                     else item(depth, top))
+    items.append(([RM, " -rf " + pick(["src", "src", ".", "-- -x", "$D", "$D/src"])], "", False))
+    return items
+
+
+def lst(depth, top):
+    """(mảnh, có phép gán chạy ở shell này)."""
+    if rnd.random() < P_TRAP:
+        items = trap_items(depth, top)
+    else:
+        items = [item(depth, top) for _ in range(pick(TOPLEN) if top else rnd.randint(1, 3))]
+    out, bg = [], False
+    for i, (p, kind, ga) in enumerate(items):
+        out += p
+        if i == len(items) - 1:
+            break
+        nga = items[i + 1][2]
+        if kind in ("heredoc", "comment"):
+            sep = "\n"  # sau EOF hay comment chỉ có xuống dòng
+        else:
+            sep = pick(["&&", "||", ";", "|", "\n", "&"])
+            if (ga and sep == "|") or (nga and sep in ("&&", "||", "|")):
+                sep = ";"  # KNOWN_GAPS: gán trong pipeline, gán sau &&/||
+        bg = bg or sep == "&"
+        if sep == "\n":
+            if kind not in ("heredoc", "comment") and rnd.random() < P_TRC:
+                out.append(" " + pick(COMMENT))
+            out.append("\n")
+            if rnd.random() < P_LINEC:
+                out.append(pick(COMMENT) + "\n")
+        elif sep in ("&&", "||", "|") and rnd.random() < P_OPC:
+            out.append(" %s %s\n" % (sep, pick(COMMENT)))
+        else:
+            out.append(" " + sep + " " if sep != ";" else "; ")
+    if bg:
+        out.append("\nwait")  # đợi việc chạy nền ghi log xong
+    return out, any(ga for _p, _k, ga in items)
+
+
+def render(p, word):
+    return "".join(word if x is RM else x for x in p)
+
+
+cmds = list(dict.fromkeys(tuple(lst(0, True)[0]) for _ in range(N)))
+# Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
+PRELUDE = r"""fakerm() {
+  local a e=
+  printf 'C\t%s\n' "$PWD" >> LOG
+  for a in "$@"; do
+    if [ -z "$e" ]; then
+      if [ "$a" = -- ]; then e=1; continue; fi
+      case $a in -?*) continue;; esac
+    fi
+    printf 'T\t%s\t%s\n' "$PWD" "$a" >> LOG
+  done
+}
+cd() { builtin cd "$@" >/dev/null; }
+pushd() { builtin pushd "$@" >/dev/null; }
+popd() { builtin popd "$@" >/dev/null; }
+echo() { builtin echo "$@" >/dev/null; }
+export -f fakerm cd pushd popd echo
+"""
+
+
+def run(i):
+    log = os.path.join(LOG, "%d.log" % i)
+    open(log, "w").close()
+    script = os.path.join(LOG, "%d.sh" % i)
+    with open(script, "w") as f:
+        f.write(PRELUDE.replace("LOG", shlex.quote(log)) + render(cmds[i], "fakerm") + "\n")
+    try:
+        r = subprocess.run([os.path.join(BIN, "bash"), script], cwd=PROJ, env={"HOME": HOME, "PATH": BIN},
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
+        err, to = r.stderr.decode("utf-8", "replace"), False
+    except subprocess.TimeoutExpired:
+        err, to = "", True
+    with open(log) as f:
+        calls = [ln.rstrip("\n").split("\t")[1:] for ln in f if ln.startswith("T\t")]
+    return calls, err, to
+
+
+with ThreadPoolExecutor(max_workers=(os.cpu_count() or 2) * 2) as ex:
+    results = list(ex.map(run, range(len(cmds))))
+rreal, rsbx = os.path.realpath(REAL), os.path.realpath(sbx)
+
+
+def inside(p, d):
+    return p == d or p.startswith(d + os.sep)
+
+
+def dangerous(pwd, t):
+    """Nguy hiểm trừ khi đích thật nằm trong REAL hay có thành phần dist/node_modules/build sau sandbox (audit coi tên đó
+    vô hại ở mọi chỗ: đó là luật của audit, không phải lỗi đọc lệnh). Dự án giả, src, HOME, cha dự án, /, /src: nguy hiểm."""
+    p = os.path.realpath(os.path.join(pwd, t))
+    if inside(p, rreal):
+        return False
+    parts = os.path.relpath(p, rsbx) if inside(p, rsbx) else p
+    return not set(parts.split(os.sep)) & {"dist", "node_modules", "build"}
+
+
+danger, miss, timeouts = 0, [], []
+for i, (calls, err, to) in enumerate(results):
+    c = render(cmds[i], "rm")
+    if to:
+        timeouts.append(c)
+    bad = [(pwd, t) for pwd, t in calls if dangerous(pwd, t)]
+    if not bad:
+        continue
+    danger += 1
+    if "xoá đệ quy" not in au.suspicious_labels(c, au.SUSPICIOUS, "Bash"):
+        miss.append((len(c), c, bad, err))
+el = time.time() - t0
+fail = False
+short = lambda s: s.replace(sbx, "$SBX")
+for c in timeouts[:5]:
+    print(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}", file=sys.stderr)
+    fail = True
+if miss:
+    fail = True
+    print(f"✘ audit: mục A bỏ sót {len(miss)}/{danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ($SBX={sbx}, cwd "
+          "$SBX/proj, $SBX/tmpw là thư mục tạm có thật), ngắn nhất trước:", file=sys.stderr)
+    for _n, c, bad, err in sorted(miss)[:None if os.environ.get("AUDIT_LOST_ALL") else 10]:
+        print(f"  {short(c)!r}", file=sys.stderr)
+        for pwd, t in bad[:3]:
+            print(f"    bash: PWD={short(pwd)} đích={short(t)}", file=sys.stderr)
+        if err.strip():
+            print("    stderr: " + short(err.strip())[:300].replace("\n", "\n            "), file=sys.stderr)
+    print("  Sửa phân tích lệnh trong audit-agent.py (segments, benign_delete) cho tới khi mục A báo các lệnh này, và thêm "
+          "ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp, trừ khi đó là lỗ có việc riêng: khi đó ghi vào "
+          "KNOWN_GAPS. AUDIT_LOST_ALL=1 in đủ.", file=sys.stderr)
+if danger < ORACLE_FLOOR:
+    fail = True
+    print(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa bị "
+          "thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ sàn.",
+          file=sys.stderr)
+if fail:
+    sys.exit(1)
+print(f"✔ audit: oracle bash: mục A báo đủ {danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, "
+      f"sàn {ORACLE_FLOOR}, {el:.1f}s)")
+PYEOF
+rm -rf "$tmp/oracle"
+
 # Bất biến khi có bản chép: worker khởi động lại hay resume chép phiên sang file khác, các dòng giữ uuid. Bộ đếm cộng dồn
 # đếm chúng hai lần; đã vá từng bộ một (3e86d90 mục I/J, PR #1 mục E/F, rồi old_entries_skipped) vì không test nào canh
 # mọi bộ đếm cùng lúc. Bước này chạy lại mọi thư mục phiên ở trên (A, dòng thiếu uuid được gán uuid tất định) và A kèm
