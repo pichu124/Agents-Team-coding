@@ -268,7 +268,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF
     dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /).
     Biến gán bằng read, mapfile, printf -v, for…, trong một khâu của ống hay sau `||` là không biết; unset làm rỗng; eval,
-    source, `.` làm mọi biến thành không biết.
+    source, `.` làm mọi biến thành không biết. cd ngay sau `||` hay `|` không cho biết thư mục.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact, strict)
@@ -346,9 +346,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
             # Chỉ tin đích một token, không mở bằng `-` (kể cả "-L") hay `+` (pushd +1 xoay ngăn xếp), không còn `$` hay backtick
-            # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.): còn lại không biết thư mục
+            # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.): còn lại không biết thư mục. strict: cd ngay sau `||`
+            # chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (`A || cd /tmp && rm -rf src`): không biết thư mục
             if CD_WORD.match(lead) and not target.startswith(("-", "+")) and not re.search(r"[$`]", target) \
-                    and ".." not in re.sub(r"[\"'\\]", "", target):
+                    and ".." not in re.sub(r"[\"'\\]", "", target) and not (strict and before in ("||", "|")):
                 ctx = target if is_absolute(target) else (ctx + "/" + target)
             else:
                 ctx = ""
@@ -427,7 +428,8 @@ def benign_delete(full, ctx, worktree=True):
         if benign_path(t) or (worktree and agent_worktree(t)):
             continue
         rel = not is_absolute(t)
-        if rel and ctx and benign_path(ctx):
+        # Đích còn `$` hay backtick (biến chưa biết, lệnh lồng: `cd /tmp && rm -rf $D/a`) có thể là đường tuyệt đối
+        if rel and ctx and benign_path(ctx) and not re.search(r"[$`]", t):
             continue
         return False
     return True

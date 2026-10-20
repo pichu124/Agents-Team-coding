@@ -1033,12 +1033,20 @@ for cmd in ("D=/; bash <<EOF\nD=/tmp/w && rm -rf $D/a\nEOF",             # xoá 
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"biến bị đổi mà cách đọc khác không theo: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("D=/tmp/w; unset -f D; rm -rf $D/a", a.SUSPICIOUS), "unset -f chỉ xoá hàm: biến giữ giá trị")
+# Thư mục cd không biết: cd ngay sau `||` chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (bash chạy rm ở thư mục dự
+# án). Đích còn `$` hay lệnh lồng sau khi thay biến đã biết có thể là đường tuyệt đối: cd vào thư mục tạm không làm nó vô hại
+# (D chưa gán, `echo` in rỗng: bash xoá /a).
+for cmd in ("D=/tmp/w || cd /tmp/w && rm -rf src", "D=/tmp/w || cd /tmp && rm -rf src", "true | cd /tmp && rm -rf src",
+            "cd /tmp && rm -rf $D/a", "cd /tmp && rm -rf ${D}/a", "cd /tmp && rm -rf `echo`/a", "cd /tmp && rm -rf $(echo)/a"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"không biết thư mục hay đích sau cd: {cmd!r}: {got!r}")
+check(not a.suspicious_labels("cd /tmp && rm -rf src", a.SUSPICIOUS), "cd vào thư mục tạm rồi xoá đích tương đối vẫn vô hại")
 # Phần mới của cách đọc strict không làm audit chậm. Dòng mở heredoc không có `\n` thì HEREDOC của các cách đọc khác thử lại
 # từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước (~3 giây với 5000 `<<A`): lô `<<A` ở đây nhỏ hơn.
 slow = []
 for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 3000,
             "D=/; bash <<EOF\n" * 3000, "read D; " * 5000, "printf -v D x; " * 5000, "unset D; " * 5000, "eval x; " * 5000,
-            "D=1 | " * 5000, "x | " * 5000):
+            "D=1 | " * 5000, "x | " * 5000, "a || cd /tmp && " * 3000):
     t = time.monotonic()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     t = time.monotonic() - t
