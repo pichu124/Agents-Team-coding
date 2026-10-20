@@ -227,7 +227,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs). Thân heredoc có thể rỗng (HEREDOC_X). Khâu của ống là shell
-    con: phép gán và cd trong đó không ra ngoài. Lệnh ngay sau `||` có thể không chạy: thư mục và biến nó đặt là không biết.
+    con: phép gán và cd trong đoạn kề `|` không ra ngoài. Đoạn ngay sau `||` có thể không chạy: thư mục và biến nó đặt là
+    không biết.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact)
@@ -253,8 +254,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
     out, ctx, env, sep, saved, inherit = [], "", {}, None, [], False
-    parts = re.split("(" + SPLIT.pattern + ")", marked)
-    for i, seg in enumerate(parts):
+    pieces = re.split("(" + SPLIT.pattern + ")", marked)
+    for i, seg in enumerate(pieces):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
                 sep = seg
@@ -264,11 +265,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
             continue
         raw = re.sub(r"\0(\d+)\0", unkeep, seg)
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
-        # exact: một khâu của ống chạy ở shell con, phép gán và cd trong đó không tới khâu sau hay lệnh sau ống
-        # (`D=/tmp/w/ | true; rm -rf ${D}src`).
-        # Lệnh ngay sau `||` chỉ chạy khi lệnh trước lỗi, nên thư mục cd và biến gán ở đó không chắc có
-        # (`true || cd /tmp/w && rm -rf src`): thư mục thành không biết, biến thành chưa biết.
-        piped = exact and not mark_only and (sep == "|" or i + 1 < len(parts) and parts[i + 1] == "|")
+        # exact: một khâu của ống chạy ở shell con, phép gán và cd trong đoạn ngay trước hay ngay sau `|` không tới khâu sau
+        # hay lệnh sau ống (`D=/tmp/w/ | true; rm -rf ${D}src`). Khâu là nhóm nhiều đoạn (`{ D=x; } | y`) thì chưa nhận ra.
+        # Đoạn ngay sau `||` chỉ chạy khi lệnh trước lỗi, nên thư mục cd và biến gán ở đó không chắc có
+        # (`true || cd /tmp/w && rm -rf src`): thư mục thành không biết, biến thành chưa biết. Nhóm sau `||` thì chỉ đoạn đầu.
+        piped = exact and not mark_only and (sep == "|" or i + 1 < len(pieces) and pieces[i + 1] == "|")
         maybe = exact and not mark_only and sep == "||"
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
