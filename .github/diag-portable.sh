@@ -44,6 +44,10 @@ echo "awk đọc pipe CRLF, length(\$0): $(printf 'a\r\nb\r\n' | awk '{ printf "
 echo "awk print \$0 của file CRLF: $(awk '{ print }' "$T/crlf.txt" | od -c | head -n 1)"
 echo "awk printf \\r\\n: $(awk 'BEGIN { printf "x\r\n" }' | od -c | head -n 1)"
 echo "cat file CRLF qua pipe: $(cat "$T/crlf.txt" | od -c | head -n 1)"
+for b in 1 3; do
+  echo "awk -v BINMODE=$b đọc file/pipe CRLF: $(awk -v BINMODE=$b '{ printf "%d ", length($0) }' "$T/crlf.txt")/ $(printf 'a\r\nb\r\n' | awk -v BINMODE=$b '{ printf "%d ", length($0) }')(giữ \\r: 2 2)"
+  echo "awk -v BINMODE=$b print \$0: $(awk -v BINMODE=$b '{ print }' "$T/crlf.txt" | od -c | head -n 1)"
+done
 for n in 1000 4000 20000; do
   f="$T/d-$n.json"
   {
