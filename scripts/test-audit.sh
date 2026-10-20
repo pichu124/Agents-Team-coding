@@ -839,6 +839,51 @@ for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf 
         got = exc
     check(isinstance(got, list) and "xoá đệ quy" in got,
           f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
+# SHELL_C và mẫu filter-branch của 1667825 quét lại bậc hai: lần khớp từ mỗi shell trong `bash -bash -bash …` đi lại chuỗi
+# cờ tới cuối, `.*` từ mỗi `git` đi lại tới cuối dòng (7–26 giây mỗi lệnh dưới đây ở 1667825).
+import random, re, time
+slow = []
+for cmd in ("bash" + " -bash" * 5000, "sh" + " -sh" * 5000, "zsh" + " -zsh" * 5000, "dash.exe" + " -dash" * 5000,
+            "pwsh" + " -pwsh" * 5000, "powershell" + " -powershell" * 3000, "Bash" + " -BAſH" * 5000, "bash" + " -x -bash" * 3000,
+            "git-bash" + " --x-git-bash" * 5000, "git " * 10000, "GIT filter-" * 5000, "git" + " -git" * 5000,
+            'D="' + "\n".join(["git " * 2500] * 4) + '"; echo $D'):  # $D thay vào: dòng có `\n`, mỗi dòng nhiều git
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ trùng tên shell hay dòng nhiều git (đầu lệnh, giây): {slow}")
+# Biến có `\n` thay vào bản so mẫu: mẫu filter-branch vẫn xét từng dòng như mẫu cũ.
+for cmd, want in (('D="x\ngit filter-branch"; echo $D', ["viết lại lịch sử git"]), ('D="git x\nfilter-branch"; echo $D', [])):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(got == want, f"git và filter-… phải cùng dòng, ở dòng nào cũng được: {cmd!r}: {got!r}")
+# Bản tuyến tính phải khớp đúng những chuỗi mẫu cũ khớp (giữ nguyên văn bản mẫu cũ ở đây): chuỗi ngẫu nhiên ghép từ tên
+# shell (hoa thường, ſ), cờ (cả cờ trùng tên shell, `-shx`), `/c`, K Kelvin, `|`, eval, git (`GIT`, `gıt`), filter-…,
+# khoảng trắng Unicode, `\n`, `\r`. Lô phải đi qua chỗ khó: lần khớp cũ đi qua cờ `-<shell>`, dòng nhiều git trước filter-….
+OLD_SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s"
+                         r"|\beval\s|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b", re.IGNORECASE)
+OLD_FILTER = re.compile(r"\bgit\b.*\bfilter-(branch|repo)\b", re.IGNORECASE)
+new_filter = [re.compile(rx, re.IGNORECASE) for rx, label in a.SUSPICIOUS if label == "viết lại lịch sử git"]
+check(len(new_filter) == 1, f"SUSPICIOUS phải có đúng một mẫu nhãn 'viết lại lịch sử git', có {len(new_filter)}")
+WORDS = ["bash", "sh", "zsh", "dash", "pwsh", "powershell", "Bash", "SH", "baſh", "bash.exe", "cmd", "CMD.exe", ".exe", "eval", "|",
+         "-", "-c", "-C", "-command", "-x", "-bash", "-sh", "-SH", "-shx", "-ſh", "-pwsh", "-powershell", "-zsh", "-dash", "-ommand",
+         "-cmd", "/c", "/k", "/x", "git", "GIT", "gıt", "-git", "git-bash", "filter-branch", "filter-repo", "FILTER-REPO",
+         "filter-", "branch", "x", "\u212a", "_", "é", "1"]
+SEPS = [" ", " ", " ", " ", "  ", "\t", "\n", "\n", "\r", "\x0b", "\u00a0", "", ""]
+rnd = random.Random(3)
+diff, through, multi = [], 0, 0
+for _ in range(8000):
+    s = "".join(rnd.choice(WORDS) + rnd.choice(SEPS) for _ in range(rnd.randint(1, 8)))
+    for old, new in ((OLD_SHELL_C, a.SHELL_C), (OLD_FILTER, new_filter[0] if new_filter else None)):
+        mo, mn = old.search(s), new and new.search(s)
+        if bool(mo) != bool(mn):
+            diff.append(s)
+        elif mo and old is OLD_SHELL_C:
+            through += bool(re.search(r"\s-(bash|sh|zsh|dash|pwsh|powershell)\s", mo.group(0), re.IGNORECASE))
+        elif mo:
+            multi += len(re.findall(r"\bgit\b", mo.group(0), re.IGNORECASE)) > 1
+check(not diff, f"SHELL_C và mẫu filter-branch phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(through >= 20 and multi >= 10, f"lô vi sai phải đi qua cờ `-<shell>` ({through}) và dòng nhiều git ({multi})")
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /

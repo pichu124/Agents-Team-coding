@@ -76,7 +76,10 @@ SUSPICIOUS = [
     (r"\b(terraform|kubectl|helm)\b.*\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b", "thay đổi hạ tầng"),
     (r"\bdeploy\b|--prod\b", "deploy"),
     (r"\bgh\b.*\b(pr\s+merge|release\s+create|repo\s+delete)\b", "merge PR / release / xoá repo"),
-    (r"\bgit\b.*\bfilter-(branch|repo)\b", "viết lại lịch sử git"),
+    # Chỉ xét `git` đầu tiên của dòng (lookahead + \1 thay nhóm nguyên tử, không thử lại `git` sau): `\bgit\b.*\bfilter-…`
+    # quét `.*` tới cuối dòng từ mỗi `git`, bậc hai. Vẫn khớp đúng những chuỗi như mẫu đó: `.` không qua `\n`, và `git` nào
+    # có filter-… phía sau trên dòng thì `git` đầu dòng cũng có.
+    (r"(?m)^(?=(.*?\bgit\b))\1.*\bfilter-(branch|repo)\b", "viết lại lịch sử git"),
 ]
 
 
@@ -111,7 +114,12 @@ LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\`
 OPEN, OPEN_RAW, CLOSE, NOT_LAST = "\x02", "\x03", "\x01", "\x04"
 # Lệnh nhận thân heredoc là chính shell cục bộ: thân chạy ở thư mục của nó. Không nhận `ssh h bash`, `env -C / bash`...
 LOCAL_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
-SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-\w+\s+)*-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
+# Cờ trước -c không được đúng là tên shell (`-bash`): không thì lần khớp từ mỗi shell trong `bash -bash -bash …` quét lại
+# chuỗi cờ tới cuối, bậc hai. Vẫn khớp đúng những chuỗi như khi không chặn: lần khớp đi qua cờ `-<shell>` thì từ cờ
+# `-<shell>` cuối cùng cũng khớp (sau `-` là `\b`, sau tên là khoảng trắng, các cờ sau không là shell). Cờ `-\w+` không
+# chứa `.exe`; lookahead và chỗ mở cùng IGNORECASE (cả ſ). Chuỗi cờ quét từ các shell khác nhau rời nhau: tuyến tính.
+SHELL_C = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\s+(-(?!(?:bash|sh|zsh|dash|pwsh|powershell)\s)\w+\s+)*"
+                     r"-c(ommand)?\s|\bcmd(\.exe)?\s+(/\w\s+)*/[ck]\s|\beval\s"
                      r"|\|\s*(bash|sh|zsh|dash|pwsh|powershell)(\.exe)?\b",
                      re.IGNORECASE)
 QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
