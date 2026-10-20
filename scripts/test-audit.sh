@@ -1329,7 +1329,23 @@ fuzz += [
     'sh +c +e -x "D=/tmp/w; bash +O extglob -ec \'cd /tmp/w && rm -rf src\'; rm -rf \\$D"',
     'sh --init-file x -lc "D=/tmp/w; sh -lc \'echo hi\'; rm -rf \\$D"',
 ]
-pairs =list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
+# Lô thứ tư, bộ sinh riêng để các lô trên giữ nguyên từng lệnh: mảnh của các chỗ cách đọc strict đọc khác (`\'`, `\"` ngoài
+# nháy, thân <<EOF không nháy đưa vào bash/sh, read/mapfile/printf -v/unset/eval/`.`, thân heredoc rỗng, `||`/`|` trước cd
+# hay phép gán, `$D` chưa gán sau cd) ghép với lõi nguy hiểm và các bước có sẵn.
+FRAG = ["echo it\\'s", 'echo a\\"b', "read D <<< /", "mapfile -t D <<< /", "printf -v D /", "unset D", "unset -f D",
+        "eval 'D=/'", ". ./e.sh", "D=/tmp/w", "D=/", "export D=/tmp/w", "cd /tmp", "cd /tmp/w", "true", "false",
+        "rm -rf $D/a", "rm -rf ${D}src", 'rm -rf "$D"', "rm -rf src 'x'", 'rm -rf src "x"']
+FRAG_LINE = ["bash <<EOF", "sh <<EOF", "bash <<'EOF'", "cat <<'EOF'", "cat <<EOF", "EOF", "EOF"]
+rnd4 = random.Random(4)
+def line4():
+    if rnd4.random() < 0.3:
+        return rnd4.choice(FRAG_LINE)
+    s = rnd4.choice(FRAG + CORE)
+    for _ in range(rnd4.randint(0, 2)):
+        s += rnd4.choice([" && ", "; ", " || ", " | "]) + rnd4.choice(FRAG + CORE + STEP)
+    return s + rnd4.choice(TAIL)
+fuzz += ["\n".join(line4() for _ in range(rnd4.randint(1, 5))) for _ in range(600)]
+pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
 lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0
