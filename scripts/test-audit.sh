@@ -355,6 +355,8 @@ call("hg9", "D=/tmp/x/ | true; rm -rf ${D}src")                           # gán
 call("hg10", "true | D=/tmp/x/; rm -rf ${D}src")                          # bash xoá ./src
 call("hg11", "D=/tmp/x/&\nrm -rf ${D}src")                                # gán ở shell con chạy nền: bash xoá ./src
 call("hg12", "export D=/tmp/x/ &\nrm -rf ${D}src")                        # bash xoá ./src
+# Escape ANSI-C trong `$'…'` cho ra tên lệnh bất kỳ: `$'\x63d'` là cd.
+call("hg13", "cd /tmp/x && $'\\x63d' /home/p && rm -rf src")              # bash xoá src ở /home/p
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -895,6 +897,7 @@ for must in ("false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src", "D=/tmp/x/
 for must in ("false && D=/tmp/x/; rm -rf ${D}src", "true || D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/ | true; rm -rf ${D}src",
              "true | D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/&\nrm -rf ${D}src", "export D=/tmp/x/ &\nrm -rf ${D}src"):
     check(must in A, f"phép gán sau `&&`/`||`, trong ống hay chạy nền không đổi biến của shell: {must!r}")
+check("cd /tmp/x && $'\\x63d' /home/p && rm -rf src" in A, "từ `$'…'` có escape ANSI-C có thể là cd: không biết thư mục")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
