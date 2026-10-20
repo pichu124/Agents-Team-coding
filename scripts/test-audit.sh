@@ -1737,6 +1737,9 @@ def render(p, word):
 
 cmds = list(dict.fromkeys(tuple(lst(0, True)[0]) for _ in range(N)))
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
+# `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
+# "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
+# pid của `jobs -p` (pid không phải con thì builtin trả về ngay) và trả 0 như wait không đối số.
 PRELUDE = r"""fakerm() {
   local a e=
   printf 'C\t%s\n' "$PWD" >> LOG
@@ -1752,7 +1755,15 @@ cd() { builtin cd "$@" >/dev/null; }
 pushd() { builtin pushd "$@" >/dev/null; }
 popd() { builtin popd "$@" >/dev/null; }
 echo() { builtin echo "$@" >/dev/null; }
-export -f fakerm cd pushd popd echo
+wait() {
+  if [ $# -eq 0 ]; then
+    set -- $(jobs -p)
+    [ $# -eq 0 ] || builtin wait "$@" 2>/dev/null
+    return 0
+  fi
+  builtin wait "$@"
+}
+export -f fakerm cd pushd popd echo wait
 """
 
 
