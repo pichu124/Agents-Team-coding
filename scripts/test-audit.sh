@@ -1199,7 +1199,6 @@ spec.loader.exec_module(vp)
 MISSED_VP_PENDING = {
     7, 8, 28,  # here-string `<<<`, `$'…'` ngoài nháy (vòng sửa strict)
     73, 74, 75, 78,  # lệnh đổi biến viết trong nháy, tên dính cờ `-vD` (vòng sửa strict)
-    16, 44, 45,  # benign_delete tin thư mục cd cho đích có `{`, `..` trong nháy hay sau `\`
     38, 40, 41, *range(46, 56), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
     # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
     10, 11, 12, 29, 30, 32, 35, 36, 76, 77, *range(79, 83), 88, 89, 90,  # biến như bash: gán không thuần (`echo D=`, gán
@@ -1211,6 +1210,15 @@ for i, (cmd, why) in enumerate(vp.MISSED_VP):
         check("xoá đệ quy" not in got, f"MISSED_VP[{i}] nay đã nghi: bỏ {i} khỏi MISSED_VP_PENDING để có assert canh: {cmd!r}")
     else:
         check("xoá đệ quy" in got, f"MISSED_VP[{i}] {why}: {cmd!r}: {got!r}")
+# Glob mở bằng `.` (`.?`, `.[.]`, `.*`) khớp cả `..` ở bash < 5.2 (chưa có globskipdots; /bin/bash của macOS là 3.2): đích
+# tương đối sau cd vào thư mục tạm hay build ra ngoài thư mục đó (bash 5.2 với `shopt -u globskipdots`, rm thay bằng echo:
+# xoá ../../home tức /home, ../src của dự án).
+for cmd in ("cd /tmp/x && rm -rf .?/.?/home", "cd /tmp/x && rm -rf .[.]/.[.]/home", "cd /tmp/x && rm -rf .*/.*/home",
+            "cd dist && rm -rf .*/src"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"glob khớp `..` (bash < 5.2): ra ngoài thư mục cd: {cmd!r}: {got!r}")
+check(not a.suspicious_labels("cd /tmp/x && rm -rf *.o", a.SUSPICIOUS),
+      "glob không mở bằng `.` không khớp `..`: `*.o` sau cd vào thư mục tạm vẫn vô hại")
 # Phần mới của cách đọc strict không làm audit chậm. Cỡ chuỗi chọn để 16e4dbd (chưa có strict) chạy dưới 1 giây: dòng mở
 # heredoc không `\n` thì HEREDOC của các cách đọc khác thử lại từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước
 # (~3 giây với 5000 `<<A`).

@@ -435,13 +435,17 @@ def benign_delete(full, ctx, worktree=True):
     targets += [t for t in args[end + 1:] if t]
     worktree = worktree and not any(PS_NAMED.match(t) for t in toks)
     for t in targets:
-        if ".." in re.split(r"[\\/]+", t):
+        u = re.sub(r"\\(.)|[\"']", r"\1", t)  # bỏ nháy và `\` như bash: `.'.'`, `.\.` là `..`
+        if ".." in re.split(r"[\\/]+", t) or ".." in re.split(r"[\\/]+", u):
             return False
         if benign_path(t) or (worktree and agent_worktree(t)):
             continue
         rel = not is_absolute(t)
-        # Đích còn `$` hay backtick (biến chưa biết, lệnh lồng: `cd /tmp && rm -rf $D/a`) có thể là đường tuyệt đối
-        if rel and ctx and benign_path(ctx) and not re.search(r"[$`]", t):
+        # Chỉ tin thư mục cd khi đích chắc là tương đối và ở trong thư mục đó. Biến, lệnh lồng, brace, extglob (`$D/a`, `{a,/}`,
+        # `+(.)`) có thể thành đường tuyệt đối hay `..`. Glob khớp được `..` ở bash < 5.2 (chưa có globskipdots): `?`, `[` ở
+        # bất kỳ đâu, hay thành phần mở bằng `.` có `*` (`.?/.?/home`, `.[.]/src`, `.*/src`); `*.o` vẫn tin được.
+        if rel and ctx and benign_path(ctx) and not is_absolute(u) and not re.search(r"[$`{(?\[]", t) \
+                and not any(x.startswith(".") and "*" in x for x in re.split(r"[\\/]+", u)):
             continue
         return False
     return True
