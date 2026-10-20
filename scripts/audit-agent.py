@@ -106,8 +106,9 @@ def load_watch(root):
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
 # segments(strict=True): thân có thể rỗng, dòng đóng ngay sau dòng mở (`cat <<'EOF'⏎EOF⏎rm -rf src`). HEREDOC đòi `\n` trước
 # dòng đóng nên lấy cả phần sau tới hết lệnh làm thân. Thân không rỗng kèm `\n` cuối (thành một đoạn rỗng). Dòng mở ở cuối
-# lệnh, không `\n`, khớp với thân rỗng: HEREDOC thử lại từ mỗi `<<` của dòng đó rồi quét tới cuối dòng, bậc hai.
-HEREDOC_STRICT = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)(?:\n|$)(.*?)"
+# lệnh, không `\n`, khớp với thân rỗng: HEREDOC thử lại từ mỗi `<<` của dòng đó rồi quét tới cuối dòng, bậc hai. `<<` sau
+# `<` là here-string `<<<`, không mở heredoc: HEREDOC lấy các dòng sau `cat <<< EOF` làm thân.
+HEREDOC_STRICT = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)(?:\n|$)(.*?)"
                             r"(?:(?<=\n)[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
@@ -218,7 +219,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False, strict=False)
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
     thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`.
-    strict: thân có thể rỗng (HEREDOC_STRICT)."""
+    strict: thân có thể rỗng, `<<<` không mở heredoc (HEREDOC_STRICT)."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
         while exact and line_start:  # dòng trước kết thúc bằng số lẻ `\`: bash nối nó với dòng đang xét
@@ -276,7 +277,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy
     (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /). Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection
     hay trong nháy: `read D<<</etc`, `printf -v "D"`), trong một khâu của ống hay sau `||` là không biết; unset làm rỗng;
-    eval, source, `.` làm mọi biến thành không biết. cd ngay sau `||` hay `|` không cho biết thư mục.
+    eval, source, `.` làm mọi biến thành không biết. cd ngay sau `||` hay `|` không cho biết thư mục. Here-string `<<<`
+    không mở heredoc: dòng sau `cat <<< EOF` là lệnh.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact, strict)

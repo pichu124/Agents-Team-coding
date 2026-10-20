@@ -1071,6 +1071,12 @@ for cmd in ("bash +e -c $'rm -rf /'", "bash --rcfile /dev/null -c $'rm -rf /'", 
 # Nháy ANSI-C `$'…'` ngoài thân -c: `\'` bên trong là nháy thoát, không đóng chuỗi (bash 5.2 xoá src, x ở thư mục dự án).
 cmd = "echo $'it\\'s'; rm -rf src 'x'"
 check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"`\\'` trong `$'…'` không đóng chuỗi: {cmd!r}")
+# Here-string `<<<` không mở heredoc: dòng sau là lệnh (bash xoá src).
+for cmd in ("wc -w <<< hello\nrm -rf src", "cat <<< EOF\nrm -rf src", "grep x <<<EOF\nrm -rf src"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"here-string `<<<` không nuốt các dòng sau làm thân heredoc: {cmd!r}: {got!r}")
+for cmd in ("cat <<< hello", "cat <<'EOF'\nrm -rf src\nEOF"):
+    check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"here-string, thân heredoc là dữ liệu: không nghi: {cmd!r}")
 # `.` có gán tạm phía trước vẫn chạy tệp trong shell hiện tại, biến gán trong tệp ở lại (bash xoá /).
 cmd = "printf 'D=/' > e.sh; D=/tmp/w; x=1 . ./e.sh; rm -rf \"$D\""
 check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"`.` sau gán tạm làm mọi biến thành không biết: {cmd!r}")
