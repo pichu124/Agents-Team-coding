@@ -362,6 +362,9 @@ call("hg13", "cd /tmp/x && $'\\x63d' /home/p && rm -rf src")              # bash
 # để rm ở shell cha (D=/tmp/x/), chỉ cách đọc như 6f32d5a (empty_body=False) đưa rm vào thân, nơi D không export là rỗng.
 call("hh1", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF")      # bash xoá ./src
 call("hh2", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA")   # bash xoá ./src (dòng A cuối: command not found)
+# Phép gán sau `&&` chạy khi lệnh trước thành công: cách đọc gán chặt (strict_assign) bỏ qua nó nên thấy D=/tmp/x/, chỉ cách
+# đọc gán lỏng như f5bc021 (strict_assign=False) thấy D=/srv/.
+call("hi1", "D=/tmp/x/; true && D=/srv/; rm -rf ${D}src")                 # true thành công nên gán chạy: bash xoá /srv/src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -905,6 +908,8 @@ for must in ("false && D=/tmp/x/; rm -rf ${D}src", "true || D=/tmp/x/; rm -rf ${
 check("cd /tmp/x && $'\\x63d' /home/p && rm -rf src" in A, "từ `$'…'` có escape ANSI-C có thể là cd: không biết thư mục")
 for must in ("D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA"):
     check(must in A, f"hai heredoc trên một dòng: cách đọc heredoc không nhận thân rỗng (empty_body=False) vẫn trong phép hợp: {must!r}")
+check("D=/tmp/x/; true && D=/srv/; rm -rf ${D}src" in A,
+      "phép gán sau `&&` có thể chạy: cách đọc gán lỏng (strict_assign=False) vẫn trong phép hợp")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -1271,16 +1276,18 @@ def line():
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 5))) for _ in range(3000)]
 # Lệnh thêm (3000 lệnh trên giữ nguyên): một lõi chỉ nguy hiểm tuỳ cách đọc (biến, thư mục cd) giữa 0–4 dòng ngữ cảnh ghép
 # từ cấu trúc mà từng cách đọc trong phép hợp của suspicious_labels được thêm vào để bắt: heredoc thân rỗng, `\`/`\\` cuối
-# dòng mở rồi EOF, hai heredoc một dòng, <<EOF có biến trong thân, gán trước toán tử, byte dấu, comment có nháy, `"cd"`, `&`,
-# `$'\x63d'`. Lõi nguy hiểm ở mọi cách đọc (như CORE) che mất cách đọc riêng lẻ. Bỏ một cách đọc của phép hợp (empty_body,
-# comments, raw_marks, strict_assign, parent_env, scoped, join) thì bước này phải đỏ. Chỉ Bash: đủ cả bảy, đỡ thời gian.
+# dòng mở rồi EOF, hai heredoc một dòng, <<EOF có biến trong thân, gán trước toán tử, gán sau `&&` có chạy, byte dấu, comment
+# có nháy, `"cd"`, `&`, `$'\x63d'`. Lõi nguy hiểm ở mọi cách đọc (như CORE) che mất cách đọc riêng lẻ. Bỏ một giá trị của một
+# chiều trong phép hợp (stricts, comments, scoped/parent_env, marks, empties, joins), kể cả cách đọc gốc như
+# strict_assign=False, thì bước này phải đỏ khi so với bản còn giá trị đó; riêng raw_marks=False chỉ nhờ lệnh fixture có byte
+# \x01–\x04. Chỉ Bash: đủ mọi chiều, đỡ thời gian.
 NCORE = ["rm -rf ${D}src", "rm -rf $D/src", "rm -rf y"]
 NSTEP = ["D=/tmp/x/", "export D=/tmp/x/", "D=/tmp/x/ | true", "false && D=/tmp/x/", "D=/tmp/x/ true", "echo D=/tmp/x/",
          "D=/srv/", "cd /tmp/x", '"cd" /home/p', "$'\\x63d' /home/p", "true", "echo 'a b'", "echo '\x01'"]
 NLINE = ["bash <<'EOF'", "bash <<EOF", "bash <<'EOF'\nEOF", "cat > f <<'EOF'\nEOF", "bash -s <<'EOF' \\\nEOF",
          "cat > f <<'EOF' \\\\\nEOF", "bash <<'A' <<'EOF'\nA", "A", "EOF", "\x01", "\x02", "\x03", "# don't", "echo 'x",
          "D=/tmp/x/\nbash <<'EOF'\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA", "bash <<'EOF'\nD=/srv/\nEOF", "bash <<EOF\nD=/tmp/x/",
-         "D=/tmp/x/\n\x01"]
+         "D=/tmp/x/\n\x01", "D=/tmp/x/\ntrue && D=/srv/"]
 NTAIL = ["", "", "", " \\", " \\\\", " # don't", " &"]
 NSEP = [" && ", "; ", " || ", " | ", " & "]
 def line2():
