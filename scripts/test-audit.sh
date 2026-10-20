@@ -1226,6 +1226,19 @@ def line2():
         rnd2.choice(SUB if rnd2.random() < 0.6 else CORE + STEP) for _ in range(rnd2.randint(1, 3)))
     return s + rnd2.choice(TAIL)
 fuzz += ["\n".join(line2() for _ in range(rnd2.randint(1, 5))) for _ in range(1000)]
+# Lô thứ ba, bộ sinh riêng để hai lô trên giữ nguyên từng lệnh: shell -c với cờ `+`, cờ trước và sau cụm c, tên của -o trong
+# nháy hay có `-`, --rcfile/--init-file kèm tham số, cụm c có o kèm tên.
+PRE = ["+e", "-x", "-o pipefail", "-o 'pipefail'", "-o interactive-comments", "--rcfile /dev/null", "--init-file x",
+       "--login", "+O extglob"]
+BODY = ["'rm -rf $D/a'", "'D=/; rm -rf $D'", '"rm -rf \\$D/a"', "'cd /tmp/w && rm -rf src'", "'echo hi'"]
+rnd3 = random.Random(3)
+def line3():
+    return (rnd3.choice(["D=/tmp/w; ", "cd /tmp/w && ", ""]) + rnd3.choice(["bash", "sh", "git-bash"])
+            + "".join(" " + rnd3.choice(PRE) for _ in range(rnd3.randint(0, 2)))
+            + " " + rnd3.choice(["-c", "-lc", "+c", "-co pipefail", "-ec"])
+            + "".join(" " + rnd3.choice(["-x", "+e", "-o pipefail", "--"]) for _ in range(rnd3.randint(0, 2)))
+            + " " + rnd3.choice(BODY) + rnd3.choice(["", "; rm -rf $D", " && rm -rf src"]))
+fuzz += ["\n".join(line3() for _ in range(1 if rnd3.random() < 0.7 else 2)) for _ in range(600)]
 pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
