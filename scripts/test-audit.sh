@@ -365,6 +365,13 @@ call("hh2", "D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF\nA")   # bash
 # Phép gán sau `&&` chạy khi lệnh trước thành công: cách đọc gán chặt (strict_assign) bỏ qua nó nên thấy D=/tmp/x/, chỉ cách
 # đọc gán lỏng như f5bc021 (strict_assign=False) thấy D=/srv/.
 call("hi1", "D=/tmp/x/; true && D=/srv/; rm -rf ${D}src")                 # true thành công nên gán chạy: bash xoá /srv/src
+# Comment sau `||`/`|` không phải dấu ngắt: cd ở dòng sau vẫn là vế phải của `||` hay chạy trong ống; `;`, `&&`, `|` trong
+# comment cũng không ngắt (blissful-dirac 8fbb100, efa2ed3). Bash 5.2: rm chạy ở thư mục dự án.
+call("s38", "true || # x\ncd /tmp/w && rm -rf src")
+call("s39", "true | # x\ncd /tmp && rm -rf src")
+call("s40", "true || # a ; b\ncd /tmp/w && rm -rf src")
+call("s41", "true || # a && b\ncd /tmp/w && rm -rf src")
+call("s42", "true | # a | b\ncd /tmp && rm -rf src")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -910,6 +917,9 @@ for must in ("D=/tmp/x/; bash <<'A' <<'EOF'\nA\nrm -rf ${D}src\nEOF", "D=/tmp/x/
     check(must in A, f"hai heredoc trên một dòng: cách đọc heredoc không nhận thân rỗng (empty_body=False) vẫn trong phép hợp: {must!r}")
 check("D=/tmp/x/; true && D=/srv/; rm -rf ${D}src" in A,
       "phép gán sau `&&` có thể chạy: cách đọc gán lỏng (strict_assign=False) vẫn trong phép hợp")
+for must in ("true || # x\ncd /tmp/w && rm -rf src", "true | # x\ncd /tmp && rm -rf src", "true || # a ; b\ncd /tmp/w && rm -rf src",
+             "true || # a && b\ncd /tmp/w && rm -rf src", "true | # a | b\ncd /tmp && rm -rf src"):
+    check(must in A, f"comment sau `||`/`|` không ngắt: cd ở dòng sau có thể không chạy hay chạy ở shell con: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -1103,6 +1113,10 @@ check(got == [], f"heredoc chưa đóng nuốt tới hết chuỗi như bash: {g
 # D=/tmp/x/ thành tham số của true nên D rỗng: bash xoá src và `\`. Guard hỏi lệnh này (vào H) nên gọi trực tiếp.
 got = a.suspicious_labels("bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\", a.SUSPICIOUS)
 check("xoá đệ quy" in got, f"cách đọc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp: {got!r}")
+# cd nằm trong comment giữa đoạn không chạy, kể cả khi thân đưa vào `| bash` (chế độ không che nháy hay comment): oracle bash
+# của blissful-dirac, bash xoá thư mục dự án. Guard hỏi lệnh này (`rm -rf .`) nên không vào A: kiểm thẳng.
+cmd = "cat <<'EOF' | bash\n( : # x; cd /tmp/w &&\nrm -rf . )\nEOF"
+check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"cd trong comment không chạy: không biết thư mục: {cmd!r}")
 # `#` không ở đầu từ (`$#`, `${#x}`, `a#b`, `a=#x`, sau `\ `) không mở comment: nháy sau nó mở chuỗi, bash không chạy rm.
 for cmd in ("echo $# 'x\nrm -rf src\n'", "echo ${#x} 'x\nrm -rf src\n'", "echo a#b 'x\nrm -rf src\n'",
             "a=#x 'x\nrm -rf src\n'"):

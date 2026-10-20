@@ -302,16 +302,29 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(regions))
     out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, [], False, False, None
+    # Comment chạy tới xuống dòng kế: `;`, `&&`, `|` trong nó không ngắt lệnh, cd trong nó không chạy. comment: phần đang
+    # xét nằm trong comment mở ở phần trước; csep: dấu ngắt thật ngay trước comment mở đầu phần (`true || # x`).
+    comment, csep = False, None
     parts = re.split("(" + SPLIT.pattern + ")", marked)
     for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
                 sep = seg
+            if comment and seg == "\n":
+                # Hết comment. Comment ngay sau `||`/`|` không ngắt chuỗi: lệnh dòng sau vẫn là vế phải của `||` hay của ống
+                comment = False
+                if csep in ("||", "|"):
+                    sep = csep
             continue
         seg = seg.strip()
         if not seg:
             continue
         raw = re.sub(r"\0(\d+)\0", unkeep, seg)
+        # `#` đầu từ mở comment: ở đầu phần (kể cả comment exact cất trong kho) hay giữa phần (bản che nháy; chế độ shell_c
+        # không che nên `#` trong nháy cũng tính: chỉ làm mất thư mục cd, không bớt nghi ngờ).
+        commented = comment
+        if not comment and (raw.lstrip("({ ").startswith("#") or re.search(r"(?:^|[\s()])#", seg)):
+            comment, csep = True, sep if raw.lstrip("({ ").startswith("#") else None
         # Đoạn có toán tử heredoc đưa vào shell: bỏ SNAP rồi đọc như cũ, ghi env trước và sau phép gán của đoạn.
         snapped = scoped and not raw_marks and SNAP in raw
         if snapped:
@@ -346,7 +359,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # Chỉ tin đích một token, không mở bằng `-` (kể cả "-L") hay `+` (pushd +1 xoay ngăn xếp), không còn `$` hay backtick
             # sau khi thay biến đã biết, không có `..` (kể cả .'.', .\.), cd không ngay sau `||` (`(a || cd x) && rm` bỏ qua
             # cd khi a thành công) hay `|` (cd chạy ở shell con của ống): còn lại không biết thư mục
-            if CD_WORD.match(lead) and not after_or_pipe and not target.startswith(("-", "+")) \
+            if CD_WORD.match(lead) and not after_or_pipe and not commented and not target.startswith(("-", "+")) \
                     and not re.search(r"[$`]", target) and ".." not in re.sub(r"[\"'\\]", "", target):
                 ctx = target if is_absolute(target) else (ctx + "/" + target)
             else:
