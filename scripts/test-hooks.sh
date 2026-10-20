@@ -62,11 +62,12 @@ modes="auto sed"
 mode=auto
 ask_count=0
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$work}" out tag=" [$mode]"
-  out="$(bash_input "$cmd" "$dir" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode]"
+  inp="$(bash_input "$cmd" "$dir")"
+  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   if [ "$want" = ask ]; then
     [ "$mode" = auto ] && ask_count=$((ask_count + 1))
-    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd" ;; esac
+    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd → [$out], input: $inp" ;; esac
   else
     assert "guard không được chặn$tag: $cmd → $out" [ -z "$out" ]
   fi
@@ -308,6 +309,28 @@ EOF
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force \\\nWrite-Host done'
   TOOL=Unknown expect_guard ask $'Set-Location C:\\\nRemove-Item -Recurse -Force *'
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force `\n  C:\\'
+done
+# Lệnh dài hơn pipe buffer (64 KiB), phần nguy hiểm ở dòng đầu: grep -q thoát ở dòng khớp đầu
+# tiên, printf còn ghi dở thì chết vì SIGPIPE, pipefail từng biến "khớp" thành "không khớp".
+# Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
+# kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
+# JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
+# long_input <dòng đầu> <cwd>: dòng đầu, rồi 12000 dòng `echo line-N`.
+long_input() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
+  printf '\\necho line-%s' {1..12000}
+  printf '","description":"test"}}\n'
+}
+long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
+long_input 'git push' "$on_main" > "$tmp/long-push.json"
+for mode in $modes; do
+  for f in long-deploy long-push; do
+    out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
+    case "$out" in
+      *'"permissionDecision":"ask"'*) ok ;;
+      *) bad "guard phải hỏi [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+    esac
+  done
 done
 if [ -n "$py" ]; then
   # Windows: Python đọc stdin theo cp1252, chữ "Đ" từng làm hỏng việc đọc lệnh.
