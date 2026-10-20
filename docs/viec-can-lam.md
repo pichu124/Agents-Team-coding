@@ -16,14 +16,6 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
-### 2.1 Oracle bash trong test-audit (PR #8)
-- **Vì sao:** lớp lỗi "`segments()` đọc sai cấu trúc shell nên mục A bỏ sót" đã lọt hơn 10 lần. Bước so nhãn hiện tại chỉ đỏ khi bản mới mất nhãn mà bản trước có, nên không thấy lỗi bỏ sót mà cả hai bản cùng có.
-- **Xong khi:**
-  - test-audit có bước chạy lệnh fuzz bằng bash thật (stub ghi đích, không xoá gì), đỏ khi bash xoá ngoài thư mục tạm mà `suspicious_labels` trả `[]`;
-  - các ca còn sót nằm trong danh sách KNOWN_MISSES, và danh sách này chỉ được giảm;
-  - có dòng tương ứng trong bảng "Rule ↔ Thứ thực thi" của CLAUDE.md.
-- **Trước khi merge:** merge nhánh mặc định mới vào, rồi so nhãn với `0667d98`.
-
 ### 2.2 Vá các ca bỏ sót có từ trước (nhánh `claude/nice-hamilton-vdgw4v`)
 Bash 5.2 thật xoá đích nguy hiểm ở các lệnh dưới đây, mà cả `27727f5` lẫn `0667d98` đều trả `[]`. Sắp theo mức hay gặp ở agent:
 1. Thân `bash -c` chưa được gỡ (regex `SHELL_C_BODY`, phải giữ tuyến tính):
@@ -35,12 +27,7 @@ Bash 5.2 thật xoá đích nguy hiểm ở các lệnh dưới đây, mà cả 
 2. Nháy thoát ngoài chuỗi: `echo it\'s` ⏎ `rm -rf src 'x'`.
 3. Heredoc không nháy: `D=/; bash <<EOF` ⏎ `D=/tmp/w && rm -rf $D/a` ⏎ `EOF`. Shell cha thay `$D` trước khi shell con gán.
 4. Biến bị đổi mà env không theo: `read D <<< /`, `eval 'D=/'`, `unset D`, rồi `rm -rf "$D"`.
-5. Thân heredoc rỗng: `cat <<'EOF'` ⏎ `EOF` ⏎ `rm -rf src`. Phần sau EOF bị coi là dữ liệu.
-6. Hiếm gặp hơn:
-   - `D=/tmp/w || cd /tmp/w && rm -rf src`;
-   - `export D=/tmp/w | rm -rf ${D}src`;
-   - `cd /tmp && rm -rf $D/a` với D chưa gán.
-- **Xong khi:** mỗi ca có assert phải nghi, đỏ trước và xanh sau. Ca nào oracle (mục 2.1) đã ghi trong KNOWN_MISSES thì xoá khỏi đó.
+- **Xong khi:** mỗi ca có assert phải nghi, đỏ trước và xanh sau. Bước oracle bash trong test-audit vẫn xanh với `KNOWN_MISSES` rỗng; thêm dạng lệnh mới vào bộ sinh của oracle thì phải sửa ca sót nó tìm ra cùng lúc, vì danh sách chỉ được giảm.
 
 ### 2.3 Đối chiếu nhánh cũ (nhánh `claude/brave-darwin-zqo4ws`)
 - **Vì sao:** `claude/blissful-dirac-i6vpym` (không có PR) và `claude/youthful-fermi-1ydqg6` (PR #7, dựa trên `cad746e`, chưa có PR #5) cùng sửa `segments()`, nên sẽ xung đột với nhánh mặc định.
@@ -61,5 +48,4 @@ Bash 5.2 thật xoá đích nguy hiểm ở các lệnh dưới đây, mà cả 
 | PR | Nội dung | Trạng thái |
 |---|---|---|
 | #7 | fix(audit): 9 dạng lệnh mục A bỏ sót | Nháp, dựa trên `cad746e`; cần merge nhánh mặc định mới, xem mục 1 và 2.3 |
-| #8 | test(audit): oracle bash | Nháp, đang merge nhánh mặc định mới |
 | #9 | fix(check): check.sh không chạy test-plugin.sh của dự án đích | Sẵn sàng review, chờ CI |
