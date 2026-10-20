@@ -313,6 +313,90 @@ assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
 assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
 assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
 
+# N. grep có cờ quiet nhận stdin từ pipe trong file shell của kit: validate-kit đỏ, nêu file:dòng và cách sửa.
+#    Dòng vi phạm dựng bằng $bar để chính file này không vi phạm. Dòng code của lint nằm trong
+#    validate-kit.sh đã cài, nên lần chạy xanh cũng là bằng chứng lint không tự báo mình.
+n="$tmp/pipe grep"
+new_repo "$n"
+install "$n"
+lib="$n/.claude/hooks/lib.sh"
+cp "$lib" "$tmp/lib.sh.orig"
+first=$(($(wc -l < "$lib") + 1))
+bar='|'
+cat >> "$lib" <<EOF
+printf '%s' abc $bar grep -q b
+printf '%s' abc $bar grep -Eiq B
+printf '%s' abc ${bar}grep -qxF abc
+printf '%s' abc $bar tr -d c $bar grep --quiet b
+git status --porcelain $bar grep --silent .
+printf '%s' abc \\
+  $bar grep -s -q b
+EOF
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit phải đỏ khi grep -q nhận stdin từ pipe" [ $? -ne 0 ]
+for i in 0 1 2 3 4 6; do
+  case "$out" in
+    *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
+    *) bad "N: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
+  esac
+done
+assert "N: chỉ báo đúng 6 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 6 ]
+# shellcheck disable=SC2016  # $(...) là chữ trong thông báo
+case "$out" in
+  *'text_grep (lib.sh)'*'[ -n "$(...)" ]'*) ok ;;
+  *) bad "N: thông báo phải nêu cách sửa: text_grep (lib.sh) hoặc [ -n \"\$(...)\" ] → $out" ;;
+esac
+msg="$(grep -m 1 'lib\.sh:[0-9]*: ' <<<"$out")"
+cp "$tmp/lib.sh.orig" "$lib"
+cat >> "$lib" <<'EOF'
+false || grep -q x f
+grep -q x f
+grep -Eiq x f || true
+printf '%s' abc | grep -c b
+text_grep abc -q b
+[ -n "$(git status --porcelain)" ]
+# printf '%s' abc | grep -q b
+  # printf '%s' abc | grep -Eiq b
+EOF
+printf '%s\n' "cat <<'EOF' >/dev/null" "$msg" EOF >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit không được báo ||, grep không pipe, pipe không quiet, comment, thông báo của lint → $out" [ $? -eq 0 ]
+cp "$tmp/lib.sh.orig" "$lib"
+(cd "$n" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+
+# O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
+#    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
+repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
+o="$tmp/own scripts"
+new_repo "$o"
+mkdir -p "$o/scripts" "$o/plugin"
+for f in $repo_only; do
+  printf '#!/usr/bin/env bash\nif printf x %s grep -q x; then echo ok; fi\n' "$bar" > "$o/$f"
+done
+echo 'if then' >> "$o/plugin/run-hook.sh" # lỗi cú pháp: bash -n cũng không được chạy trên file của dự án
+install "$o"
+assert "O: install phải exit 0 khi dự án có file trùng tên mà kit không chép" [ $? -eq 0 ]
+out="$(cd "$o" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit không được kiểm file shell của dự án → $out" [ $? -eq 0 ]
+p="$tmp/kit copy"
+mkdir -p "$p/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$p/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$p/"
+(cd "$p" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "O: validate-kit trong bản chép repo kit phải xanh" [ $? -eq 0 ]
+for f in $repo_only; do
+  printf 'printf x %s grep -q x\n' "$bar" >> "$p/$f"
+done
+out="$(cd "$p" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit ở repo kit phải đỏ khi file chỉ repo kit có vi phạm" [ $? -ne 0 ]
+for f in $repo_only; do
+  case "$out" in
+    *"$f:$(wc -l < "$p/$f" | tr -d ' '): "*) ok ;;
+    *) bad "O: ở repo kit phải báo $f:<dòng cuối> → $out" ;;
+  esac
+done
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
