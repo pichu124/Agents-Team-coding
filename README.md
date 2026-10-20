@@ -11,6 +11,7 @@ Bộ khởi động để xây dựng **đội AI agent hỗ trợ lập trình*
 3. [docs/03-lo-trinh-trien-khai.md](docs/03-lo-trinh-trien-khai.md): 6 cấp độ trưởng thành, kế hoạch 30 ngày, cách cài, prompt mẫu, chỉ số.
 4. [docs/04-thu-nghiem-vnstock-dashboard.md](docs/04-thu-nghiem-vnstock-dashboard.md): triển khai thử vào một dự án Python thật trên Windows, từng bước.
 5. [docs/05-cai-cho-moi-du-an.md](docs/05-cai-cho-moi-du-an.md): cài dạng plugin một lần cho mọi dự án trên máy (CLI và app).
+6. [docs/viec-can-lam.md](docs/viec-can-lam.md): việc còn tồn, ai đang làm, việc cần bạn quyết. Xong việc nào thì xoá việc đó.
 
 ## Trong bộ kit có gì
 

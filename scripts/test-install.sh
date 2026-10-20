@@ -398,56 +398,129 @@ for f in $repo_only; do
   esac
 done
 
-# P. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
+# P. check.sh: bước plugin và việc file plugin đổi kích hoạt test của kit chỉ có ở repo kit. Ở repo đích,
+#    scripts/test-plugin.sh, plugin/, .claude-plugin/ là của dự án. test-hooks.sh và test-audit.sh thay bằng
+#    stub exit 0 (bản thật mất ~2 phút): ca này chỉ kiểm check.sh quyết định chạy gì.
+plugin_paths="scripts/test-plugin.sh plugin/run-hook.sh plugin/hooks.json .claude-plugin/marketplace.json"
+edit_valid() { # edit_valid <file>: sửa mà JSON vẫn parse được, shell vẫn qua bash -n
+  case "$1" in
+    *.json) echo >> "$1" ;;
+    *) echo '# sửa' >> "$1" ;;
+  esac
+}
+q="$tmp/own plugin"
+new_repo "$q"
+mkdir -p "$q/scripts" "$q/plugin" "$q/.claude-plugin"
+cat > "$q/scripts/test-plugin.sh" <<'EOF'
+#!/usr/bin/env bash
+# test-plugin.sh riêng của dự án: cần tên plugin.
+[ $# -gt 0 ] || { echo "cách dùng: $0 <plugin>" >&2; exit 1; }
+EOF
+chmod +x "$q/scripts/test-plugin.sh"
+printf '#!/usr/bin/env bash\necho hook\n' > "$q/plugin/run-hook.sh"
+echo '{}' > "$q/plugin/hooks.json"
+echo '{}' > "$q/.claude-plugin/marketplace.json"
+install "$q"
+assert "P: install phải exit 0 khi dự án có test-plugin.sh, plugin/, .claude-plugin/ riêng" [ $? -eq 0 ]
+for s in test-hooks test-audit; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$q/scripts/$s.sh"
+done
+git -C "$q" -c core.autocrlf=false add -A
+git -C "$q" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
+out="$(cd "$q" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+assert "P: ở repo đích, KIT_SELFTEST=1 check.sh phải xanh dù test-plugin.sh của dự án đỏ → $out" [ $? -eq 0 ]
+case "$out" in
+  *"▶ plugin"*) bad "P: ở repo đích, check.sh không được chạy scripts/test-plugin.sh của dự án → $out" ;;
+  *"▶ hooks"*) ok ;;
+  *) bad "P: KIT_SELFTEST=1 check.sh phải chạy test của kit (▶ hooks) → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$q/$f"
+  out="$(cd "$q" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) bad "P: ở repo đích, sửa $f (của dự án) không được kích hoạt test của kit → $out" ;;
+    *"bỏ qua test của kit"*) ok ;;
+    *) bad "P: ở repo đích, sửa $f phải in 'bỏ qua test của kit' → $out" ;;
+  esac
+  git -C "$q" checkout -q -- .
+done
+# Repo kit: giữ nguyên hành vi. check.local.sh của repo kit chạy test-install.sh: thay bằng stub để không đệ quy.
+r="$tmp/kit repo"
+new_repo "$r"
+mkdir -p "$r/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$r/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$r/"
+for s in test-hooks test-audit check.local; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$r/scripts/$s.sh"
+done
+printf '#!/usr/bin/env bash\necho "test-plugin (stub ca P)"\n' > "$r/scripts/test-plugin.sh"
+git -C "$r" -c core.autocrlf=false add -A
+git -C "$r" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+out="$(cd "$r" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+case "$out" in
+  *"▶ plugin"*"test-plugin (stub ca P)"*) ok ;;
+  *) bad "P: ở repo kit, KIT_SELFTEST=1 check.sh phải chạy scripts/test-plugin.sh → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$r/$f"
+  out="$(cd "$r" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) ok ;;
+    *) bad "P: ở repo kit, sửa $f phải kích hoạt test của kit (▶ hooks) → $out" ;;
+  esac
+  git -C "$r" checkout -q -- .
+done
+
+# Q. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
 #    manifest plugin chỉ được phát 4 skill của kit (trỏ cả .claude/skills/ thì verify-kit lọt sang mọi
 #    dự án cài plugin). Ở repo đích, skill cùng tên là của dự án, không bị kiểm.
-q="$tmp/kit copy P"
-mkdir -p "$q/.claude"
-cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$q/.claude/"
-cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$q/"
-vk="$q/.claude/skills/verify-kit"
+vq="$tmp/kit copy Q"
+mkdir -p "$vq/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$vq/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$vq/"
+vk="$vq/.claude/skills/verify-kit"
 cp "$vk/SKILL.md" "$tmp/vk-skill.orig"
 cp "$vk/features/README.md" "$tmp/vk-features.orig"
-cp "$q/.claude-plugin/plugin.json" "$tmp/plugin.json.orig"
-(cd "$q" && ./scripts/validate-kit.sh >/dev/null 2>&1)
-assert "P: bản chép repo kit phải xanh trước khi sửa" [ $? -eq 0 ]
+cp "$vq/.claude-plugin/plugin.json" "$tmp/plugin.json.orig"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh trước khi sửa" [ $? -eq 0 ]
 sed 's/^name: verify-kit$/name: verify-khac/' "$tmp/vk-skill.orig" > "$vk/SKILL.md"
-out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: repo kit: verify-kit sai name phải đỏ" [ $? -ne 0 ]
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: verify-kit sai name phải đỏ" [ $? -ne 0 ]
 case "$out" in
   *".claude/skills/verify-kit/SKILL.md: name phải là 'verify-kit'"*) ok ;;
-  *) bad "P: phải báo name sai của verify-kit → $out" ;;
+  *) bad "Q: phải báo name sai của verify-kit → $out" ;;
 esac
 cp "$tmp/vk-skill.orig" "$vk/SKILL.md"
 printf '\n[gãy](khong-co.md)\n' >> "$vk/features/README.md"
-out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: repo kit: link gãy trong feature map của verify-kit phải đỏ" [ $? -ne 0 ]
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: link gãy trong feature map của verify-kit phải đỏ" [ $? -ne 0 ]
 case "$out" in
   *".claude/skills/verify-kit/features/README.md: link gãy → khong-co.md"*) ok ;;
-  *) bad "P: phải báo link gãy trong features/README.md → $out" ;;
+  *) bad "Q: phải báo link gãy trong features/README.md → $out" ;;
 esac
 cp "$tmp/vk-features.orig" "$vk/features/README.md"
-"$py" - "$q/.claude-plugin/plugin.json" <<'PYEOF'
+"$py" - "$vq/.claude-plugin/plugin.json" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 d["skills"] = "./.claude/skills/"
 json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
 PYEOF
-out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: plugin.json trỏ cả .claude/skills/ (phát luôn verify-kit) phải đỏ" [ $? -ne 0 ]
-case "$out" in *"plugin.json skills"*) ok ;; *) bad "P: phải báo plugin.json skills → $out" ;; esac
-cp "$tmp/plugin.json.orig" "$q/.claude-plugin/plugin.json"
-(cd "$q" && ./scripts/validate-kit.sh >/dev/null 2>&1)
-assert "P: bản chép repo kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
-r="$tmp/own verify skill"
-new_repo "$r"
-mkdir -p "$r/.claude/skills/verify-kit"
-printf 'không có frontmatter\n[gãy](khong-co.md)\n' > "$r/.claude/skills/verify-kit/SKILL.md"
-install "$r"
-assert "P: install phải exit 0 khi dự án có skill verify-kit riêng" [ $? -eq 0 ]
-out="$(cd "$r" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
-case "$out" in *"4 skills"*) ok ;; *) bad "P: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: plugin.json trỏ cả .claude/skills/ (phát luôn verify-kit) phải đỏ" [ $? -ne 0 ]
+case "$out" in *"plugin.json skills"*) ok ;; *) bad "Q: phải báo plugin.json skills → $out" ;; esac
+cp "$tmp/plugin.json.orig" "$vq/.claude-plugin/plugin.json"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+vr="$tmp/own verify skill"
+new_repo "$vr"
+mkdir -p "$vr/.claude/skills/verify-kit"
+printf 'không có frontmatter\n[gãy](khong-co.md)\n' > "$vr/.claude/skills/verify-kit/SKILL.md"
+install "$vr"
+assert "Q: install phải exit 0 khi dự án có skill verify-kit riêng" [ $? -eq 0 ]
+out="$(cd "$vr" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
+case "$out" in *"4 skills"*) ok ;; *) bad "Q: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
