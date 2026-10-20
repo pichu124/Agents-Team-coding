@@ -601,7 +601,156 @@ PYEOF
 review="$tmp/review.json"
 ./scripts/audit-agent.sh --transcripts "$tmp/review" --since 30 --no-replay --json > "$review"
 
-"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" <<'PYEOF'
+# Bộ lệnh dùng chung của assert phải nghi và bước so nhãn với bản trước, chép từ nhánh vibrant-pascal (970114a, lệnh và
+# lý do nguyên văn): MISSED_VP, fuzz_vp_b(), fuzz_vp_c() (mỗi hàm một bộ sinh riêng). Nạp bằng đường dẫn file.
+vp="$tmp/missed_vp.py"
+cat > "$vp" <<'PYEOF'
+import random
+
+# Lệnh bash thực sự xoá đích nguy hiểm mà mục A từng bỏ sót (oracle bash của nhánh vibrant-pascal tìm ra), kèm lý do:
+# mục A phải nghi.
+MISSED_VP = [
+    ("echo it\\'s\nrm -rf src 'x'", "`\\'` ngoài nháy là chữ `'`, không mở chuỗi ghép với nháy sau: rm ở dòng sau xoá src và x của dự án"),
+    ("D=/; bash <<EOF\nD=/tmp/w && rm -rf $D/a\nEOF", "thân `<<EOF` không nháy được shell cha thay `$D` (= /) trước khi shell con gán: xoá /a"),
+    ("D=/tmp/w; read D <<< /; rm -rf \"$D\"", "read gán lại D = /: xoá /"),
+    ("D=/tmp/w; eval 'D=/'; rm -rf \"$D\"", "eval gán lại D = /: xoá /"),
+    ("D=/tmp/w; printf -v D /; rm -rf \"$D\"", "printf -v gán lại D = /: xoá /"),
+    ("D=/tmp/w; unset D; rm -rf $D/a", "unset bỏ D: xoá /a"),
+    ("cat <<'EOF'\nEOF\nrm -rf src", "heredoc thân rỗng đóng ngay ở dòng EOF: rm sau đó là lệnh thật, xoá src của dự án"),
+    *((c, "`<<<` là here-string, không mở heredoc: rm ở dòng sau là lệnh thật, xoá src của dự án")
+      for c in ("read D <<< x\nrm -rf src", "cat <<< EOF\nrm -rf src\nEOF")),
+    ("cd /tmp && rm -rf $D/a", "D chưa gán: `$D/a` là /a, đường tuyệt đối không nằm trong thư mục cd"),
+    ("echo D=/tmp/w; rm -rf $D/a", "`D=/tmp/w` là tham số của echo, không phải phép gán: D rỗng, xoá /a"),
+    ("D=/tmp/w true; rm -rf $D/a", "gán tạm trước lệnh chỉ áp cho lệnh đó: D rỗng khi rm chạy, xoá /a"),
+    ("false && D=/tmp/w; rm -rf $D/a", "false nên phép gán sau `&&` không chạy: D rỗng, xoá /a"),
+    ("export D=/tmp/w | rm -rf ${D}src", "mỗi khâu của ống chạy ở shell con: D không sang khâu rm, xoá src của dự án"),
+    ("D=/tmp/w || cd /tmp/w && rm -rf src", "phép gán thành công nên cd sau `||` bị bỏ qua: rm xoá src của dự án"),
+    ("echo | cd /tmp/w && rm -rf src", "cd trong ống chạy ở shell con, không đổi thư mục: rm xoá src của dự án"),
+    ("cd /tmp && rm -rf {a,/}", "brace mở thành `a /`: xoá cả /"),
+    *((c, "cờ trước -c (cờ dài, cờ có tham số, cụm cờ ngắn có chữ c): shell vẫn chạy rm -rf /") for c in (
+        "bash --rcfile f -c 'rm -rf /'", "bash -o pipefail -c 'rm -rf /'", "bash +o pipefail -c 'rm -rf /'",
+        "bash -O extglob -c 'rm -rf /'", "bash --norc -c 'rm -rf /'", "bash --init-file f -c 'rm -rf /'",
+        "bash -lc 'rm -rf /'", "sh -ec 'rm -rf /'", "zsh -o errexit -c 'rm -rf /'")),
+    *((c, "comment `#` mở từ tới hết dòng: nháy lẻ trong `# don't` không ghép với nháy sau, rm là lệnh thật, xoá src")
+      for c in ("# don't\nrm -rf src 'x'", "echo x # don't\nrm -rf src 'x'")),
+    ("echo $'it\\'s'\nrm -rf src 'x'", "`\\'` trong `$'…'` là chữ, chuỗi đóng ở nháy kế: rm ở dòng sau xoá src"),
+    ("D=/tmp/w; (D=/; rm -rf ${D}src)", "phép gán ngay sau `(` có hiệu lực trong subshell: xoá /src"),
+    ("(export D=/tmp/w/); rm -rf ${D}src", "phép gán trong subshell không ra ngoài: D rỗng, xoá src của dự án"),
+    ("D=/tmp/w |& true; rm -rf $D/a", "`|&` cũng là ống: phép gán ở khâu shell con, D rỗng, xoá /a"),
+    ("D=/; local D=/tmp/w; rm -rf $D/a", "local ngoài hàm là lỗi, D vẫn là /: xoá /a"),
+    ("D=/tmp/w; mapfile -t D <<< /; rm -rf $D/a", "mapfile gán lại D = /: xoá //a"),
+    ("D=/tmp/w; : ${D:=/}; unset D; : ${D:=/}; rm -rf $D/a", "`${D:=/}` gán D khi D rỗng: xoá //a"),
+    ("D=/tmp/w; ((D=0)); rm -rf $D/a", "gán số học: D = 0, xoá 0/a của dự án"),
+    ("X=/tmp/x; IFS=/; rm -rf $X", "IFS=/ tách $X thành `tmp` và `x` tương đối: xoá x của dự án"),
+    ("D=/tmp/w; bash -c 'rm -rf $D/a'", "D không export: thân bash -c thấy D rỗng, xoá /a"),
+    ("D=/tmp/w; bash <<\\EOF\nrm -rf $D/a\nEOF", "`<<\\EOF` là tên trong nháy: shell cha không thay, shell con thấy D rỗng, xoá /a"),
+    ("cat <<-EOF\n\tEOF\nrm -rf src", "`<<-` bỏ tab đầu dòng đóng: thân rỗng, rm là lệnh thật, xoá src"),
+    *((c, "shell cha chạy lệnh lồng trong thân heredoc dữ liệu không nháy: xoá src")
+      for c in ("cat <<EOF\n$(rm -rf src)\nEOF", "cat <<EOF\n`rm -rf src`\nEOF")),
+    ("true || cd /tmp/x && rm -rf src", "true thành công nên cd sau `||` bị bỏ qua: rm xoá src của dự án"),
+    *((c, "đích còn biến chưa gán, hay `..` viết trong nháy hoặc sau `\\`: ra ngoài thư mục cd, xoá /home") for c in (
+        "cd /tmp/x && rm -rf $D/home", "cd /tmp/x && rm -rf .'.'/.'.'/home", "cd /tmp/x && rm -rf .\\./.\\./home")),
+    *((c, "tên heredoc là cả một từ shell (có `-`, `.`, nháy hay `\\` giữa từ), dòng đóng đúng bằng tên đã bỏ nháy: rm sau "
+          "dòng đóng là lệnh thật, xoá src") for c in (
+        "cat <<EOF-PY\nx\nEOF-PY\nrm -rf src", "cat <<END-X\nx\nEND-X\nrm -rf src", "cat <<EOF.\nx\nEOF.\nrm -rf src",
+        "cat <<E\"O\"F\nhi\nEOF\nrm -rf src", "cat <<E\\OF\nhi\nEOF\nrm -rf src", "cat <<\"EOF\"x\nhi\nEOFx\nrm -rf src",
+        "cat <<-EOF-PY\n\tx\n\tEOF-PY\nrm -rf src")),
+    *((c, "tên heredoc có phần trong nháy hay sau `\\`: shell cha không thay biến trong thân, shell con thấy D (không "
+          "export) rỗng, xoá /a") for c in (
+        "D=/tmp/w; bash <<'E-X'\nrm -rf $D/a\nE-X", "D=/tmp/w; bash <<\"E.X\"\nrm -rf $D/a\nE.X",
+        "D=/tmp/w; bash <<E\\X\nrm -rf $D/a\nEX")),
+    ("D=/; bash <<E-X\nD=/tmp/w && rm -rf $D/a\nE-X", "thân `<<E-X` không nháy: shell cha thay `$D` (= /) trước khi shell con gán, xoá //a"),
+    *((c, "tên heredoc bỏ nháy như bash (`$\"E\"` như `\"E\"`, `\\` + xuống dòng trong `\"…\"` bị bỏ; `$'…'` có `\\` được "
+          "bash giải mã): heredoc đóng ở dòng có thật, unset D rồi rm xoá /a") for c in (
+        'D=/tmp/w; cat <<$"E"\nx\nE\nunset D; rm -rf $D/a', "D=/tmp/w; cat <<$'E\\x41'\nx\nEA\nunset D; rm -rf $D/a",
+        "D=/tmp/w; cat <<$'\\x45'\nx\nE\nunset D; rm -rf $D/a", 'D=/tmp/w; cat <<"E\\\nF"\nx\nEF\nunset D; rm -rf $D/a')),
+    *((c, "`\\r` là chữ của từ (bash chỉ tách từ ở dấu cách, tab, xuống dòng): tên heredoc `E\\r` không đóng nên cả phần sau "
+          "là thân không nháy, `$(rm -rf src)` chạy; `EOF\\r` đóng ở dòng `EOF\\r`, rm sau đó là lệnh thật: xoá src") for c in (
+        "cat <<E\r\ncat <<'X'\n$(rm -rf src)\nX", "cat <<EOF\r\nx\r\nEOF\r\nrm -rf src")),
+    *((c, "`\\` + xuống dòng trong tên heredoc là nối dòng như bash (`E\\`⏎`F` là EF, `\\`⏎`E` là E, không nháy): thân là "
+          "dữ liệu (D gán trong thân không có hiệu lực), rm sau dòng đóng là lệnh thật, xoá src hay /a") for c in (
+        "cat <<E\\\nF\nx\nEF\nrm -rf src", "cat <<E\\\nF\nD=/tmp/w\nEF\nrm -rf $D/a", "cat <<\\\nE\nD=/tmp/w\nE\nrm -rf $D/a",
+        "cat <<E\\\nOF\nx\nEOF\nrm -rf src", "cat <<E\\\nOF\nD=/tmp/w\nEOF\nrm -rf $D/a")),
+    ("cat <<1E\nD=/tmp/w\n1E\nrm -rf $D/a", "tên heredoc mở bằng chữ số vẫn là heredoc: `D=/tmp/w` là dữ liệu, D rỗng, xoá /a"),
+    *((c, "`<<` trong `$((…))` là phép dịch bit, không mở heredoc: lệnh ở dòng sau là lệnh thật, xoá src hay /a") for c in (
+        "echo $((x<<y))\nrm -rf src", "n=2; echo $((1<<n))\nrm -rf src", "echo $((1<<2))\nD=/tmp/w; unset D; rm -rf $D/a")),
+    ("let 'x=1<<2'\ncat <<EOF\n$(rm -rf src)\nEOF\nlet 'y=1<<2'", "`<<` trong nháy không mở heredoc, nháy sau nó đóng chuỗi chứ "
+     "không mở tên nhiều dòng: thân `<<EOF` không nháy, shell cha chạy `$(rm -rf src)`, xoá src"),
+    *((c, "lệnh đổi biến viết trong nháy hay có `\\` vẫn là lệnh đó: D bị bỏ hay gán lại thành /, xoá /a hay /") for c in (
+        "D=/tmp/w; 'unset' D; rm -rf $D/a", "D=/tmp/w; un''set D; rm -rf $D/a", "D=/tmp/w; \"read\" D <<< /; rm -rf \"$D\"",
+        "D=/tmp/w; r\\ead D <<< /; rm -rf \"$D\"")),
+    ("D=/tmp/w; D[0]=/; rm -rf $D/a", "gán phần tử 0 của mảng là gán chính D: D = /, xoá //a"),
+    *((c, "tên biến dính liền cờ (`-vD`, `-aD`): printf, read vẫn gán lại D = /, xoá /")
+      for c in ("D=/tmp/w; printf -vD /; rm -rf \"$D\"", "D=/tmp/w; read -aD <<< /; rm -rf \"$D\"")),
+    *((c, "cd viết trong nháy hay có `\\` vẫn đổi thư mục: rm chạy ở dự án, xoá src") for c in (
+        "cd /tmp/x && 'cd' /home/u/proj && rm -rf src", "cd /tmp/x && c\\d /home/u/proj && rm -rf src",
+        "cd /tmp/x && 'pushd' /home/u/proj && rm -rf src")),
+    *((c, "`((` trong nháy hay comment không mở số học (`\\` cuối comment là chữ, `\\\\` cuối dòng không nối dòng): "
+          "`<<E-X` mở heredoc, thân là dữ liệu, rm sau dòng đóng là lệnh thật, xoá src hay /a") for c in (
+        'echo "((" ; cat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a', "echo \"((\" ; cat <<E-X\ncat <<'Z'\nE-X\nrm -rf src",
+        '[[ $x == "((" ]] && cat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a', '# ((\\\ncat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a',
+        'echo "a\\\\" "(("\\\\\ncat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a')),
+    *((c, "`<<` trong `$((…))`, `((…))`, `$[…]` là dịch bit (`))` trong nháy không đóng gì, số học kéo qua xuống "
+          "dòng): không mở heredoc, lệnh sau là lệnh thật, D chỉ gán trong comment, xoá src hay /a") for c in (
+        "# D=/tmp/w\necho '))'; echo $((1<<2))\nrm -rf $D/a", "# D=/tmp/w\necho '))'; ((x=1<<3))\nrm -rf $D/a",
+        "# D=/tmp/w\necho $[1<<2]\nrm -rf $D/a", "echo $[1<<2]\ncat <<E-X\nx\nE-X\nrm -rf src",
+        "x=$((1+\n2<<n))\nrm -rf src")),
+    *((c, "`<<` trong nháy, comment hay sau `\\` không mở heredoc (nháy sau nó cũng không ghép thành tên): heredoc thật "
+          "sau đó đóng ở dòng có tên, rm sau nó (hay trong thân đưa vào bash) là lệnh thật, xoá src hay /a") for c in (
+        "let 'x=1<<2'; cat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a", "# 1<<2\ncat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a",
+        "echo x # a<<b\ncat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a", "echo \\<<E-X\nrm -rf src\nE-X",
+        "let 'a=1<<2'; cat <<'E\nF' | bash\necho $((x<<y))\necho $((1<<2)); cat <<-'E\nF' | bash\nrm -rf src")),
+    *((c, "tên heredoc `$'…'` được bash giải mã (`\\x45`, `\\105`, `\\u0045` là E): thân đưa vào sh chạy `cat <<E-X | bash` "
+          "hay thân dữ liệu đóng ở dòng E, EA, rm là lệnh thật, xoá src hay /a") for c in (
+        "sh <<$'\\x45' | bash\ncat <<E-X\nrm -rf src", "sh <<-$'\\x45' | bash\nlet 'a=1<<2'; cat <<E$X\nrm -rf src",
+        "cat <<$'E\\x41'\nD=/tmp/w\nEA\nrm -rf $D/a", "cat <<$'\\105'\nD=/tmp/w\nE\nrm -rf $D/a",
+        "cat <<$'\\u0045'\nD=/tmp/w\nE\nrm -rf $D/a")),
+]
+
+
+def fuzz_vp_b():
+    """1–4 dòng ghép từ mảnh của các lớp bỏ sót oracle tìm ra: nháy thoát bằng `\\` hay trong comment, heredoc (thân rỗng,
+    không nháy đưa vào shell, here-string), biến bị đổi ngoài phép gán thường, cd sau `||`/trong ống, cờ trước -c."""
+    DEL = ["rm -rf src", "rm -rf $D/a", 'rm -rf "$D"', "rm -rf ${D}src", "rm -rf src 'x'", "rm -rf dist", "rm -rf /tmp/w/a"]
+    STEP = ["D=/", "D=/tmp/w", "D=/tmp/w/", "export D=/tmp/w", "read D <<< /", "eval 'D=/'", "unset D", "D=/tmp/w true",
+            "cd /tmp", "cd /tmp/w", "cd dist", "echo it\\'s", "true", "false", "echo D=/tmp/w"]
+    LINE = ["bash <<EOF", "bash <<'EOF'", "cat <<'EOF'", "cat <<EOF", "EOF", "# don't", "bash --rcfile f -c 'rm -rf src'",
+            "bash -o pipefail -c 'rm -rf src'", "sh -ec 'rm -rf src'", "read D <<< x"]
+    rnd = random.Random(2)
+    def line():
+        if rnd.random() < 0.3:
+            return rnd.choice(LINE)
+        s = rnd.choice(STEP + DEL)
+        for _ in range(rnd.randint(0, 2)):
+            s += rnd.choice([" && ", "; ", " || ", " | "]) + rnd.choice(STEP + DEL)
+        return "(" + s + ")" if rnd.random() < 0.1 else s
+    return ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(2000)]
+
+
+def fuzz_vp_c():
+    """2–4 khối (dòng lệnh, hay heredoc: dòng mở có khi sau một mảnh số học, 0–2 dòng thân, dòng đóng thường đúng tên)
+    ghép từ mảnh của lớp `<<` là dịch bit hay mở heredoc: `((`, `))` trong nháy hay comment, `$[…]`, `$((…))`, số học
+    nhiều dòng, `<<` trong nháy, `\\` lẻ hay chẵn cuối dòng, tên heredoc lạ (`E-X`, `$'\\x45'`)."""
+    DEL = ["rm -rf src", "rm -rf $D/a"]
+    ARITH = ['echo "(("', "echo '))'", '[[ $x == "((" ]]', "echo $[1<<2]", "echo $((1<<2))", "((x=1<<3))",
+             "let 'x=1<<2'", "x=$((1+\n2<<n))"]
+    STEP = ARITH + ["D=/tmp/w", "cd /tmp/w", "true", "# ((", "# D=/tmp/w"]
+    NAMES = [("E-X", "E-X"), ("'Z'", "Z"), ("$'\\x45'", "E")]
+    rnd = random.Random(3)
+    def block():
+        if rnd.random() < 0.4:
+            name, close = rnd.choice(NAMES)
+            op = (rnd.choice(ARITH) + "; " if rnd.random() < 0.7 else "") + rnd.choice(["cat", "bash"]) + " <<" + name
+            body = [rnd.choice(["D=/tmp/w", "cd /tmp/w", "cat <<'Z'", "x"]) for _ in range(rnd.randint(0, 2))]
+            return "\n".join([op] + body + [close if rnd.random() < 0.7 else rnd.choice(NAMES)[1]])
+        s = rnd.choice(STEP + DEL)
+        for _ in range(rnd.randint(0, 2)):
+            s += rnd.choice([" && ", "; ", " || ", " | "]) + rnd.choice(STEP + DEL)
+        return s + rnd.choice(["", "", "", " \\", " \\\\"])
+    return ["\n".join(block() for _ in range(rnd.randint(2, 4))) for _ in range(1000)]
+PYEOF
+
+"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" "$vp" <<'PYEOF'
 import importlib.util, json, os, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 code, nofile, md = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
@@ -1041,6 +1190,27 @@ for cmd in ("D=/tmp/w || cd /tmp/w && rm -rf src", "D=/tmp/w || cd /tmp && rm -r
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"không biết thư mục hay đích sau cd: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("cd /tmp && rm -rf src", a.SUSPICIOUS), "cd vào thư mục tạm rồi xoá đích tương đối vẫn vô hại")
+# Lệnh bash thật xoá đích nguy hiểm mà mục A từng bỏ sót (MISSED_VP, oracle bash của nhánh vibrant-pascal tìm ra): mục A phải
+# nghi. MISSED_VP_PENDING là chỉ số các ca còn bỏ sót, chỉ được GIẢM: ca trong đó mà đã nghi cũng đỏ, để bỏ chỉ số ra và từ đó
+# có assert canh. Chú thích mỗi dòng: việc sẽ che các ca đó (kế hoạch port vibrant-pascal).
+spec = importlib.util.spec_from_file_location("missed_vp", sys.argv[14])
+vp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(vp)
+MISSED_VP_PENDING = {
+    7, 8, 28,  # here-string `<<<`, `$'…'` ngoài nháy (vòng sửa strict)
+    73, 74, 75, 78,  # lệnh đổi biến viết trong nháy, tên dính cờ `-vD` (vòng sửa strict)
+    16, 44, 45,  # benign_delete tin thư mục cd cho đích có `{`, `..` trong nháy hay sau `\`
+    38, 40, 41, *range(46, 56), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
+    # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
+    10, 11, 12, 29, 30, 32, 35, 36, 76, 77, *range(79, 83), 88, 89, 90,  # biến như bash: gán không thuần (`echo D=`, gán
+    # tạm, sau `&&`, local, `D[0]=`, `((D=0))`, gán trong comment), `(`/`)`, IFS, `r\ead`, `-aD`, cd trong nháy hay có `\`
+}
+for i, (cmd, why) in enumerate(vp.MISSED_VP):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    if i in MISSED_VP_PENDING:
+        check("xoá đệ quy" not in got, f"MISSED_VP[{i}] nay đã nghi: bỏ {i} khỏi MISSED_VP_PENDING để có assert canh: {cmd!r}")
+    else:
+        check("xoá đệ quy" in got, f"MISSED_VP[{i}] {why}: {cmd!r}: {got!r}")
 # Phần mới của cách đọc strict không làm audit chậm. Cỡ chuỗi chọn để 16e4dbd (chưa có strict) chạy dưới 1 giây: dòng mở
 # heredoc không `\n` thì HEREDOC của các cách đọc khác thử lại từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước
 # (~3 giây với 5000 `<<A`).
@@ -1254,11 +1424,11 @@ elif [ -n "$skip$miss" ]; then
 elif git diff --quiet "$ref" -- scripts/audit-agent.py 2>/dev/null; then
   printf '• audit: audit-agent.py giống hệt bản ở %s (%s), bỏ qua so nhãn\n' "$ref" "$why"
 else
-  "$py" -I -B - "$tmp/audit-base.py" "$tmp" "$ref ($why)" <<'PYEOF' || status=1
+  "$py" -I -B - "$tmp/audit-base.py" "$tmp" "$ref ($why)" "$vp" <<'PYEOF' || status=1
 import glob, importlib.util, json, os, random, sys
 for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
-base_file, tmp, ref = sys.argv[1:4]
+base_file, tmp, ref, vp_file = sys.argv[1:5]
 # Chỉ thêm khi CHỦ Ý thu hẹp mục A (người dùng than báo thừa): (tool, lệnh, "lý do"). Ghi đúng từng lệnh, không dùng
 # mẫu, để người review đọc được hết những lệnh vừa thành vô hại.
 NARROWING_OK = [
@@ -1390,7 +1560,11 @@ def line4():
     return s + rnd4.choice(TAIL)
 fuzz += ["\n".join(line4() for _ in range(rnd4.randint(1, 5))) for _ in range(600)]
 pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
-ok = {(tool, c) for tool, c, _why in NARROWING_OK}
+# Lô của nhánh vibrant-pascal (fuzz_vp_b, fuzz_vp_c, bộ sinh riêng trong $vp) và các ca MISSED_VP: chỉ Bash, như oracle bash
+# của nhánh đó.
+vp = load("missed_vp", vp_file)
+pairs = list(dict.fromkeys(pairs + [("Bash", c) for c in vp.fuzz_vp_b() + vp.fuzz_vp_c() + [c for c, _why in vp.MISSED_VP]]))
+ok ={(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
 lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0
 for tool, c in pairs:
