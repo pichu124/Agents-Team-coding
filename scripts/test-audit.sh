@@ -1023,7 +1023,7 @@ for cmd in ("D=/; bash <<EOF\nD=/tmp/w && rm -rf $D/a\nEOF",             # xoá 
             'D=/tmp/w; mapfile -t D <<< /; rm -rf "$D"', 'D=/tmp/w; readarray -t D <<< /; rm -rf "$D"',
             'D=/tmp/w; printf -v D /; rm -rf "$D"', 'D=/tmp/w; while read D; do\nrm -rf "$D"\ndone <<< /',
             'D=/tmp/w; for D in /; do\nrm -rf "$D"\ndone',
-            'D=/tmp/w; getopts a D; rm -rf "$D"',                          # xoá `?` (glob) ở thư mục dự án
+            'D=/tmp/w; getopts a D; rm -rf "$D"',                          # xoá đúng tệp tên `?` ở thư mục dự án ("$D": không glob)
             'D=/tmp/w; f() { local D; rm -rf "$D/a"; }; f',                # xoá /a
             "D=/tmp/w; eval 'D=/'; rm -rf \"$D\"", "D=/tmp/w; printf 'D=/' > e.sh; . ./e.sh; rm -rf \"$D\"",  # xoá /
             "D=/tmp/w; unset D; rm -rf $D/a", "D=/tmp/w; unset -v D; rm -rf $D/a",  # xoá /a
@@ -1071,6 +1071,18 @@ for cmd in ("bash +e -c $'rm -rf /'", "bash --rcfile /dev/null -c $'rm -rf /'", 
 # `.` có gán tạm phía trước vẫn chạy tệp trong shell hiện tại, biến gán trong tệp ở lại (bash xoá /).
 cmd = "printf 'D=/' > e.sh; D=/tmp/w; x=1 . ./e.sh; rm -rf \"$D\""
 check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"`.` sau gán tạm làm mọi biến thành không biết: {cmd!r}")
+# Các sửa trên không làm audit chậm. Cỡ chuỗi chọn để ed94f03 chạy dưới 1 giây (`read D<<<x; ` dài hơn thì HEREDOC của các
+# cách đọc khác, bậc hai sẵn từ trước, đã mất vài giây).
+slow = []
+for cmd in ("bash +e -c $'" + "\\'" * 20000, "echo $'" * 10000, "$'" + "\\" * 20000, "$'\\" * 10000, "bash -c $'" * 5000,
+            "bash -o pipefail -c $'" * 3000, "read D<<<x; " * 1000, "printf -vD x; " * 3000, "unset 'D'; " * 3000,
+            "cat <<< EOF\n" * 3000, "x=1 " * 5000 + ". x", "x=1 . ./e.sh; " * 2000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi `$'`, here-string, tên biến dính redirection (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -1348,12 +1360,17 @@ fuzz += [
     'sh --init-file x -lc "D=/tmp/w; sh -lc \'echo hi\'; rm -rf \\$D"',
 ]
 # Lô thứ tư, bộ sinh riêng để các lô trên giữ nguyên từng lệnh: mảnh của các chỗ cách đọc strict đọc khác (`\'`, `\"` ngoài
-# nháy, thân <<EOF không nháy đưa vào bash/sh, read/mapfile/printf -v/unset/eval/`.`, thân heredoc rỗng, `||`/`|` trước cd
-# hay phép gán, `$D` chưa gán sau cd) ghép với lõi nguy hiểm và các bước có sẵn.
+# nháy, `$'…'`, thân <<EOF không nháy đưa vào bash/sh, read/mapfile/printf -v/unset/eval/`.` kể cả tên dính redirection hay
+# trong nháy, thân heredoc rỗng, here-string, `||`/`|` trước cd hay phép gán, `$D` chưa gán sau cd) ghép với lõi nguy hiểm
+# và các bước có sẵn.
 FRAG = ["echo it\\'s", 'echo a\\"b', "read D <<< /", "mapfile -t D <<< /", "printf -v D /", "unset D", "unset -f D",
         "eval 'D=/'", ". ./e.sh", "D=/tmp/w", "D=/", "export D=/tmp/w", "cd /tmp", "cd /tmp/w", "true", "false",
-        "rm -rf $D/a", "rm -rf ${D}src", 'rm -rf "$D"', "rm -rf src 'x'", 'rm -rf src "x"']
-FRAG_LINE = ["bash <<EOF", "sh <<EOF", "bash <<'EOF'", "cat <<'EOF'", "cat <<EOF", "EOF", "EOF"]
+        "rm -rf $D/a", "rm -rf ${D}src", 'rm -rf "$D"', "rm -rf src 'x'", 'rm -rf src "x"',
+        "read D<<</etc", 'read D<<<"/etc"', "read -r D<f", "mapfile -t D</f", "printf -vD /etc", 'printf -v "D" /etc',
+        "unset 'D'", 'unset -v "D"', "unset -f 'D'", "x=1 . ./e.sh", "echo $'it\\'s'", "bash +e -c $'rm -rf $D/a'",
+        "bash -o 'pipefail' -c $'D=/; rm -rf $D'"]
+FRAG_LINE = ["bash <<EOF", "sh <<EOF", "bash <<'EOF'", "cat <<'EOF'", "cat <<EOF", "EOF", "EOF", "cat <<< EOF",
+             "wc -w <<< hello"]
 rnd4 = random.Random(4)
 def line4():
     if rnd4.random() < 0.3:
