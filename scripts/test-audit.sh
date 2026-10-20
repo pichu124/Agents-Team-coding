@@ -338,6 +338,15 @@ call("hf8", "env D=/tmp/x/ true; rm -rf ${D}src")                            # b
 call("hf9", "true;D=/tmp/x/ true;rm -rf ${D}src")                            # bash xoá ./src (`;D=` không có khoảng trắng)
 call("hf10", "D=/tmp/x/; rm -rf ${D}src")                                    # vô hại: bash xoá /tmp/x/src
 call("hf11", "export D=/tmp/x/; rm -rf ${D}src")                             # vô hại: bash xoá /tmp/x/src
+# `\` lẻ cuối dòng mở heredoc nối dòng EOF ngay sau vào lệnh (thành tham số), không phải dấu đóng thân rỗng: thân là các dòng
+# sau đó tới EOF kế.
+call("hg1", "D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF")   # D không export: bash xoá ./src
+call("hg2", "D=/tmp/x/; sh <<'EOF' -s \\\nEOF\nrm -rf ${D}src\nEOF")     # bash xoá ./src
+call("hg3", "bash -s <<EOF \\\nEOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")      # shell cha thay ${D} rỗng trước: bash xoá ./src
+call("hg4", "cat > f <<'EOF' \\\\\nEOF\nrm -rf src")                       # `\\` là một `\` thường: thân rỗng, bash xoá ./src
+# Cách đọc scoped với heredoc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp khi hai cách đọc heredoc khác nhau.
+call("hg5", "false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src")      # D không được gán: bash xoá ./src
+call("hg6", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF")  # D gán ở shell con của ống: bash xoá ./src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -869,6 +878,12 @@ for must in ("D=/tmp/x/ true; rm -rf ${D}src", "echo D=/tmp/x/; rm -rf ${D}src",
     check(must in A, f"gán tạm trước lệnh khác hay NAME=VALUE là tham số của lệnh khác không đổi biến của shell: {must!r}")
 for benign in ("D=/tmp/x/; rm -rf ${D}src", "export D=/tmp/x/; rm -rf ${D}src"):
     check(benign not in A, f"phép gán đứng riêng hay qua export đổi biến của shell: vô hại: {benign!r}")
+for must in ("D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF", "D=/tmp/x/; sh <<'EOF' -s \\\nEOF\nrm -rf ${D}src\nEOF",
+             "bash -s <<EOF \\\nEOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"`\\` cuối dòng mở heredoc nối dòng EOF ngay sau vào lệnh, không đóng thân rỗng: {must!r}")
+check("cat > f <<'EOF' \\\\\nEOF\nrm -rf src" in A, "`\\\\` chẵn cuối dòng mở heredoc không nối dòng: EOF ngay sau đóng thân rỗng")
+for must in ("false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF"):
+    check(must in A, f"cách đọc scoped với heredoc không nhận thân rỗng (như 6f32d5a) vẫn ở trong phép hợp: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
