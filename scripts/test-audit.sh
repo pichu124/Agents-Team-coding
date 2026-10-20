@@ -1054,6 +1054,15 @@ for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EO
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên chuỗi `\\'`, heredoc, lệnh gán biến, ống (đầu lệnh, giây): {slow}")
+# Tên biến dính liền redirection (`read D<<</etc`, `mapfile -t D</f`), trong nháy (`printf -v "D"`, `unset 'D'`) hay trong cờ
+# gộp (`printf -vD`): bash 5.2 vẫn gán (rm thay bằng echo, đích ghi bên cạnh; D đọc từ tệp là không biết).
+for cmd in ('D=/tmp/w; read D<<</etc; rm -rf "$D"', 'D=/tmp/w; read D<<<"/etc"; rm -rf "$D"',  # xoá /etc
+            'D=/tmp/w; read -r D<f; rm -rf "$D"', 'D=/tmp/w; mapfile -t D</f; rm -rf "$D"',
+            'D=/tmp/w; printf -vD /etc; rm -rf "$D"', 'D=/tmp/w; printf -v "D" /etc; rm -rf "$D"',  # xoá /etc
+            "D=/tmp/w; unset 'D'; rm -rf $D/a", 'D=/tmp/w; unset -v "D"; rm -rf $D/a'):  # xoá /a
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"tên biến dính redirection, trong nháy, trong cờ gộp: {cmd!r}: {got!r}")
+check(not a.suspicious_labels("D=/tmp/w; unset -f 'D'; rm -rf $D/a", a.SUSPICIOUS), "unset -f 'D' chỉ xoá hàm: biến giữ giá trị")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))

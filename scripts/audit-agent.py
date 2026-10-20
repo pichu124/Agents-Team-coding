@@ -167,8 +167,8 @@ SHELL_C_BODY_EXACT = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
                                 r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 # segments(strict=True): lệnh gán biến mà ASSIGN không thấy. read, mapfile, readarray, getopts, local, for, printf -v, wait -p
-# gán các tên trần trong đoạn (`read -r D`, `printf -v D /`): không biết giá trị. unset (trừ -f) làm biến rỗng. eval, source,
-# `.` đầu lệnh chạy mã bất kỳ: không biết biến nào.
+# gán các tên trong đoạn, kể cả tên dính redirection, trong nháy hay dính cờ (`read D<f`, `printf -v "D" /`, `printf -vD /`):
+# không biết giá trị. unset (trừ -f) làm biến rỗng. eval, source, `.` đầu lệnh chạy mã bất kỳ: không biết biến nào.
 SETS_NAMES = {"read", "mapfile", "readarray", "getopts", "local", "for"}
 EVAL = re.compile(r"(?<![\w-])(?:eval|source)(?![\w-])"
                   r"|^(?:[({!]\s*|(?:if|then|do|else|elif|while|until|builtin|command|time)\s+)*\.(?=\s|$)")
@@ -267,8 +267,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát, không mở chuỗi
     nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF
     dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /).
-    Biến gán bằng read, mapfile, printf -v, for…, trong một khâu của ống hay sau `||` là không biết; unset làm rỗng; eval,
-    source, `.` làm mọi biến thành không biết. cd ngay sau `||` hay `|` không cho biết thư mục.
+    Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection hay trong nháy: `read D<<</etc`, `printf -v "D"`),
+    trong một khâu của ống hay sau `||` là không biết; unset làm rỗng; eval, source, `.` làm mọi biến thành không biết. cd
+    ngay sau `||` hay `|` không cho biết thư mục.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact, strict)
@@ -334,13 +335,15 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
                 env[name] = val.strip("\"'")
         head, lead = full.lstrip("({ "), plain.lstrip("({ ")
         if strict:
-            words = set(re.split(r"[\s(){}!]+", plain))
+            # Tên lấy từ bản đầy đủ đã bỏ ký tự nháy, tách cả ở redirection: `read D<<</etc`, `printf -v "D"`, `unset 'D'`.
+            # Cờ -f của unset chỉ tìm ngoài nháy và comment như trước: `unset D # -f` vẫn làm D rỗng.
+            words = set(re.split(r"[\s(){}!<>;&|]+", re.sub(r"[\"']", "", full)))
             if EVAL.search(lead):
                 env.clear()
-            elif words & SETS_NAMES or (words & {"printf", "wait"} and words & {"-v", "-p"}):
-                for word in words:
+            elif words & SETS_NAMES or (words & {"printf", "wait"} and any(w[:2] in ("-v", "-p") for w in words)):
+                for word in words | {w[2:] for w in words if w[:2] in ("-v", "-p")}:  # `printf -vD`: tên dính cờ
                     env.pop(word, None)
-            elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in words):
+            elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in re.split(r"[\s(){}!]+", plain)):
                 env.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
