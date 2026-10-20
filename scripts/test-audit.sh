@@ -1003,6 +1003,25 @@ for cmd, tool in (("bash -c - 'rm -rf /'", "Bash"), ("bash -lc - 'rm -rf /'", "B
                   ("bash +e -c 'rm -rf /'", "PowerShell"), ("bash -lc - 'rm -rf /'", "PowerShell")):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool)
     check("xoá đệ quy" in got, f"`-` lẻ sau cụm c, cờ `+`: thân -c vẫn là lệnh: {tool} {cmd!r}: {got!r}")
+# Chỗ các cách đọc khác lệch làm rm trông vô hại, cách đọc strict đọc như bash 5.2 (rm thay bằng echo, xoá src ở thư mục dự
+# án): `\'`, `\"` ngoài nháy là ký tự thoát, không mở chuỗi nuốt lệnh sau; thân heredoc rỗng (dòng đóng ngay sau dòng mở).
+for cmd in ("echo it\\'s\nrm -rf src 'x'", "echo it\\'s; rm -rf src 'x'", 'echo a\\"b\nrm -rf src "x"',
+            "cat <<'EOF'\nEOF\nrm -rf src", "cat <<EOF\nEOF\nrm -rf src", "cat > f <<'EOF'\nEOF\nrm -rf src"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"nháy thoát ngoài chuỗi, thân heredoc rỗng: rm vẫn là lệnh: {cmd!r}: {got!r}")
+for cmd in ("cd /tmp/w && rm -rf src", "D=/tmp/w; rm -rf $D", "cat <<'EOF'\nrm -rf src\nEOF", "cat <<'EOF'\n\nrm -rf src\nEOF",
+            "D=/tmp/x; bash <<EOF\nrm -rf $D/a\nEOF", "echo it\\'s; rm -rf node_modules 'dist'"):
+    check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"cách đọc strict không biến lệnh vô hại thành nghi: {cmd!r}")
+# Phần mới của cách đọc strict không làm audit chậm. Dòng mở heredoc không có `\n` thì HEREDOC của các cách đọc khác thử lại
+# từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước (~3 giây với 5000 `<<A`): lô `<<A` ở đây nhỏ hơn.
+slow = []
+for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 3000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi `\\'`, heredoc thân rỗng hay dòng mở không `\\n` (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))

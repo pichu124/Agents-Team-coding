@@ -104,6 +104,11 @@ def load_watch(root):
 
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
+# segments(strict=True): thân có thể rỗng, dòng đóng ngay sau dòng mở (`cat <<'EOF'⏎EOF⏎rm -rf src`). HEREDOC đòi `\n` trước
+# dòng đóng nên lấy cả phần sau tới hết lệnh làm thân. Thân không rỗng kèm `\n` cuối (thành một đoạn rỗng). Dòng mở ở cuối
+# lệnh, không `\n`, khớp với thân rỗng: HEREDOC thử lại từ mỗi `<<` của dòng đó rồi quét tới cuối dòng, bậc hai.
+HEREDOC_STRICT = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)(?:\n|$)(.*?)"
+                            r"(?:(?<=\n)[ \t]*\2[ \t]*(?:\n|$)|\Z)", re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
@@ -129,6 +134,9 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng
 COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
+# segments(strict=True) của bash: `\` ngoài nháy thoát ký tự sau (`echo it\'s`), khớp trước để nháy đó không mở một chuỗi
+# ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
+QUOTED_XB = re.compile(r"\\.|" + QUOTED_X.pattern, re.MULTILINE)
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`, `-o 'pipefail'`), `--rcfile`/
@@ -192,13 +200,14 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
+def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False, strict=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng.
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
-    thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`."""
+    thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`.
+    strict: thân có thể rỗng (HEREDOC_STRICT)."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
         while exact and line_start:  # dòng trước kết thúc bằng số lẻ `\`: bash nối nó với dòng đang xét
@@ -216,7 +225,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    return HEREDOC.sub(sub, cmd)
+    return (HEREDOC_STRICT if strict else HEREDOC).sub(sub, cmd)
 
 
 def unwrap_shell_c(text, rx):
@@ -248,10 +257,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
     strict=True (dùng với exact): đọc sát bash thêm ở chỗ exact giữ y như bản trước, để thêm cách đọc mà không đổi cách cũ.
     Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`); exact giữ regex
-    của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn.
+    của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát, không mở chuỗi
+    nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`).
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped, exact)
+    body = keep_shell_heredocs(cmd, join, scoped, exact, strict)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = LINE_JOIN.sub(r"\1", body)
     if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng
@@ -259,6 +269,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     store = []
 
     def keep(m):
+        if m.group(0)[0] == "\\":  # ký tự thoát ngoài nháy (QUOTED_XB): giữ nguyên, không phải chuỗi
+            return m.group(0)
         store.append(m.group(0))
         return "\0%d\0" % (len(store) - 1)
 
@@ -269,7 +281,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
         return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
 
     shell_c = bool(SHELL_C.search(body))
-    quoted = (QUOTED_PS_X if exact else QUOTED_PS) if tool == "PowerShell" else (QUOTED_X if exact else QUOTED)
+    if tool == "PowerShell":  # PowerShell không thoát bằng `\`: strict che nháy như exact
+        quoted = QUOTED_PS_X if exact else QUOTED_PS
+    else:
+        quoted = QUOTED_XB if strict else QUOTED_X if exact else QUOTED
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
