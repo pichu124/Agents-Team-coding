@@ -1041,12 +1041,13 @@ for cmd in ("D=/tmp/w || cd /tmp/w && rm -rf src", "D=/tmp/w || cd /tmp && rm -r
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"không biết thư mục hay đích sau cd: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("cd /tmp && rm -rf src", a.SUSPICIOUS), "cd vào thư mục tạm rồi xoá đích tương đối vẫn vô hại")
-# Phần mới của cách đọc strict không làm audit chậm. Dòng mở heredoc không có `\n` thì HEREDOC của các cách đọc khác thử lại
-# từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước (~3 giây với 5000 `<<A`): lô `<<A` ở đây nhỏ hơn.
+# Phần mới của cách đọc strict không làm audit chậm. Cỡ chuỗi chọn để 16e4dbd (chưa có strict) chạy dưới 1 giây: dòng mở
+# heredoc không `\n` thì HEREDOC của các cách đọc khác thử lại từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước
+# (~3 giây với 5000 `<<A`).
 slow = []
-for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 3000,
-            "D=/; bash <<EOF\n" * 3000, "read D; " * 5000, "printf -v D x; " * 5000, "unset D; " * 5000, "eval x; " * 5000,
-            "D=1 | " * 5000, "x | " * 5000, "a || cd /tmp && " * 3000):
+for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 2000,
+            "D=/; bash <<EOF\n" * 2000, "read D; " * 3000, "printf -v D x; " * 3000, "unset D; " * 3000, "eval x; " * 3000,
+            "D=1 | " * 3000, "x | " * 5000, "a || cd /tmp && " * 2000):
     t = time.monotonic()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     t = time.monotonic() - t
