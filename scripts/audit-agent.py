@@ -218,8 +218,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     comments=False: che nháy như 6f32d5a, không biết comment (nháy trong `# don't` mở chuỗi).
     raw_marks (chỉ có nghĩa khi scoped): như 695e799, byte \\x01–\\x04 có sẵn trong lệnh đọc thành dấu, không có SNAP.
     strict_assign: chỉ đoạn toàn phép gán hay export/declare/typeset/local/readonly mới đổi biến; gán tạm trước lệnh khác
-    (`D=x true`, `env D=x true`) và NAME=VALUE là tham số của lệnh khác (`echo D=x`) không đổi. Mặc định: NAME=VALUE ở
-    đâu trong đoạn cũng đổi biến.
+    (`D=x true`, `env D=x true`), NAME=VALUE là tham số của lệnh khác (`echo D=x`), và đoạn sau `&&`/`||`, trong ống hay
+    chạy nền (`false && D=x`, `D=x | true`, `D=x &`) không đổi. Mặc định: NAME=VALUE ở đâu trong đoạn cũng đổi biến.
     empty_body=False: heredoc không nhận thân rỗng như 6f32d5a, cả khi scoped.
     """
     join = join and tool != "PowerShell"
@@ -245,7 +245,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     marked = body if shell_c else quoted.sub(keep, body)
     out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, None, False, False, None
-    for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
+    parts = re.split("(" + SPLIT.pattern + ")", marked)
+    for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
                 sep = seg
@@ -269,12 +270,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if sep != "&&" and not inherit:
                 ctx = ""
             inherit = False
+        # Gán sau `&&`, `||` có thể không chạy; trong ống (`|` trước hay sau) hay chạy nền (`&`) thì chạy ở shell con.
+        detached = sep in ("&&", "||", "|") or parts[i + 1:i + 2] == ["|"] or re.search(r"[^<>|&]&(?![>&])", seg)
         after_or_pipe, sep = sep in ("||", "|"), None
         full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
-        assigns = not strict_assign or ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
+        assigns = not strict_assign or not detached and ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
         for name, val in (ASSIGN.findall(full) if assigns and not frozen else ()):
             env[name] = val.strip("\"'")
         if snapped:
@@ -408,8 +411,9 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Che nháy đọc hai cách: như 6f32d5a (comments=False) và biết comment (`# don't` không mở chuỗi nuốt dòng sau).
     # Lệnh có sẵn byte \x01–\x05: cách đọc scoped đọc thêm như 695e799 (raw_marks: byte thành dấu, không SNAP). Bash coi
     # byte là chữ, nhưng dấu giả xoá env bù được lỗi khác làm lệnh xoá trông vô hại (gán tạm, heredoc lồng).
-    # Lệnh có NAME=: mọi cách trên đọc thêm phép gán chặt (strict_assign: `D=x true`, `echo D=x` không đổi biến). Dò
-    # NAME= cả ngay sau `;&|` hay nháy: `true;D=x true` chỉ có `^D=x` cho ASSIGN sau khi segments tách đoạn.
+    # Lệnh có NAME=: mọi cách trên đọc thêm phép gán chặt (strict_assign: `D=x true`, `echo D=x`, `false && D=x`,
+    # `D=x | true`, `D=x &` không đổi biến). Dò NAME= cả ngay sau `;&|` hay nháy: `true;D=x true` chỉ có `^D=x` cho
+    # ASSIGN sau khi segments tách đoạn.
     # Lệnh có heredoc thân rỗng: mọi cách đọc scoped đọc thêm heredoc như 6f32d5a (empty_body=False, thân tới dấu đóng sau).
     # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở, `\$` hay nháy theo hướng làm lệnh xoá trông vô hại,
     # nên chỉ lấy hợp. Cách gần bản cũ xét trước. PowerShell không nối dòng tại `\`.

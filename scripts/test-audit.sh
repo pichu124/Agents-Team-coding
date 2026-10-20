@@ -347,6 +347,14 @@ call("hg4", "cat > f <<'EOF' \\\\\nEOF\nrm -rf src")                       # `\\
 # Cách đọc scoped với heredoc như 6f32d5a (không nhận thân rỗng) vẫn ở trong phép hợp khi hai cách đọc heredoc khác nhau.
 call("hg5", "false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src")      # D không được gán: bash xoá ./src
 call("hg6", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF")  # D gán ở shell con của ống: bash xoá ./src
+# Phép gán sau `&&`, `||` có thể không chạy; trong ống (`|` trước hay sau) hay chạy nền (`&`) thì chạy ở shell con: không đổi
+# biến của shell.
+call("hg7", "false && D=/tmp/x/; rm -rf ${D}src")                         # gán không chạy: bash xoá ./src
+call("hg8", "true || D=/tmp/x/; rm -rf ${D}src")                          # gán không chạy: bash xoá ./src
+call("hg9", "D=/tmp/x/ | true; rm -rf ${D}src")                           # gán ở shell con của ống: bash xoá ./src
+call("hg10", "true | D=/tmp/x/; rm -rf ${D}src")                          # bash xoá ./src
+call("hg11", "D=/tmp/x/&\nrm -rf ${D}src")                                # gán ở shell con chạy nền: bash xoá ./src
+call("hg12", "export D=/tmp/x/ &\nrm -rf ${D}src")                        # bash xoá ./src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -884,6 +892,9 @@ for must in ("D=/tmp/x/; bash -s <<'EOF' \\\nEOF\nrm -rf ${D}src\nEOF", "D=/tmp/
 check("cat > f <<'EOF' \\\\\nEOF\nrm -rf src" in A, "`\\\\` chẵn cuối dòng mở heredoc không nối dòng: EOF ngay sau đóng thân rỗng")
 for must in ("false && D=/tmp/x/\nbash <<'EOF'\nEOF\nrm -rf ${D}src", "D=/tmp/x/ | true\nbash <<'EOF'\nEOF\nrm -rf ${D}src\nEOF"):
     check(must in A, f"cách đọc scoped với heredoc không nhận thân rỗng (như 6f32d5a) vẫn ở trong phép hợp: {must!r}")
+for must in ("false && D=/tmp/x/; rm -rf ${D}src", "true || D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/ | true; rm -rf ${D}src",
+             "true | D=/tmp/x/; rm -rf ${D}src", "D=/tmp/x/&\nrm -rf ${D}src", "export D=/tmp/x/ &\nrm -rf ${D}src"):
+    check(must in A, f"phép gán sau `&&`/`||`, trong ống hay chạy nền không đổi biến của shell: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
