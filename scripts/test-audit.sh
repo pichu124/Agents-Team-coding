@@ -750,7 +750,7 @@ def fuzz_vp_c():
     return ["\n".join(block() for _ in range(rnd.randint(2, 4))) for _ in range(1000)]
 PYEOF
 
-"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" "$vp" <<'PYEOF'
+"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" "$vp" "$tmp" <<'PYEOF'
 import importlib.util, json, os, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 code, nofile, md = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
@@ -1219,6 +1219,75 @@ for cmd in ("cd /tmp/x && rm -rf .?/.?/home", "cd /tmp/x && rm -rf .[.]/.[.]/hom
     check("xoá đệ quy" in got, f"glob khớp `..` (bash < 5.2): ra ngoài thư mục cd: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("cd /tmp/x && rm -rf *.o", a.SUSPICIOUS),
       "glob không mở bằng `.` không khớp `..`: `*.o` sau cd vào thư mục tạm vẫn vô hại")
+# Vòng kéo dòng của keep_shell_heredocs (`\` lẻ cuối dòng mở heredoc kéo dòng kế của thân vào lệnh) viết lại tuyến tính: đầu ra
+# phải y như bản bậc hai (bab8150, giữ nguyên văn dưới đây, chỉ thêm `a.` và đếm dòng kéo) ở mọi tổ hợp join, scoped, exact,
+# strict, trên lệnh fixture, MISSED_VP, fuzz_vp_b/c và một lô riêng có `\` chẵn/lẻ cuối dòng mở và cuối các dòng thân.
+import glob, itertools
+pulled = []
+def keep_shell_heredocs_ref(cmd, join=False, scoped=True, exact=False, strict=False):
+    def sub(m):
+        line_start = m.string.rfind("\n", 0, m.start()) + 1
+        while exact and line_start:
+            prev_start = m.string.rfind("\n", 0, line_start - 1) + 1
+            prev = m.string[prev_start:line_start - 1]
+            if (len(prev) - len(prev.rstrip("\\"))) % 2 == 0:
+                break
+            line_start = prev_start
+        rest, body, n = m.group(3), m.group(4), 0
+        while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
+            line, _, body = body.partition("\n")
+            rest = rest[:-1] + line
+            n += 1
+        pulled.append(n)
+        lead = m.string[line_start:m.start()]
+        fed = a.SHELL_WORD.search(a.LINE_JOIN.sub(r"\1", lead) if exact else lead) or a.PIPE_SHELL.match(rest)
+        if not (fed and scoped):
+            return rest + "\n" + (body + "\n" if fed else "")
+        return "\n".join((rest, (a.OPEN_RAW if m.group(1) else a.OPEN) + (a.NOT_LAST if rest.strip() else ""), body, a.CLOSE, ""))
+    return (a.HEREDOC_STRICT if strict else a.HEREDOC).sub(sub, cmd)
+def tool_commands(x):
+    if isinstance(x, list):
+        for v in x:
+            yield from tool_commands(v)
+    elif isinstance(x, dict):
+        if x.get("type") == "tool_use" and isinstance(x.get("input"), dict) and isinstance(x["input"].get("command"), str):
+            yield x["input"]["command"]
+        for v in x.values():
+            yield from tool_commands(v)
+corpus = [c for c, _why in vp.MISSED_VP] + vp.fuzz_vp_b() + vp.fuzz_vp_c()
+for f in glob.glob(os.path.join(sys.argv[15], "**", "*.jsonl"), recursive=True):
+    with open(f, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                corpus += tool_commands(json.loads(line))
+            except ValueError:
+                pass  # dòng hỏng có chủ ý của fixture
+HD_OPEN = ["cat <<E", "cat <<'E'", "bash <<E", "bash <<'EOF'", "cat <<-E", 'sh <<"E"', "cat <<E | bash", "cd x <<'E'",
+           "cat <<E; rm -rf src", "cat << E", "x <<A <<B"]
+HD_TAIL = ["", "", "\\", "\\\\", "\\\\\\", " \\", "\\\\\\\\", "\\\\\\\\\\"]
+HD_LINE = ["", "x", "rm -rf src", "| bash", "E", "EOF", " E", "\tE", "A", "B", "cd /tmp/x &&", "\\", "\\\\", "a\\\\\\", "cat <<E"]
+rnd_hd = random.Random(7)
+def heredoc_lines():
+    out = [rnd_hd.choice(["", "D=/; ", "cd /tmp/x && ", "x \\\n"]) + rnd_hd.choice(HD_OPEN) + rnd_hd.choice(HD_TAIL)]
+    out += [rnd_hd.choice(HD_LINE) + rnd_hd.choice(HD_TAIL) for _ in range(rnd_hd.randint(0, 6))]
+    return "\n".join(out) + rnd_hd.choice(["", "\n", "\nrm -rf src", "\n\n", "\n\\", "\\"])
+corpus += ["\n".join(heredoc_lines() for _ in range(rnd_hd.randint(1, 3))) for _ in range(3000)]
+keep_diff = [(combo, c) for c in dict.fromkeys(corpus) for combo in itertools.product((False, True), repeat=4)
+             if a.keep_shell_heredocs(c, *combo) != keep_shell_heredocs_ref(c, *combo)]
+check(not keep_diff,
+      f"keep_shell_heredocs khác bản bậc hai ở {len(keep_diff)} cặp (join, scoped, exact, strict), lệnh: {keep_diff[:3]}")
+many = (sum(n > 0 for n in pulled), sum(n > 2 for n in pulled))
+check(many[0] > 1000 and many[1] > 100, f"lô so keep_shell_heredocs phải đi qua vòng kéo dòng (lần kéo 1+, 3+ dòng): {many}")
+# Bản bậc hai mất 3–15 giây với các chuỗi dưới đây (dò regex trên dòng mở dài dần, nối từng dòng).
+slow = []
+for cmd in ("cat <<E\\\n" * 3000, "bash <<E\\\n" * 5000, "sh <<'E' \\\n" * 5000, "cat <<E\\\\\\\n" * 5000,
+            "cat <<E\\\n" + "x\\\\\\\n" * 10000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên dòng mở heredoc có `\\` lẻ cuối kéo nhiều dòng (đầu lệnh, giây): {slow}")
 # Phần mới của cách đọc strict không làm audit chậm. Cỡ chuỗi chọn để 16e4dbd (chưa có strict) chạy dưới 1 giây: dòng mở
 # heredoc không `\n` thì HEREDOC của các cách đọc khác thử lại từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước
 # (~3 giây với 5000 `<<A`).

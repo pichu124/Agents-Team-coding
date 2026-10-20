@@ -229,9 +229,16 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False, strict=False)
                 break
             line_start = prev_start
         rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
-        while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
-            line, _, body = body.partition("\n")
-            rest = rest[:-1] + line
+        if scoped and join and body and (len(rest) - len(rest.rstrip("\\"))) % 2:
+            # Dòng mở, rồi mỗi dòng vừa kéo, kết thúc bằng số lẻ `\` thì bỏ `\` đó và kéo dòng thân kế, tới khi thân hết. Đếm
+            # `\` bằng rstrip, nối một lần: dò regex trên dòng mở dài dần rồi nối từng dòng là bậc hai (`cat <<E\⏎` × 3000).
+            lines = body.split("\n")
+            n = len(lines) - (lines[-1] == "")  # thân "x⏎": lấy x xong là hết thân
+            k = 0
+            while (len(lines[k]) - len(lines[k].rstrip("\\"))) % 2 and k + 1 < n:
+                k += 1
+            rest = rest[:-1] + "".join(x[:-1] for x in lines[:k]) + lines[k]
+            body = "\n".join(lines[k + 1:])
         lead = m.string[line_start:m.start()]
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
