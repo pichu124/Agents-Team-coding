@@ -15,8 +15,8 @@ jobs:
       - name: Chạy đúng lệnh mà agent và Stop hook dùng
         run: ./scripts/check.sh
 
-  # Máy của người dùng kit: macOS chỉ có /bin/bash 3.2 và BSD grep của hệ thống (PATH chỉ gồm thư
-  # mục hệ thống, không lấy bash/grep của Homebrew), Windows chạy hook bằng Git Bash.
+  # Máy của người dùng kit: macOS chỉ có /bin/bash 3.2, BSD grep và awk của hệ thống (PATH chỉ gồm thư
+  # mục hệ thống, không lấy bash/grep của Homebrew), Windows chạy hook bằng Git Bash (gawk, core.autocrlf=true).
   portable:
     strategy:
       fail-fast: false
@@ -40,9 +40,6 @@ jobs:
           command -v grep && grep --version 2>&1 | head -n 1
           for c in jq python3 python py git shellcheck; do printf '%s: %s\n' "$c" "$(command -v "$c")"; done
           git config --show-origin core.autocrlf || true
-      - name: Chẩn đoán tạm (thời gian đọc JSON không có jq/Python, guard với lệnh nối dòng dài)
-        if: ${{ !cancelled() }}
-        run: ./.github/diag-portable.sh
       - name: validate-kit
         if: ${{ !cancelled() }}
         run: ./scripts/validate-kit.sh
