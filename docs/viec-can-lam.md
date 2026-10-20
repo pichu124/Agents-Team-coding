@@ -42,6 +42,7 @@ Việc đối chiếu đã xong ở `claude/brave-darwin-zqo4ws` (bảng "commit
   - còn 3 assert phải-vào-A đỏ, đều của `749e0c6` (biến không thay được trong đích không vô hại, kể cả sau thư mục tạm hay tên lành): `(D=..); rm -rf node_modules/$D`, `cd /tmp && rm -rf node_modules/$X`, `rm -rf /tmp/$X`;
   - oracle bash của nhánh đó, với ngữ pháp mở rộng ở `751a129` và `876ad37` (đích có biến sau phần trông lành; gán qua đối số, gán tạm, gán trong pipeline), bỏ sót 10/2712 lệnh (nhánh mặc định trước khi brave-darwin vào: 141/2712);
   - 2 assert vô hại mới của `55a62d6` đỏ vì báo thừa: `D=/tmp/x # c | d` ⏎ `rm -rf $D/src`, `true # a |` ⏎ `D=/tmp/x` ⏎ `rm -rf $D/src`.
+  - CI của nhánh đó đỏ ở mọi lần chạy kể từ `73558cd`: runner ubuntu-latest nay là Ubuntu 26.04 với bash 5.3, và `wait` không đối số trong `$( )` treo khi shell cha còn việc nền chưa thu (`true & x=$( wait )`), nên oracle báo "chạy quá 10 giây". `e103274` của brave-darwin bọc `wait` trong PRELUDE của oracle; nhánh đó hết đỏ khi merge nhánh mặc định mới. Oracle riêng của PR #8 cũng cần lớp bọc này nếu ngữ pháp của nó sinh `wait` trong `$( )`.
   - **Xong khi:** mỗi commit có dòng trong bảng như 2.3 cũ; ca còn tái hiện trên nhánh mặc định thì port như một cách đọc thêm, hợp nhãn, test đỏ trước.
 - **Dọn nhánh (cần bạn đồng ý, xoá nhánh phải hỏi người):** đóng PR #7 và xoá `claude/youthful-fermi-1ydqg6` (không còn gì riêng); xoá `claude/blissful-dirac-i6vpym` sau khi xử lý 4 commit trên; xoá `claude/intelligent-brahmagupta-ufrtr3` (PR #5 và PR #16 đã merge).
 
