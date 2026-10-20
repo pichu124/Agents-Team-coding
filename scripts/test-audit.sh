@@ -1202,8 +1202,9 @@ fi
 # thư mục và đích, rồi đỏ khi bash xoá đích nằm ngoài thư mục tạm mà suspicious_labels trả []. An toàn: stub là đường dẫn
 # tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh có git, push, reset, clean,
 # Remove-Item hay `>` bị bỏ hẳn, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là /dev/null, có timeout.
-# Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2, sh là dash.
-# Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm.
+# Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2 và 5.3, sh là dash.
+# Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao
+# bỏ qua.
 if [ ! -f scripts/install-kit.sh ]; then
   printf '• audit: bỏ qua oracle bash (chỉ chạy trong repo kit)\n'
 else
@@ -1243,13 +1244,22 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 fails = []
 known = dict(KNOWN_MISSES)
+ratchet = f"bỏ qua: {base_why}"
 if base_test:
-    try:
-        m = re.search(r"^KNOWN_MISSES = \[\n(.*?)^\]$", open(base_test, encoding="utf-8").read(), re.M | re.S)
-        before = None if m is None else {c for c, _why in ast.literal_eval("[" + m[1] + "]")}
-    except Exception as exc:  # bản trước có danh sách mà không đọc được thì không canh được: đỏ, đừng bỏ qua
-        fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
-        before = set(known)
+    text = open(base_test, encoding="utf-8").read()
+    before = None
+    if not re.search(r"^KNOWN_MISSES\b", text, re.M):
+        ratchet = f"bản ở {base_why} chưa có danh sách"
+    else:  # đọc phép gán trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…); hỏng thì đỏ, đừng bỏ qua
+        try:
+            i = text.index("\nKNOWN_MISSES")
+            i = text.index("\n", text.rindex("<<'PYEOF'", 0, i)) + 1
+            node = next(n.value for n in ast.parse(text[i:text.index("\nPYEOF\n", i)]).body if isinstance(n, ast.Assign)
+                        and [getattr(t, "id", "") for t in n.targets] == ["KNOWN_MISSES"])
+            before = {c for c, _why in ast.literal_eval(node)}
+            ratchet = f"so với bản ở {base_why}"
+        except Exception as exc:
+            fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
     added = [] if before is None else [c for c in known if c not in before]
     if added:
         fails.append(f"KNOWN_MISSES chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
@@ -1317,14 +1327,15 @@ fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)
 FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
 cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
 
-# Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd), tmp thay cho /tmp (mục A đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w),
-# stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không xoá gì, chỉ ghi.
+# Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A
+# đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không
+# xoá gì, chỉ ghi.
 STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$(dirname \"$0\")/log.$$\"\n"
 env = {"PATH": os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(p)),
        "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C"}
 def setup(k):
     base = os.path.join(root, str(k))
-    for sub in ("p", "tmp/w/s"):
+    for sub in ("p/src", "tmp/w/s"):
         os.makedirs(os.path.join(base, sub))
     with open(os.path.join(base, "stub"), "w") as fh:
         fh.write(STUB)
@@ -1406,7 +1417,7 @@ for c in gone:  # mục A vẫn không báo, mà bash ở máy này không xoá 
     print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
 finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy bằng bash {ver} thật (rm thay bằng stub), "
        f"{danger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong KNOWN_MISSES "
-       f"({time.monotonic() - t0:.0f} giây)")
+       f"(chỉ được giảm: {ratchet}; {time.monotonic() - t0:.0f} giây)")
 PYEOF
 fi
 
