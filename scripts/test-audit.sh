@@ -1269,7 +1269,32 @@ def line():
     s = rnd.choice([" && ", "; ", " || ", " | "]).join(rnd.choice(CORE + STEP) for _ in range(rnd.randint(1, 2)))
     return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 5))) for _ in range(3000)]
-pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
+# Lệnh thêm (3000 lệnh trên giữ nguyên): một lõi chỉ nguy hiểm tuỳ cách đọc (biến, thư mục cd) giữa 0–4 dòng ngữ cảnh ghép
+# từ cấu trúc mà từng cách đọc trong phép hợp của suspicious_labels được thêm vào để bắt: heredoc thân rỗng, `\`/`\\` cuối
+# dòng mở rồi EOF, hai heredoc một dòng, <<EOF có biến trong thân, gán trước toán tử, byte dấu, comment có nháy, `"cd"`, `&`,
+# `$'\x63d'`. Lõi nguy hiểm ở mọi cách đọc (như CORE) che mất cách đọc riêng lẻ. Bỏ một cách đọc của phép hợp (empty_body,
+# comments, raw_marks, strict_assign, parent_env, scoped, join) thì bước này phải đỏ. Chỉ Bash: đủ cả bảy, đỡ thời gian.
+NCORE = ["rm -rf ${D}src", "rm -rf $D/src", "rm -rf y"]
+NSTEP = ["D=/tmp/x/", "export D=/tmp/x/", "D=/tmp/x/ | true", "false && D=/tmp/x/", "D=/tmp/x/ true", "echo D=/tmp/x/",
+         "D=/srv/", "cd /tmp/x", '"cd" /home/p', "$'\\x63d' /home/p", "true", "echo 'a b'", "echo '\x01'"]
+NLINE = ["bash <<'EOF'", "bash <<EOF", "bash <<'EOF'\nEOF", "cat > f <<'EOF'\nEOF", "bash -s <<'EOF' \\\nEOF",
+         "cat > f <<'EOF' \\\\\nEOF", "bash <<'A' <<'EOF'\nA", "A", "EOF", "\x01", "\x02", "\x03", "# don't", "echo 'x",
+         "D=/tmp/x/\nbash <<'EOF'\nEOF", "D=/tmp/x/; bash <<'A' <<'EOF'\nA", "bash <<'EOF'\nD=/srv/\nEOF", "bash <<EOF\nD=/tmp/x/",
+         "D=/tmp/x/\n\x01"]
+NTAIL = ["", "", "", " \\", " \\\\", " # don't", " &"]
+NSEP = [" && ", "; ", " || ", " | ", " & "]
+def line2():
+    if rnd.random() < 0.4:
+        return rnd.choice(NLINE)
+    s = rnd.choice(NSEP).join(rnd.choice(NSTEP) for _ in range(rnd.randint(1, 2)))
+    return ("(" + s + ")" if rnd.random() < 0.05 else s) + rnd.choice(NTAIL)
+def cmd2():
+    ls = [line2() for _ in range(rnd.randint(0, 4))]
+    ls.insert(rnd.randint(0, len(ls)), rnd.choice(["", "cd /tmp/x && "]) + rnd.choice(NCORE) + rnd.choice(NTAIL))
+    return "\n".join(ls)
+fuzz_bash = [cmd2() for _ in range(2000)]
+pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]
+                           + [("Bash", c) for c in fuzz_bash]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
 lost, crash, base_err, fixture_err, relabeled = [], [], [], [], 0
