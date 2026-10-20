@@ -199,12 +199,13 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False):
+def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
-    và dòng CLOSE, SNAP thay chỗ toán tử trên dòng mở. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như
-    bash, thân bắt đầu sau đó.
+    và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
     raw_marks: như 695e799, byte dấu có sẵn trong lệnh giữ nguyên (đọc thành dấu), không đặt SNAP.
+    snap (cách đọc parent_env): SNAP thay chỗ toán tử trên dòng mở. Cách đọc khác không đặt: SNAP chen giữa shell và cờ
+    (`bash <<EOF -c '…'`) làm SHELL_C, SHELL_C_BODY không còn khớp.
     empty_body=False: không nhận thân rỗng (HEREDOC_6F32D5A), cả khi scoped.
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
@@ -232,8 +233,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
-        snap = "" if raw_marks else SNAP
-        return "\n".join((snap + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+        mark = SNAP if snap and not raw_marks else ""
+        return "\n".join((mark + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     return (HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
@@ -283,7 +284,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact)
+    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = LINE_JOIN.sub(r"\1", body)
     if exact:  # sau nối dòng: `\` + xuống dòng trong thân nháy đơn là chữ với shell cha nhưng shell con nối dòng

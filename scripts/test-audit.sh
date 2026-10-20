@@ -1164,6 +1164,12 @@ check(not slow, f"suspicious_labels quá 3 giây trên cụm cờ dài (đầu l
 for cmd in ("git-bash -lc 'rm -rf /'", "git-bash.exe -lc 'rm -rf /'", "D=/tmp/w; git-bash -c 'D=/; rm -rf $D'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"shell có tiền tố chữ nối bằng `-`: thân -c vẫn là lệnh: {cmd!r}: {got!r}")
+# Dấu SNAP (chỗ toán tử heredoc, 8dc3d0d) chỉ đặt ở cách đọc parent_env: chen giữa shell và cờ (`bash <<EOF -c '…'`) nó làm
+# cách đọc exact không gỡ được thân -c (reviewer). Bash 5.2: thân -c chạy, xoá $HOME/proj, ~ hay / (X không export).
+for cmd in ("D=/tmp/x; bash <<EOF -c 'D=$HOME/proj; rm -rf $D'\nEOF", "D=/tmp/x; bash <<'EOF' -lc 'D=~; rm -rf $D'\nEOF",
+            "X=/tmp/a; bash <<EOF -c 'rm -rf $X'\nEOF"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"toán tử heredoc giữa shell và -c: thân -c vẫn là phạm vi shell con: {cmd!r}: {got!r}")
 # Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
 # từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
 # `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
