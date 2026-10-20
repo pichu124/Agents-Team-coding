@@ -80,6 +80,8 @@ install "$b"
 assert "B: install phải exit 0" [ $? -eq 0 ]
 assert "B: không được sửa CLAUDE.md có sẵn" [ "$(cat "$b/CLAUDE.md")" = "# CLAUDE.md của dự án" ]
 assert "B: thiếu .claude/rules/agent-team.md" [ -f "$b/.claude/rules/agent-team.md" ]
+assert "B: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" \
+  cmp -s "$kit/templates/agent-team-rules.md" "$b/.claude/rules/agent-team.md"
 assert "B: phải giữ enabledPlugins" json_has "$b/.claude/settings.json" enabledPlugins
 assert "B: phải gộp hooks" json_has "$b/.claude/settings.json" hooks
 for p in .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/rules/agent-team.md; do
@@ -87,6 +89,8 @@ for p in .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/rules/ag
 done
 install "$b"
 assert "B: chạy lại install phải exit 0" [ $? -eq 0 ]
+assert "B: cài lại khi không có phần riêng thì .claude/rules/agent-team.md vẫn đúng bằng template" \
+  cmp -s "$kit/templates/agent-team-rules.md" "$b/.claude/rules/agent-team.md"
 for ev in PreToolUse PostToolUse Stop; do
   assert "B: chạy lại không được nhân đôi hook $ev" [ "$(hook_groups "$b/.claude/settings.json" "$ev")" = 1 ]
 done
@@ -185,6 +189,129 @@ install "$f"
 assert "G: matcher null không được làm hỏng việc gộp" [ $? -eq 0 ]
 (cd "$f" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "G: validate-kit phải xanh sau khi cài lại lên guard hai nhóm" [ $? -eq 0 ]
+
+# H..M. Cập nhật kit không được xoá quy ước riêng mà dự án viết thêm vào .claude/rules/agent-team.md.
+tpl="$kit/templates/agent-team-rules.md"
+mark='<!-- agent-team:kit-end'
+tpl_bytes=$(($(wc -c < "$tpl")))
+kit_part_ok() { head -c "$tpl_bytes" "$1" | cmp -s - "$tpl"; } # file mở đầu đúng bằng toàn bộ template mới
+own_part_is() { tail -c +"$((tpl_bytes + 1))" "$1" | cmp -s - "$2"; } # phần sau template giống hệt file $2
+to_crlf() { awk '{ printf "%s\r\n", $0 }'; }
+rules_repo() { # rules_repo <thư mục>: repo có CLAUDE.md riêng, đã có .claude/rules/
+  new_repo "$1"
+  echo "# CLAUDE.md của dự án" > "$1/CLAUDE.md"
+  mkdir -p "$1/.claude/rules"
+}
+# Bản template mà các repo cài kit sớm đang có (chưa có dòng dấu).
+old_tpl="$tmp/old-template.md"
+cat > "$old_tpl" <<'EOF'
+# Đội agent (Agents-Team-coding)
+
+- Task không tầm thường thì dùng `/team-lead <task>`. Chốt điều kiện xong dạng pass/fail trước khi làm.
+- "Xong" nghĩa là `./scripts/check.sh` exit 0 cộng bằng chứng hành vi. Không chạy được check thì nói "inconclusive".
+- Bug: tái hiện trước bằng test fail, rồi mới sửa nguyên nhân gốc.
+- Người viết không tự kiểm: verify và review bằng subagent mới (`verifier`, `reviewer`).
+- Bị người dùng sửa cùng một lỗi lần thứ hai thì đề xuất `/correct`.
+- Cứ làm: đọc, sửa trong branch hoặc worktree, commit cục bộ, chạy test. Luôn hỏi người: force-push, push hoặc merge vào nhánh chính, xoá dữ liệu, deploy, publish.
+
+| Rule | Thực thi bởi |
+|---|---|
+| Không kết thúc lượt khi check đỏ | `.claude/hooks/stop-gate.sh` (Stop) |
+| Hỏi người trước hành động không đảo ngược được | `.claude/hooks/guard-irreversible.sh` (PreToolUse) |
+| Không đọc file bí mật (`.env`, `*.pem`, `secrets/`) | `permissions.deny` trong `.claude/settings.json` |
+| Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
+EOF
+# Mục riêng của dự án: có mục con ### và code fence chứa dòng giống heading (kể cả heading của kit).
+own_x="$tmp/own-x.md"
+cat > "$own_x" <<'EOF'
+## Riêng CASA Mầm non
+
+- Check nhanh: `./scripts/check.sh` (bộ --fast).
+- Trước khi mở PR: `CHECK_FULL=1 ./scripts/check.sh`.
+
+### Dữ liệu mẫu
+
+```markdown
+# Đội agent (Agents-Team-coding)
+## không phải heading
+```
+
+- Không commit `data/`. Fence thụt lề vẫn là fence:
+
+  ~~~
+# Đội agent (Agents-Team-coding)
+  ~~~
+
+# Phụ lục
+
+Mục cấp 1 riêng cũng được giữ, đúng thứ tự.
+EOF
+sep_own_x="$tmp/sep-own-x.md" # dòng trống ngăn cách + mục riêng
+{ echo; cat "$own_x"; } > "$sep_own_x"
+
+# H. Template có đúng một dòng dấu, là dòng cuối, kết thúc bằng newline.
+assert "H: template phải có đúng một dòng bắt đầu bằng $mark" [ "$(grep -c "^$mark" "$tpl")" = 1 ]
+case "$(tail -n 1 "$tpl")" in
+  "$mark"*'-->') ok ;;
+  *) bad "H: dòng cuối của template phải là dòng dấu $mark ... -->" ;;
+esac
+assert "H: template phải kết thúc bằng newline" [ -z "$(tail -c 1 "$tpl")" ]
+
+# I. Bản cài cũ (chưa có dấu) + mục riêng ở cuối, cài lại với --force:
+#    phần của kit thay bằng template mới, mục riêng còn nguyên văn.
+i="$tmp/old rules"
+rules_repo "$i"
+cat "$old_tpl" "$sep_own_x" > "$i/.claude/rules/agent-team.md"
+perm_before="$(ls -l "$i/.claude/rules/agent-team.md" | cut -c1-10)"
+install "$i" --force
+assert "I: cài lại lên bản cũ có mục riêng phải exit 0" [ $? -eq 0 ]
+assert "I: file phải mở đầu bằng toàn bộ template mới" kit_part_ok "$i/.claude/rules/agent-team.md"
+assert "I: sau template phải là dòng trống + mục riêng nguyên văn" own_part_is "$i/.claude/rules/agent-team.md" "$sep_own_x"
+assert "I: không được đổi quyền của file" [ "$(ls -l "$i/.claude/rules/agent-team.md" | cut -c1-10)" = "$perm_before" ]
+
+# J. Chạy lại (không --force) trên kết quả của I: file y hệt.
+cp "$i/.claude/rules/agent-team.md" "$tmp/i-after.md"
+install "$i"
+assert "J: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "J: chạy lại phải cho file y hệt (idempotent)" cmp -s "$tmp/i-after.md" "$i/.claude/rules/agent-team.md"
+
+# K. Có dấu: sửa tay một dòng trên dấu, viết thêm dưới dấu (không heading ngay sau dấu) → trên dấu về template, dưới giữ.
+k="$tmp/marked"
+rules_repo "$k"
+own_k="$tmp/own-k.md"
+printf 'Ghi chú ngay dưới dấu, chưa có heading.\n\n## Riêng Y\n- y\n' > "$own_k"
+{ awk 'NR == 3 { print "- Sửa tay trong phần của kit."; next } { print }' "$tpl"; cat "$own_k"; } \
+  > "$k/.claude/rules/agent-team.md"
+install "$k"
+assert "K: cài lại lên file có dấu phải exit 0" [ $? -eq 0 ]
+assert "K: phần trên dấu phải về đúng template mới" kit_part_ok "$k/.claude/rules/agent-team.md"
+assert "K: mọi thứ dưới dấu phải còn nguyên văn" own_part_is "$k/.claude/rules/agent-team.md" "$own_k"
+
+# L. Bản cài cũ không có phần riêng (heading của kit lỡ có khoảng trắng cuối) → --force → đúng bằng template mới.
+l="$tmp/old plain"
+rules_repo "$l"
+awk 'NR == 1 { $0 = $0 " \t" } { print }' "$old_tpl" > "$l/.claude/rules/agent-team.md"
+install "$l" --force
+assert "L: cài lại lên bản cũ không có phần riêng phải exit 0" [ $? -eq 0 ]
+assert "L: file phải đúng bằng template mới" cmp -s "$tpl" "$l/.claude/rules/agent-team.md"
+
+# M. File CRLF (checkout trên Windows): vẫn nhận ra dấu và heading của kit, không nhân đôi phần của kit.
+m="$tmp/crlf"
+rules_repo "$m"
+crlf_own_k="$tmp/crlf-own-k.md"
+to_crlf < "$own_k" > "$crlf_own_k"
+cat "$tpl" "$own_k" | to_crlf > "$m/.claude/rules/agent-team.md"
+install "$m"
+assert "M: cài lại lên file CRLF có dấu phải exit 0" [ $? -eq 0 ]
+assert "M: CRLF có dấu: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
+assert "M: CRLF có dấu: dưới dấu phải còn nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_own_k"
+cat "$old_tpl" "$sep_own_x" | to_crlf > "$m/.claude/rules/agent-team.md"
+crlf_kept_x="$tmp/crlf-kept-x.md" # installer thêm dòng trống (LF), mục riêng giữ CRLF nguyên văn
+{ echo; to_crlf < "$own_x"; } > "$crlf_kept_x"
+install "$m" --force
+assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
+assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
+assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
