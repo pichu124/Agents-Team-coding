@@ -353,10 +353,12 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             ctx = ""  # đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục
         # Từ có nháy hay `\` (tách theo khoảng trắng ngoài nháy: `c"d"` là một từ) mà bỏ nháy và `\` đi thì thành tên lệnh
         # đổi thư mục (`"cd"`, `'cd'`, `c\d`, `$'cd'`, `"."` đầu đoạn): bash vẫn chạy lệnh đó, CHDIR (bản che nháy) không thấy.
+        # Từ có `$'…'` chứa `\` (escape ANSI-C: `$'\x63d'` là cd) thì không biết tên lệnh.
         for k, word in enumerate(seg.lstrip("({ ").split()):
             word = re.sub(r"\0(\d+)\0", unkeep, word)
             name = re.sub(r"\$?[\"']|\\", "", word)
-            if name != word and (re.fullmatch(CHDIR_NAMES, name, re.IGNORECASE) or (name == "." and k == 0)):
+            if name != word and (re.fullmatch(CHDIR_NAMES, name, re.IGNORECASE) or (name == "." and k == 0)
+                                 or re.search(r"\$'[^']*\\", word)):
                 ctx = ""
         if BACKGROUND.search(seg):
             ctx = ""  # `cd x && a & b`: cả `cd x && a` chạy nền ở shell con, b chạy ở thư mục cũ
