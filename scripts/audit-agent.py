@@ -352,7 +352,9 @@ def benign_delete(full, ctx, worktree=True):
         if benign_path(t) or (worktree and agent_worktree(t)):
             continue
         rel = not is_absolute(t)
-        if rel and ctx and benign_path(ctx):
+        # Đích mở bằng biến chưa biết, `$(…)` hay backtick không phải đường tương đối: bash có thể thay thành đường tuyệt đối
+        # (`cd /tmp/w && rm -rf $D/a` với D chưa gán xoá `/a`), nên thư mục cd không làm nó vô hại.
+        if rel and ctx and benign_path(ctx) and not t.startswith(("$", "`")):
             continue
         return False
     return True
