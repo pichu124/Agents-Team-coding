@@ -1,18 +1,27 @@
 # Việc cần làm
 
-Ảnh chụp ngày 20/10/2026, ngay sau khi PR #5 (commit `0667d98`) và PR #6 (`e5a6756`) vào nhánh mặc định `claude/sharp-knuth-lpdhqz`; cập nhật khi nhánh `claude/brave-darwin-zqo4ws` (port youthful-fermi và blissful-dirac, mục 2.3) vào nhánh mặc định. Mỗi việc ghi: vì sao cần làm, khi nào thì xong, ai đang làm. Làm xong việc nào thì xoá dòng đó khỏi file này, ngay trong PR của việc đó.
+Ảnh chụp ngày 20/10/2026, ngay sau khi PR #5 (commit `0667d98`) và PR #6 (`e5a6756`) vào nhánh mặc định `claude/sharp-knuth-lpdhqz`; cập nhật khi nhánh `claude/brave-darwin-zqo4ws` (PR #18: port youthful-fermi và blissful-dirac, mục 2.3) vào nhánh mặc định, và khi các session trùng việc đã dừng (mục 1). Mỗi việc ghi: vì sao cần làm, khi nào thì xong, ai đang làm. Làm xong việc nào thì xoá dòng đó khỏi file này, ngay trong PR của việc đó.
 
 Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, viết test đỏ trước, `KIT_SELFTEST=1 ./scripts/check.sh` phải exit 0, rồi verifier và reviewer mới cho qua. Không nới guard, Stop gate hay `scripts/guard-ask-floor`; không sửa hay nới assert cũ. Nhãn của `suspicious_labels` bản mới phải ⊇ bản trước, với `AUDIT_BASE_REF` đặt về commit trước khi sửa. Muốn đổi cách đọc lệnh thì thêm một cách đọc rồi hợp nhãn. Thử hành vi bash thật thì thay `rm` và `git` bằng `echo` ngay trong văn bản lệnh, chạy trong thư mục tạm không phải repo git, HOME trỏ tới thư mục không tồn tại, và không đặt `rm` giả trên PATH.
 
-## 1. Cần bạn quyết: các session đang trùng việc
+## 1. Session trùng việc: đã quyết, và việc còn cần bạn quyết
 
-| Việc | Các session hay PR làm cùng việc | Khuyên |
+### 1.1 Đã quyết (20/10)
+
+| Việc | Giữ | Đã dừng |
 |---|---|---|
-| Vá các ca mục A bỏ sót có từ trước | nhánh `claude/nice-hamilton-vdgw4v` (danh sách đầy đủ), `claude/vibrant-pascal-b81ljt` (thẻ cũ, danh sách ngắn hơn), PR #8 (`claude/practical-hawking-le9toi`: 0c347b2, a43055e, 3543fb4, 6b50142) và `claude/blissful-dirac-i6vpym` (vẫn thêm commit, xem 2.3). Nhánh mặc định nay đã có phép hợp cách đọc của youthful-fermi + exact của PR #5 + bản port blissful-dirac (`segments(..., parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact)`) | Giữ nice-hamilton. Bản sửa nào chỉ vibrant-pascal có thì port sang, rồi dừng vibrant-pascal. Mọi nhánh còn lại merge nhánh mặc định mới trước, rồi lập bảng "commit → còn tái hiện? → port / có sẵn" như 2.3 trước khi sửa tiếp |
-| Oracle bash trong test-audit | PR #8 (`claude/practical-hawking-le9toi`, KNOWN_MISSES) và oracle của blissful-dirac (73558cd, 5e82c79: ngữ pháp an toàn, ORACLE_FLOOR, KNOWN_GAPS), oracle này **đã vào nhánh mặc định** qua `claude/brave-darwin-zqo4ws` kèm dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md | Quyết: gộp hai oracle thành một bước, hay thay oracle của blissful-dirac bằng PR #8 (khi đó sửa dòng CLAUDE.md, giữ sàn và các lệnh nó bắt được) |
-| Skill verify kèm hành trình tái hiện guard SIGPIPE | `claude/bold-tesla-s0rkpo` và `claude/verify-skill-sigpipe` | Giữ một |
-| Cổng push của guard trên bash < 5.1 khi đĩa đầy | `claude/stoic-bell-kdjsfg` và một session trên nhánh mặc định | Giữ một |
-| check.sh không chạy test-plugin.sh của dự án đích | PR #9 (`claude/loving-sagan-zmy0u9`) và `claude/check-sh-kit-only-plugin` | Giữ PR #9 |
+| Vá các ca mục A bỏ sót có từ trước | nhánh `claude/nice-hamilton-vdgw4v`. Nó soát các commit của `claude/vibrant-pascal-b81ljt`, port phần chỉ nhánh đó có, rồi ghi bảng "commit → đã có / đã port / bỏ qua vì sao" vào PR của nó | Session `claude/vibrant-pascal-b81ljt`. Nhánh giữ ở `970114a`; stash `r3-item3-wip` vẫn nằm trong container của session đó |
+| Vá mục A của youthful-fermi | Các bản sửa tới `c93ef33` đã vào qua PR #18 (`claude/brave-darwin-zqo4ws`, đã merge). Bạn chọn giữ PR #7 cho phần còn lại: merge nhánh mặc định `38bf5bb` vào, rồi diff chỉ còn phần riêng (commit hiệu năng bỏ cách đọc trùng, xem 2.7; fixture hj1–hj5) | Phần oracle bash ở session PR #7, chưa từng commit. Không gỡ phần youthful-fermi khỏi PR #18: nó đã merge |
+| Skill verify kèm hành trình tái hiện guard SIGPIPE | `claude/bold-tesla-s0rkpo` | Session `claude/verify-skill-sigpipe` (đã archive, chưa push gì) |
+| Cổng push của guard trên bash < 5.1 khi đĩa đầy | `claude/stoic-bell-kdjsfg` | Session trùng trên nhánh mặc định (đã archive, chưa push gì) |
+| check.sh không chạy test-plugin.sh của dự án đích | PR #9, đã merge | Session `claude/check-sh-kit-only-plugin` (đã archive) |
+
+Mọi nhánh audit còn mở phải merge nhánh mặc định mới trước khi sửa tiếp. Nhánh mặc định đã có phép hợp cách đọc của youthful-fermi, cách đọc exact của PR #5 và bản port blissful-dirac (`segments(..., parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact)`). Sau khi merge, lập bảng "commit → còn tái hiện? → port / có sẵn" như ở 2.3.
+
+### 1.2 Còn cần bạn quyết
+
+- **Hai oracle bash.** Oracle của blissful-dirac (73558cd, 5e82c79: ngữ pháp an toàn, ORACLE_FLOOR, KNOWN_GAPS) **đã vào nhánh mặc định** qua PR #18, kèm dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md. PR #8 (`claude/practical-hawking-le9toi`) có oracle riêng với KNOWN_MISSES. **Khuyên:** giữ một bước oracle duy nhất, chính là bước đã có trên nhánh mặc định. PR #8 chuyển phần ngữ pháp fuzz và các ca nó bắt được vào bước đó, không thêm bước thứ hai. Sàn và các lệnh oracle cũ đã bắt được phải giữ nguyên.
+- **Dọn nhánh:** xem mục 2.3. Xoá nhánh phải hỏi người.
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
@@ -44,7 +53,7 @@ Việc đối chiếu đã xong ở `claude/brave-darwin-zqo4ws` (bảng "commit
   - 2 assert vô hại mới của `55a62d6` đỏ vì báo thừa: `D=/tmp/x # c | d` ⏎ `rm -rf $D/src`, `true # a |` ⏎ `D=/tmp/x` ⏎ `rm -rf $D/src`.
   - CI của nhánh đó đỏ ở mọi lần chạy kể từ `73558cd`: runner ubuntu-latest nay là Ubuntu 26.04 với bash 5.3, và `wait` không đối số trong `$( )` treo khi shell cha còn việc nền chưa thu (`true & x=$( wait )`), nên oracle báo "chạy quá 10 giây". `e103274` của brave-darwin bọc `wait` trong PRELUDE của oracle; nhánh đó hết đỏ khi merge nhánh mặc định mới. Oracle riêng của PR #8 cũng cần lớp bọc này nếu ngữ pháp của nó sinh `wait` trong `$( )`.
   - **Xong khi:** mỗi commit có dòng trong bảng như 2.3 cũ; ca còn tái hiện trên nhánh mặc định thì port như một cách đọc thêm, hợp nhãn, test đỏ trước.
-- **Dọn nhánh (cần bạn đồng ý, xoá nhánh phải hỏi người):** đóng PR #7 và xoá `claude/youthful-fermi-1ydqg6` (không còn gì riêng); xoá `claude/blissful-dirac-i6vpym` sau khi xử lý 4 commit trên; xoá `claude/intelligent-brahmagupta-ufrtr3` (PR #5 và PR #16 đã merge).
+- **Dọn nhánh (cần bạn đồng ý, xoá nhánh phải hỏi người):** PR #7 giữ theo lựa chọn của bạn (mục 1.1), nên chỉ xoá `claude/youthful-fermi-1ydqg6` sau khi PR #7 merge hay đóng; xoá `claude/blissful-dirac-i6vpym` sau khi xử lý 4 commit trên; xoá `claude/intelligent-brahmagupta-ufrtr3` (PR #5 và PR #16 đã merge).
 
 ### 2.4 Đường chậm bậc hai có từ trước
 - SHELL_C `(-\w+\s+)*` trên `"bash" + " -bash"*5000` hay `"sh" + " -sh"*5000`: 6–9 giây.
@@ -72,5 +81,5 @@ Bash xoá trong thư mục tạm mà mục A vẫn báo. Sửa là thu hẹp: ph
 
 | PR | Nội dung | Trạng thái |
 |---|---|---|
-| #7 | fix(audit): 9 dạng lệnh mục A bỏ sót (`claude/youthful-fermi-1ydqg6`) | Nháp. Mọi commit sửa tới `c93ef33` đã vào nhánh mặc định qua `claude/brave-darwin-zqo4ws` (cherry-pick -x); `fc27649` chỉ là merge nhánh mặc định. Đóng được, xem 2.3 |
+| #7 | fix(audit): 9 dạng lệnh mục A bỏ sót (`claude/youthful-fermi-1ydqg6`) | Nháp. Mọi commit sửa tới `c93ef33` đã vào nhánh mặc định qua `claude/brave-darwin-zqo4ws` (cherry-pick -x); `fc27649` chỉ là merge nhánh mặc định. Giữ theo lựa chọn của bạn cho phần riêng còn lại (mục 1.1); phải merge `38bf5bb` trước |
 | #8 | fix(audit): oracle bash và 4 lớp lệnh xoá (`claude/practical-hawking-le9toi`) | Nháp. Phải merge nhánh mặc định mới (đã có phép hợp cách đọc mới và oracle của blissful-dirac), so nhãn với nhánh mặc định, quyết chuyện hai oracle ở mục 1 |
