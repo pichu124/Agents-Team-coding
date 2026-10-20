@@ -192,13 +192,14 @@ fi
 if in_kit_repo; then
   if [ -n "${py:-}" ]; then
     "$py" - <<'PYEOF' || err ".claude-plugin: manifest của plugin lệch với file của kit (xem lỗi ở trên)"
-import glob, json, re, sys
+import glob, json, os, re, sys
 errs = []
 plugin = json.load(open(".claude-plugin/plugin.json", encoding="utf-8"))
 market = json.load(open(".claude-plugin/marketplace.json", encoding="utf-8"))
 hooks = json.load(open(plugin["hooks"], encoding="utf-8"))["hooks"]
 settings = json.load(open(".claude/settings.json", encoding="utf-8"))["hooks"]
-agents = sorted("./" + f for f in glob.glob(".claude/agents/*.md"))
+# Python trên Windows trả .claude/agents\x.md: đổi về / như trong plugin.json.
+agents = sorted("./" + f.replace(os.sep, "/") for f in glob.glob(".claude/agents/*.md"))
 if sorted(plugin.get("agents", [])) != agents:
     errs.append(f"plugin.json agents phải liệt kê đủ {agents}")
 if [p["name"] for p in market["plugins"]] != [plugin["name"]]:
