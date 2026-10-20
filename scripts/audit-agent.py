@@ -169,10 +169,12 @@ SHELL_C_BODY_EXACT = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 # segments(strict=True): lệnh gán biến mà ASSIGN không thấy. read, mapfile, readarray, getopts, local, for, printf -v, wait -p
 # gán các tên trong đoạn, kể cả tên dính redirection, trong nháy hay dính cờ (`read D<f`, `printf -v "D" /`, `printf -vD /`):
-# không biết giá trị. unset (trừ -f) làm biến rỗng. eval, source, `.` đầu lệnh chạy mã bất kỳ: không biết biến nào.
+# không biết giá trị. unset (trừ -f) làm biến rỗng. eval, source, `.` đầu lệnh (cả sau gán tạm `x=1 . ./e.sh`) chạy mã bất
+# kỳ: không biết biến nào.
 SETS_NAMES = {"read", "mapfile", "readarray", "getopts", "local", "for"}
 EVAL = re.compile(r"(?<![\w-])(?:eval|source)(?![\w-])"
-                  r"|^(?:[({!]\s*|(?:if|then|do|else|elif|while|until|builtin|command|time)\s+)*\.(?=\s|$)")
+                  r"|^(?:[({!]\s*|(?:[A-Za-z_]\w*=\S*|if|then|do|else|elif|while|until|builtin|command|time)\s+)*"
+                  r"\.(?=\s|$)")
 IDENT = re.compile(r"[A-Za-z_]\w*")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
