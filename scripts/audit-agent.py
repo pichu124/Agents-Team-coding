@@ -105,8 +105,9 @@ def load_watch(root):
 # bash đòi (chỉ `<<-` cho tab đầu dòng, không khoảng trắng nào khác) và dòng mở không có `\` lẻ cuối (bash nối dòng đó vào
 # lệnh thành tham số, không phải dấu đóng): không có nhóm body. HEREDOC_6F32D5A không nhận thân rỗng như 6f32d5a: cách đọc
 # scoped=False dùng nó, cách đọc scoped dùng thêm khi hai regex khác nhau trên lệnh (empty_body=False), để phép hợp trong
-# suspicious_labels vẫn có mọi nhãn các cách đọc cũ cho.
-_HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?P<rest>(?:[^\n\\]|\\[^\n])*(?P<cont>\\)?)\n"
+# suspicious_labels vẫn có mọi nhãn các cách đọc cũ cho. Lookahead `[^\n]*\n` trước rest không đổi match, chỉ để `<<NAME` trên
+# dòng không có `\n` thất bại nhanh: nhóm của rest quét lại cả dòng ở mỗi lần thử chậm hơn cỡ trăm lần.
+_HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?=[^\n]*\n)(?P<rest>(?:[^\n\\]|\\[^\n])*(?P<cont>\\)?)\n"
 _HD_BODY = r"(?P<body>.*?)(?:\n[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)"
 HEREDOC = re.compile(_HD_OPEN + r"(?:(?(cont)(?!))(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
 HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
