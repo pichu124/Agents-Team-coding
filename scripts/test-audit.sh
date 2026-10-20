@@ -1248,9 +1248,10 @@ ratchet = f"bỏ qua: {base_why}"
 if base_test:
     text = open(base_test, encoding="utf-8").read()
     before = None
-    if not re.search(r"^KNOWN_MISSES\b", text, re.M):
-        ratchet = f"bản ở {base_why} chưa có danh sách"
-    else:  # đọc phép gán trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…); hỏng thì đỏ, đừng bỏ qua
+    if "# Oracle bash:" not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
+        ratchet = f"bản ở {base_why} chưa có bước oracle"
+    else:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được, kể
+        # cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
         try:
             i = text.index("\nKNOWN_MISSES")
             i = text.index("\n", text.rindex("<<'PYEOF'", 0, i)) + 1
