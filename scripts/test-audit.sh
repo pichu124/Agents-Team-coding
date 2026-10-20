@@ -1197,8 +1197,6 @@ spec = importlib.util.spec_from_file_location("missed_vp", sys.argv[14])
 vp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vp)
 MISSED_VP_PENDING = {
-    7, 8, 28,  # here-string `<<<`, `$'…'` ngoài nháy (vòng sửa strict)
-    73, 74, 75, 78,  # lệnh đổi biến viết trong nháy, tên dính cờ `-vD` (vòng sửa strict)
     38, 40, 41, *range(46, 56), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
     # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
     10, 11, 12, 29, 30, 32, 35, 36, 76, 77, *range(79, 83), 88, 89, 90,  # biến như bash: gán không thuần (`echo D=`, gán
