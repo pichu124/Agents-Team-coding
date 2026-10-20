@@ -55,7 +55,7 @@ esac
 
 reason=""
 rule() {
-  if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "$1"; then
+  if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "$1"; then
     reason="$2"
   fi
 }
@@ -152,7 +152,7 @@ expand_dir() {
 # MỌI thư mục lệnh có thể chạm tới: thư mục của phiên, đích của mọi cd/pushd/Set-Location (nối
 # tiếp nhau), đích của mọi -C, --git-dir, --work-tree, GIT_DIR= (tính từ từng thư mục trên).
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
-if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "${G}push"; then
+if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   base="${cwd:-.}"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
@@ -194,7 +194,7 @@ EOF
   while IFS= read -r d; do
     [ -n "$d" ] || continue # git -C "" là thư mục của chính hook, không phải của lệnh
     branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    if printf '%s' "$branch" | grep -Eqx -- "$MAIN"; then
+    if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
     fi
