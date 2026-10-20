@@ -100,13 +100,15 @@ def load_watch(root):
     return pats
 
 
-# Heredoc: dòng mở (rest: phần còn lại của dòng, vẫn là lệnh), thân, dòng đóng (lỏng: khoảng trắng hai bên). Chưa đóng thì
-# thân tới hết chuỗi như bash. HEREDOC nhận thân rỗng khi dòng ngay sau dòng mở đúng là dấu đóng như bash đòi (chỉ `<<-`
-# cho tab đầu dòng, không khoảng trắng nào khác): không có nhóm body. HEREDOC_6F32D5A (cách đọc scoped=False) không nhận
-# thân rỗng như 6f32d5a, để phép hợp trong suspicious_labels vẫn có mọi nhãn cách đọc cũ cho.
-_HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?P<rest>[^\n]*)\n"
+# Heredoc: dòng mở (rest: phần còn lại của dòng, vẫn là lệnh; cont: `\` lẻ cuối dòng), thân, dòng đóng (lỏng: khoảng trắng
+# hai bên). Chưa đóng thì thân tới hết chuỗi như bash. HEREDOC nhận thân rỗng khi dòng ngay sau dòng mở đúng là dấu đóng như
+# bash đòi (chỉ `<<-` cho tab đầu dòng, không khoảng trắng nào khác) và dòng mở không có `\` lẻ cuối (bash nối dòng đó vào
+# lệnh thành tham số, không phải dấu đóng): không có nhóm body. HEREDOC_6F32D5A không nhận thân rỗng như 6f32d5a: cách đọc
+# scoped=False dùng nó, cách đọc scoped dùng thêm khi hai regex khác nhau trên lệnh (empty_body=False), để phép hợp trong
+# suspicious_labels vẫn có mọi nhãn các cách đọc cũ cho.
+_HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?P<rest>(?:[^\n\\]|\\[^\n])*(?P<cont>\\)?)\n"
 _HD_BODY = r"(?P<body>.*?)(?:\n[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)"
-HEREDOC = re.compile(_HD_OPEN + r"(?:(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
+HEREDOC = re.compile(_HD_OPEN + r"(?:(?(cont)(?!))(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
 HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
@@ -170,12 +172,13 @@ def expand(text, env):
     return text
 
 
-def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False):
+def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE, SNAP thay chỗ toán tử trên dòng mở. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như
     bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
-    raw_marks: như 695e799, byte dấu có sẵn trong lệnh giữ nguyên (đọc thành dấu), không đặt SNAP."""
+    raw_marks: như 695e799, byte dấu có sẵn trong lệnh giữ nguyên (đọc thành dấu), không đặt SNAP.
+    empty_body=False: không nhận thân rỗng (HEREDOC_6F32D5A), cả khi scoped."""
     def sub(m):
         line_start = m.string.rfind("\n", 0, m.start()) + 1
         rest, body = m["rest"], m["body"] or ""  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
@@ -196,11 +199,11 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False):
         return "\n".join((snap + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
-    return (HEREDOC if scoped else HEREDOC_6F32D5A).sub(sub, cmd)
+    return (HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
 
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
-             strict_assign=False):
+             strict_assign=False, empty_body=True):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -217,9 +220,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     strict_assign: chỉ đoạn toàn phép gán hay export/declare/typeset/local/readonly mới đổi biến; gán tạm trước lệnh khác
     (`D=x true`, `env D=x true`) và NAME=VALUE là tham số của lệnh khác (`echo D=x`) không đổi. Mặc định: NAME=VALUE ở
     đâu trong đoạn cũng đổi biến.
+    empty_body=False: heredoc không nhận thân rỗng như 6f32d5a, cả khi scoped.
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped, raw_marks)
+    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
         body = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", body)
     store = []
@@ -406,15 +410,18 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # byte là chữ, nhưng dấu giả xoá env bù được lỗi khác làm lệnh xoá trông vô hại (gán tạm, heredoc lồng).
     # Lệnh có NAME=: mọi cách trên đọc thêm phép gán chặt (strict_assign: `D=x true`, `echo D=x` không đổi biến). Dò
     # NAME= cả ngay sau `;&|` hay nháy: `true;D=x true` chỉ có `^D=x` cho ASSIGN sau khi segments tách đoạn.
+    # Lệnh có heredoc thân rỗng: mọi cách đọc scoped đọc thêm heredoc như 6f32d5a (empty_body=False, thân tới dấu đóng sau).
     # Mỗi cách có thể đọc sai export, thân rỗng, `\` cuối dòng mở, `\$` hay nháy theo hướng làm lệnh xoá trông vô hại,
     # nên chỉ lấy hợp. Cách gần bản cũ xét trước. PowerShell không nối dòng tại `\`.
     joins = (True,) if tool == "PowerShell" else (False, True)
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
+    empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
     segs = [s for strict_assign in stricts for comments in (False, True)
             for scoped, parent_env in ((False, False), (True, False), (True, True))
-            for raw_marks in (marks if scoped else (False,)) for join in joins
-            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks, strict_assign)]
+            for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
+            for join in joins
+            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body)]
     for plain, full, ctx, subst in segs:
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
