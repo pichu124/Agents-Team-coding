@@ -78,7 +78,7 @@ if d is not None:
 text_grep() {
   local s="$1"
   shift
-  printf '%s' "$s" | grep "$@"
+  printf '%s' "$s" 2>/dev/null | grep "$@"
   return "${PIPESTATUS[1]}"
 }
 
