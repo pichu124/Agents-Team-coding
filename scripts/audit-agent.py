@@ -220,16 +220,15 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False, strict=False)
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
     thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`.
     strict: thân có thể rỗng, `<<<` không mở heredoc (HEREDOC_STRICT)."""
-    def emit(start, rest, body, quoted):
-        """Phần thay cho một heredoc mở ở start: rest là phần còn lại của dòng mở, vẫn là lệnh (`; git ...`, `| bash`),
-        body là thân, quoted: tên có nháy (shell cha không thay biến trong thân)."""
-        line_start = cmd.rfind("\n", 0, start) + 1
+    def sub(m):
+        line_start = m.string.rfind("\n", 0, m.start()) + 1
         while exact and line_start:  # dòng trước kết thúc bằng số lẻ `\`: bash nối nó với dòng đang xét
-            prev_start = cmd.rfind("\n", 0, line_start - 1) + 1
-            prev = cmd[prev_start:line_start - 1]
+            prev_start = m.string.rfind("\n", 0, line_start - 1) + 1
+            prev = m.string[prev_start:line_start - 1]
             if (len(prev) - len(prev.rstrip("\\"))) % 2 == 0:
                 break
             line_start = prev_start
+        rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
         if scoped and join and body and (len(rest) - len(rest.rstrip("\\"))) % 2:
             # Dòng mở, rồi mỗi dòng vừa kéo, kết thúc bằng số lẻ `\` thì bỏ `\` đó và kéo dòng thân kế, tới khi thân hết. Đếm
             # `\` bằng rstrip, nối một lần: dò regex trên dòng mở dài dần rồi nối từng dòng là bậc hai (`cat <<E\⏎` × 3000).
@@ -240,12 +239,12 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False, strict=False)
                 k += 1
             rest = rest[:-1] + "".join(x[:-1] for x in lines[:k]) + lines[k]
             body = "\n".join(lines[k + 1:])
-        lead = cmd[line_start:start]
+        lead = m.string[line_start:m.start()]
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
-        return "\n".join((rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    return (HEREDOC_STRICT if strict else HEREDOC).sub(lambda m: emit(m.start(), m[3], m[4], bool(m[1])), cmd)
+        return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+    return (HEREDOC_STRICT if strict else HEREDOC).sub(sub, cmd)
 
 
 def unwrap_shell_c(text, rx):
