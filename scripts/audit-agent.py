@@ -101,6 +101,11 @@ def load_watch(root):
 
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(\n[ \t]*\2[ \t]*(\n|$)|\Z)", re.DOTALL)
+# HEREDOC cần `\n` trước dòng đóng, nên với thân rỗng (`: <<'EOF'⏎EOF⏎rm -rf src`) dòng EOF ngay sau dòng mở không được nhận
+# và mọi dòng sau thành thân. HEREDOC_X (keep_shell_heredocs, exact) nhận thân rỗng: nhóm 1–3 như HEREDOC, thân là `b` (các
+# dòng trọn trước dòng đóng, có thể không dòng nào) hay `u` (tới hết lệnh khi không có dòng đóng).
+HEREDOC_X = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n"
+                       r"(?:(?P<b>(?:.*?\n)??)[ \t]*\2[ \t]*(?:\n|$)|(?P<u>.*)\Z)", re.DOTALL)
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
@@ -182,7 +187,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
             if (len(prev) - len(prev.rstrip("\\"))) % 2 == 0:
                 break
             line_start = prev_start
-        rest, body = m.group(3), m.group(4)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        rest = m.group(3)  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        body = (m["u"] if m["b"] is None else m["b"][:-1]) if exact else m.group(4)
         while scoped and join and body and re.search(r"(?<!\\)(\\\\)*\\$", rest):
             line, _, body = body.partition("\n")
             rest = rest[:-1] + line
@@ -191,7 +197,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, exact=False):
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         return "\n".join((rest, (OPEN_RAW if m.group(1) else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    return HEREDOC.sub(sub, cmd)
+    return (HEREDOC_X if exact else HEREDOC).sub(sub, cmd)
 
 
 def unwrap_shell_c(text):
@@ -220,8 +226,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
-    `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs). Khâu của ống là shell con: phép gán và cd trong đó không ra
-    ngoài.
+    `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs). Thân heredoc có thể rỗng (HEREDOC_X). Khâu của ống là shell
+    con: phép gán và cd trong đó không ra ngoài.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact)
