@@ -1217,6 +1217,8 @@ MUST_FLAG = [
     "D=/tmp/w/ | true; rm -rf ${D}src",                           # xoá src của dự án
     "rm -rf /tmp/w/x | cd /tmp/w && rm -rf src",                  # xoá src của dự án
     "export D=/tmp/w | rm -rf ${D}src",                           # docs/viec-can-lam.md 2.2 ý 6: xoá src của dự án
+    # cách đọc chặt bỏ cả phép gán sau `&&`, cách đọc lỏng nhận phép gán trong ống: chỉ exact thấy D=/srv/ (53f3ff2 trả [])
+    "D=/tmp/x/; true && D=/srv/; true | D=/tmp/x/; rm -rf ${D}src",  # xoá /srv/src
     # thân heredoc rỗng: dòng EOF ngay sau dòng mở là dấu đóng, lệnh sau nó là lệnh
     ": <<'EOF'\nEOF\nbash <<EOF\nrm -rf src # don't",             # xoá src của dự án
     "cat <<'EOF'\nEOF\nbash -c 'cd /tmp/w && rm -rf src'; bash -c \"rm -rf $D/a\"",  # xoá /a
