@@ -163,8 +163,14 @@ for s in $KIT_SCRIPTS; do
   [ -f "scripts/$s" ] && shell_files+=("scripts/$s")
 done
 [ -f plugin/run-hook.sh ] && shell_files+=(plugin/run-hook.sh)
+# grep có cờ quiet (-q, -Eiq, --quiet, --silent) nhận stdin từ pipe đơn: grep thoát ở dòng khớp đầu,
+# lệnh ghi vào pipe chết vì SIGPIPE (141), pipefail biến "khớp" thành "không khớp".
+pipe_quiet_grep='(^|[^|])\|[[:space:]]*grep([[:space:]]+(-[^-[:space:]][^[:space:]]*|--[^[:space:]]+))*[[:space:]]+(-[[:alnum:]]*q[[:alnum:]]*|--quiet|--silent)([[:space:]]|$)'
 for sh in "${shell_files[@]}"; do
   bash -n "$sh" 2>/dev/null || err "$sh: lỗi cú pháp bash"
+  while IFS=: read -r n _; do
+    err "$sh:$n: grep -q nhận stdin từ pipe, pipefail đọc SIGPIPE (141) của lệnh trước thành \"không khớp\". Dùng text_grep (lib.sh) hoặc [ -n \"\$(...)\" ]"
+  done < <(grep -nE -- "$pipe_quiet_grep" "$sh" | grep -Ev '^[0-9]+:[[:space:]]*#')
 done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -S warning "${shell_files[@]}" || err "shellcheck báo lỗi"

@@ -313,6 +313,58 @@ assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
 assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
 assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
 
+# N. grep có cờ quiet nhận stdin từ pipe trong file shell của kit: validate-kit đỏ, nêu file:dòng và cách sửa.
+#    Dòng vi phạm dựng bằng $bar để chính file này không vi phạm. Dòng code của lint nằm trong
+#    validate-kit.sh đã cài, nên lần chạy xanh cũng là bằng chứng lint không tự báo mình.
+n="$tmp/pipe grep"
+new_repo "$n"
+install "$n"
+lib="$n/.claude/hooks/lib.sh"
+cp "$lib" "$tmp/lib.sh.orig"
+first=$(($(wc -l < "$lib") + 1))
+bar='|'
+cat >> "$lib" <<EOF
+printf '%s' abc $bar grep -q b
+printf '%s' abc $bar grep -Eiq B
+printf '%s' abc ${bar}grep -qxF abc
+printf '%s' abc $bar tr -d c $bar grep --quiet b
+git status --porcelain $bar grep --silent .
+printf '%s' abc \\
+  $bar grep -s -q b
+EOF
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit phải đỏ khi grep -q nhận stdin từ pipe" [ $? -ne 0 ]
+for i in 0 1 2 3 4 6; do
+  case "$out" in
+    *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
+    *) bad "N: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
+  esac
+done
+assert "N: chỉ báo đúng 6 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 6 ]
+# shellcheck disable=SC2016  # $(...) là chữ trong thông báo
+case "$out" in
+  *'text_grep (lib.sh)'*'[ -n "$(...)" ]'*) ok ;;
+  *) bad "N: thông báo phải nêu cách sửa: text_grep (lib.sh) hoặc [ -n \"\$(...)\" ] → $out" ;;
+esac
+msg="$(grep -m 1 'lib\.sh:[0-9]*: ' <<<"$out")"
+cp "$tmp/lib.sh.orig" "$lib"
+cat >> "$lib" <<'EOF'
+false || grep -q x f
+grep -q x f
+grep -Eiq x f || true
+printf '%s' abc | grep -c b
+text_grep abc -q b
+[ -n "$(git status --porcelain)" ]
+# printf '%s' abc | grep -q b
+  # printf '%s' abc | grep -Eiq b
+EOF
+printf '%s\n' "cat <<'EOF' >/dev/null" "$msg" EOF >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit không được báo ||, grep không pipe, pipe không quiet, comment, thông báo của lint → $out" [ $? -eq 0 ]
+cp "$tmp/lib.sh.orig" "$lib"
+(cd "$n" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
