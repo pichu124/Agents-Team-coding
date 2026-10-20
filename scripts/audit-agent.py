@@ -357,7 +357,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         groups += [(o, dict(env)) for o in opens]
         bg = bool(background)
         after_or_pipe, sep = sep in ("||", "|"), None
-        full = expand(raw, env)
+        if frozen:  # parent_env, thân <<EOF: `\$` là `$` chữ, shell cha không thay; shell con thay bằng env không biết
+            hold = next(c for c in "\x06\ue000\ue001\ue002" if c not in raw)
+            full = expand(re.sub(r"(?<!\\)((?:\\\\)*)\\\$", lambda x: x[1] + "\\" + hold, raw), env).replace(hold, "$")
+        else:
+            full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)

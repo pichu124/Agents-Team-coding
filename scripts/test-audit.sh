@@ -381,6 +381,9 @@ call("s62", "D=src; { D=/tmp/x; } &\nrm -rf $D\nwait")
 call("sb1", "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait")
 call("sb2", "( D=/tmp/x; ); rm -rf $D/src")
 call("sb3", "D=/tmp/x; { true; } &\nrm -rf $D/src\nwait")                 # vô hại: D gán ở shell cha
+# `\$` trong thân `<<EOF` không nháy là `$` chữ: shell cha không thay, shell con thay bằng env của nó, nơi D không export
+# là rỗng (blissful-dirac 9734b56). Bash 5.2: rm xoá /src.
+call("s65", "D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -934,6 +937,7 @@ for must in ("{ D=/tmp/x; } &\nrm -rf $D/src\nwait", "D=/tmp/x && true &\nrm -rf
              "cd /tmp/khongco src; D=/tmp/w || cd /tmp/w & true; rm -rf $D/src\nwait", "( D=/tmp/x; ); rm -rf $D/src"):
     check(must in A, f"phép gán trong phần chạy nền hay subshell không đổi biến của shell cha: {must!r}")
 check("D=/tmp/x; { true; } &\nrm -rf $D/src\nwait" not in A, "phép gán ở shell cha trước phần chạy nền vẫn áp: vô hại")
+check("D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF" in A, "`\\$` trong thân `<<EOF` không nháy: shell con thay bằng env của nó")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
