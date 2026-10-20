@@ -384,6 +384,20 @@ call("sb3", "D=/tmp/x; { true; } &\nrm -rf $D/src\nwait")                 # vô 
 # `\$` trong thân `<<EOF` không nháy là `$` chữ: shell cha không thay, shell con thay bằng env của nó, nơi D không export
 # là rỗng (blissful-dirac 9734b56). Bash 5.2: rm xoá /src.
 call("s65", "D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF")
+# Shell cha thay thân `<<EOF` bằng biến của nó lúc chạy lệnh mở: chỉ tin biến mà phép gán chắc đã chạy (blissful-dirac
+# 5f2f9c2): sau `if false`, trong thân dữ liệu audit đọc lệch (`<<\EOF`, dòng ` EOF`), trong nháy ở chế độ `| bash`, biến bị
+# unset, declare -u, cd đổi PWD, `$[D=5]` trong lệnh mở, biến bash tự đặt (RANDOM, `_`). Bash 5.2: rm xoá /src hay src.
+call("s74", "if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s75", "cat <<\\EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s76", "cat <<EOF >/dev/null\nx\n EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s78", "echo 'a;D=/tmp/x;b'; cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s79", "D=/tmp/x; unset D; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s80", "declare -u D; D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s81", "PWD=/tmp/x; cd src; bash <<EOF\nrm -rf $PWD\nEOF")
+call("s82", "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF")
+call("s84", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF")
+call("s85", "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF")
+call("sc1", "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")                     # vô hại: phép gán chắc chạy, xoá /tmp/x/src
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -938,6 +952,14 @@ for must in ("{ D=/tmp/x; } &\nrm -rf $D/src\nwait", "D=/tmp/x && true &\nrm -rf
     check(must in A, f"phép gán trong phần chạy nền hay subshell không đổi biến của shell cha: {must!r}")
 check("D=/tmp/x; { true; } &\nrm -rf $D/src\nwait" not in A, "phép gán ở shell cha trước phần chạy nền vẫn áp: vô hại")
 check("D=/tmp/x; bash <<EOF\nrm -rf \\$D/src\nEOF" in A, "`\\$` trong thân `<<EOF` không nháy: shell con thay bằng env của nó")
+for must in ("if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF", "cat <<\\EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "cat <<EOF >/dev/null\nx\n EOF\nD=/tmp/x\nEOF\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "echo 'a;D=/tmp/x;b'; cat <<EOF | bash\nrm -rf $D/src\nEOF", "D=/tmp/x; unset D; bash <<EOF\nrm -rf $D/src\nEOF",
+             "declare -u D; D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF", "PWD=/tmp/x; cd src; bash <<EOF\nrm -rf $PWD\nEOF",
+             "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF",
+             "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF"):
+    check(must in A, f"thân `<<EOF` không nháy chỉ thấy biến mà phép gán chắc đã chạy ở shell cha: {must!r}")
+check("D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF" not in A, "phép gán chắc chạy trước thân `<<EOF`: shell cha thay D, vô hại")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd

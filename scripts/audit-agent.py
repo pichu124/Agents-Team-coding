@@ -153,6 +153,11 @@ SHELL_C_BODY = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 # Đoạn (đã che nháy, bỏ comment) đổi biến của shell: toàn từ NAME=VALUE, hay lệnh export/declare/typeset/local/readonly.
 ASSIGN_STMT = re.compile(r"^(?:export|declare|typeset|local|readonly)(?:\s|$)|^(?:[A-Za-z_][A-Za-z0-9_]*=\S*(?:\s+|$))+$")
+# segments(sure=True): đoạn chỉ gồm phép gán trơn (`D=/tmp/x`, `export A=1 B=2`), giá trị không nháy, không thoát, không thế
+# biến hay lệnh; biến bash tự đặt giá trị (gán vào không giữ); đoạn chỉ gồm chữ trơn (không thế, gán hay chuyển hướng).
+ONLY_ASSIGN = re.compile(r"(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=[^\s\"'\\$`<>()|&;]+(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s\"'\\$`<>()|&;]+)*")
+DYNAMIC_VAR = re.compile(r"BASH\w*|RANDOM|SRANDOM|SECONDS|LINENO|EPOCH\w+|GROUPS|FUNCNAME|DIRSTACK|HISTCMD|PIPESTATUS|_")
+PLAIN_WORDS = re.compile(r"[A-Za-z0-9_./:@%+, -]*")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
 CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
@@ -248,7 +253,7 @@ def unwrap_shell_c(text):
 
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
-             strict_assign=False, empty_body=True, exact=False):
+             strict_assign=False, empty_body=True, sure=False, exact=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -266,6 +271,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     (`D=x true`, `env D=x true`), NAME=VALUE là tham số của lệnh khác (`echo D=x`), và đoạn sau `&&`/`||`, trong ống hay
     chạy nền (`false && D=x`, `D=x | true`, `D=x &`) không đổi. Mặc định: NAME=VALUE ở đâu trong đoạn cũng đổi biến.
     empty_body=False: heredoc không nhận thân rỗng như 6f32d5a, cả khi scoped.
+    sure (dùng với parent_env): shell cha thay thân <<EOF chỉ bằng biến mà phép gán CHẮC đã chạy ở nó: phép gán trơn khi mọi
+    đoạn trước nó cũng là phép gán như vậy (đầu lệnh, sau `;` hay xuống dòng, không trước `|`, ngoài comment), không phải
+    biến bash tự đặt. Đoạn khác đầu tiên giữ các biến đó nếu chỉ gồm chữ trơn; từ đoạn khác thứ hai không còn biến chắc nào
+    (`if false`, unset, declare -u, cd đổi PWD, `$[D=5]`, thân heredoc audit đọc lệch, nháy ở chế độ `| bash`...).
     exact=True (dùng với scoped): đọc sát bash ở chỗ các cách trên đọc lệch theo hướng làm lệnh xoá trông vô hại. Thân
     `bash -c '…'` là phạm vi shell con (unwrap_shell_c): biến không export của cha rỗng trong thân, biến gán trong thân không
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
@@ -309,6 +318,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
     # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới).
     groups, lst, bg = [], {}, False
+    sure_env, pristine, snap_sure = {}, True, None  # sure: biến chắc có ở shell cha; env thân <<EOF chụp ở toán tử
     parts = re.split("(" + SPLIT.pattern + ")", marked)
     for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
@@ -356,6 +366,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             env = dict(lst)  # `D=x && a & rm $D`: cả danh sách trước `&` chạy nền, lệnh sau `&` thấy env lúc mở danh sách
         groups += [(o, dict(env)) for o in opens]
         bg = bool(background)
+        before = sep
         after_or_pipe, sep = sep in ("||", "|"), None
         if frozen:  # parent_env, thân <<EOF: `\$` là `$` chữ, shell cha không thay; shell con thay bằng env không biết
             hold = next(c for c in "\x06\ue000\ue001\ue002" if c not in raw)
@@ -368,8 +379,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         assigns = not strict_assign or not detached and ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
         for name, val in (ASSIGN.findall(full) if assigns and not frozen else ()):
             env[name] = val.strip("\"'")
+        if sure and not saved and not mark_only:
+            pairs = ASSIGN.findall(raw) if pristine and not comment and before in (None, ";", "\n") \
+                and parts[i + 1:i + 2] != ["|"] and ONLY_ASSIGN.fullmatch(raw) else []
+            if pairs and not any(DYNAMIC_VAR.fullmatch(name) for name, _v in pairs):
+                sure_env.update(pairs)
+            else:
+                if not (pristine and PLAIN_WORDS.fullmatch(raw)):
+                    sure_env = {}
+                pristine = False
         if snapped:
-            snap = pre, dict(env)
+            snap, snap_sure = (pre, dict(env)), dict(sure_env)
         for _c in closes:  # subshell đóng, hay nhóm chạy nền: phép gán bên trong không ra ngoài
             o, at = groups.pop() if groups else ("(", dict(lst))
             if o == "(" or background:
@@ -412,6 +432,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         for mark in (re.findall("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", raw) if scoped else ()):
             if mark == CLOSE:  # biến chỉ gán trong thân là rỗng ở shell cha, biến có từ trước lấy lại giá trị đã chụp
                 ctx, env, inherit, frozen = "", {**dict.fromkeys(env, ""), **(saved.pop() if saved else {})}, False, False
+                sure_env, pristine = {}, False
             elif mark == NOT_LAST:
                 inherit = False
             else:  # thân chạy ở shell con: thừa hưởng thư mục nếu là shell cục bộ, biến gán trong thân không ra ngoài.
@@ -426,6 +447,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 if parent_env and snap:
                     env = dict(snap[1] if mark == OPEN_RAW else snap[0])
                 snap = None
+                if sure and mark == OPEN:
+                    env = dict(sure_env if snap_sure is None else snap_sure)
+                snap_sure = None
                 frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out
@@ -530,6 +554,8 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
             for join in joins
             for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body)]
+    if re.search(r"<<-?\s*[A-Za-z_]", cmd):  # có heredoc không nháy: thân chỉ thấy biến chắc có ở shell cha (sure)
+        segs += [s for join in joins for s in segments(cmd, tool, join, parent_env=True, sure=True)]
     segs += [s for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins
              for s in segments(cmd, tool, join, raw_marks=raw_marks, strict_assign=strict_assign,
                                empty_body=empty_body, exact=True)]
