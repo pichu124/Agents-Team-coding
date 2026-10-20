@@ -1012,16 +1012,39 @@ for cmd in ("echo it\\'s\nrm -rf src 'x'", "echo it\\'s; rm -rf src 'x'", 'echo 
 for cmd in ("cd /tmp/w && rm -rf src", "D=/tmp/w; rm -rf $D", "cat <<'EOF'\nrm -rf src\nEOF", "cat <<'EOF'\n\nrm -rf src\nEOF",
             "D=/tmp/x; bash <<EOF\nrm -rf $D/a\nEOF", "echo it\\'s; rm -rf node_modules 'dist'"):
     check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"cách đọc strict không biến lệnh vô hại thành nghi: {cmd!r}")
+# Biến bị đổi mà các cách đọc khác không theo (bash 5.2 xoá đích ghi bên cạnh). Thân <<EOF không nháy: shell cha thay `$D`
+# trong thân TRƯỚC khi shell con chạy, kể cả trong phạm vi lồng bên trong; phép gán trong thân không đổi được `$D` đó.
+# read, mapfile, readarray, getopts, printf -v, local, for, eval, `.`: biến thành không biết; unset: rỗng. Phép gán trong một
+# khâu của ống chạy ở shell con, sau `||` có thể không chạy: không biết.
+for cmd in ("D=/; bash <<EOF\nD=/tmp/w && rm -rf $D/a\nEOF",             # xoá //a
+            "D=/; bash <<EOF\nD=/tmp/w; rm -rf $D\nEOF", "D=/; sh <<EOF\nD=/tmp/w\nrm -rf ${D}\nEOF",  # xoá /
+            "D=/; bash <<EOF\nbash <<'X'\nD=/tmp/w; rm -rf $D/a\nX\nEOF",  # xoá //a
+            'D=/tmp/w; read D <<< /; rm -rf "$D"', 'D=/tmp/w; read -r D <<< /; rm -rf "$D"',  # xoá /
+            'D=/tmp/w; mapfile -t D <<< /; rm -rf "$D"', 'D=/tmp/w; readarray -t D <<< /; rm -rf "$D"',
+            'D=/tmp/w; printf -v D /; rm -rf "$D"', 'D=/tmp/w; while read D; do\nrm -rf "$D"\ndone <<< /',
+            'D=/tmp/w; for D in /; do\nrm -rf "$D"\ndone',
+            'D=/tmp/w; getopts a D; rm -rf "$D"',                          # xoá `?` (glob) ở thư mục dự án
+            'D=/tmp/w; f() { local D; rm -rf "$D/a"; }; f',                # xoá /a
+            "D=/tmp/w; eval 'D=/'; rm -rf \"$D\"", "D=/tmp/w; printf 'D=/' > e.sh; . ./e.sh; rm -rf \"$D\"",  # xoá /
+            "D=/tmp/w; unset D; rm -rf $D/a", "D=/tmp/w; unset -v D; rm -rf $D/a",  # xoá /a
+            "export D=/tmp/w | rm -rf ${D}src", "D=/tmp/w | true; rm -rf ${D}src",  # xoá src
+            "D=/; export D=/tmp/w | true; rm -rf $D", "D=/; true | D=/tmp/w; rm -rf $D",  # xoá /
+            "D=/; true || D=/tmp/w; rm -rf $D"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"biến bị đổi mà cách đọc khác không theo: {cmd!r}: {got!r}")
+check(not a.suspicious_labels("D=/tmp/w; unset -f D; rm -rf $D/a", a.SUSPICIOUS), "unset -f chỉ xoá hàm: biến giữ giá trị")
 # Phần mới của cách đọc strict không làm audit chậm. Dòng mở heredoc không có `\n` thì HEREDOC của các cách đọc khác thử lại
 # từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước (~3 giây với 5000 `<<A`): lô `<<A` ở đây nhỏ hơn.
 slow = []
-for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 3000):
+for cmd in ("\\'" * 20000, "echo \\' " * 10000, "cat <<EOF\n" * 5000, "cat <<'EOF'\nEOF\n" * 3000, "<<A " * 3000,
+            "D=/; bash <<EOF\n" * 3000, "read D; " * 5000, "printf -v D x; " * 5000, "unset D; " * 5000, "eval x; " * 5000,
+            "D=1 | " * 5000, "x | " * 5000):
     t = time.monotonic()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     t = time.monotonic() - t
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
-check(not slow, f"suspicious_labels quá 3 giây trên chuỗi `\\'`, heredoc thân rỗng hay dòng mở không `\\n` (đầu lệnh, giây): {slow}")
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi `\\'`, heredoc, lệnh gán biến, ống (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
