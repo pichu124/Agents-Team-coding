@@ -136,7 +136,8 @@ QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
 # segments(strict=True) của bash: `\` ngoài nháy thoát ký tự sau (`echo it\'s`), khớp trước để nháy đó không mở một chuỗi
 # ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
-QUOTED_XB = re.compile(r"\\.|" + QUOTED_X.pattern, re.MULTILINE)
+# Nháy ANSI-C `$'…'` khớp trước cả hai: `\'` bên trong là nháy thoát, không đóng chuỗi (`echo $'it\'s'; rm -rf src 'x'`).
+QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.|" + QUOTED_X.pattern, re.MULTILINE)
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
 # (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
@@ -271,7 +272,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     strict=True (dùng với exact): đọc sát bash thêm ở chỗ exact giữ y như bản trước, để thêm cách đọc mà không đổi cách cũ.
     Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`, `bash -c $'…'`);
     exact giữ regex của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát,
-    không mở chuỗi nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể
+    không mở chuỗi nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`); `\\'` trong `$'…'` không đóng chuỗi. Thân heredoc có thể
     rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy
     (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /). Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection
     hay trong nháy: `read D<<</etc`, `printf -v "D"`), trong một khâu của ống hay sau `||` là không biết; unset làm rỗng;

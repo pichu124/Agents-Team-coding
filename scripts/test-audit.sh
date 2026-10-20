@@ -1068,6 +1068,9 @@ for cmd in ("bash +e -c $'rm -rf /'", "bash --rcfile /dev/null -c $'rm -rf /'", 
             "bash -o 'pipefail' -c $'rm -rf ..'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"thân -c dạng nháy ANSI-C `$'…'` vẫn là lệnh: {cmd!r}: {got!r}")
+# Nháy ANSI-C `$'…'` ngoài thân -c: `\'` bên trong là nháy thoát, không đóng chuỗi (bash 5.2 xoá src, x ở thư mục dự án).
+cmd = "echo $'it\\'s'; rm -rf src 'x'"
+check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"`\\'` trong `$'…'` không đóng chuỗi: {cmd!r}")
 # `.` có gán tạm phía trước vẫn chạy tệp trong shell hiện tại, biến gán trong tệp ở lại (bash xoá /).
 cmd = "printf 'D=/' > e.sh; D=/tmp/w; x=1 . ./e.sh; rm -rf \"$D\""
 check("xoá đệ quy" in a.suspicious_labels(cmd, a.SUSPICIOUS), f"`.` sau gán tạm làm mọi biến thành không biết: {cmd!r}")
