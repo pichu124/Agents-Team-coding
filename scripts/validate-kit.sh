@@ -8,7 +8,9 @@ cd "$(dirname "$0")/.." || exit 1
 KIT_AGENTS="architect implementer verifier reviewer gardener"
 KIT_SKILLS="team-lead create-verify-skill correct agent-audit"
 KIT_HOOKS="lib.sh guard-irreversible.sh stop-gate.sh post-edit-format.sh"
-KIT_SCRIPTS="check.sh validate-kit.sh test-hooks.sh install-kit.sh test-install.sh audit-agent.sh test-audit.sh test-plugin.sh"
+KIT_SCRIPTS="check.sh validate-kit.sh test-hooks.sh audit-agent.sh test-audit.sh" # installer chép sang repo đích
+# Chỉ kiểm ở repo kit: installer không chép, ở repo đích file cùng tên là của dự án.
+KIT_REPO_SHELL="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
 
 errors=0
 err() {
@@ -33,6 +35,8 @@ in_list() {
   done
   return 1
 }
+
+in_kit_repo() { [ -f .claude-plugin/plugin.json ] && [ -f plugin/run-hook.sh ]; }
 
 md_files=()
 for name in $KIT_AGENTS; do
@@ -162,9 +166,19 @@ done
 for s in $KIT_SCRIPTS; do
   [ -f "scripts/$s" ] && shell_files+=("scripts/$s")
 done
-[ -f plugin/run-hook.sh ] && shell_files+=(plugin/run-hook.sh)
+if in_kit_repo; then
+  for s in $KIT_REPO_SHELL; do
+    [ -f "$s" ] && shell_files+=("$s")
+  done
+fi
+# grep có cờ quiet (-q, -Eiq, --quiet, --silent) nhận stdin từ pipe đơn: grep thoát ở dòng khớp đầu,
+# lệnh ghi vào pipe chết vì SIGPIPE (141), pipefail biến "khớp" thành "không khớp".
+pipe_quiet_grep='(^|[^|])\|[[:space:]]*grep([[:space:]]+(-[^-[:space:]][^[:space:]]*|--[^[:space:]]+))*[[:space:]]+(-[[:alnum:]]*q[[:alnum:]]*|--quiet|--silent)([[:space:]]|$)'
 for sh in "${shell_files[@]}"; do
   bash -n "$sh" 2>/dev/null || err "$sh: lỗi cú pháp bash"
+  while IFS=: read -r n _; do
+    err "$sh:$n: grep -q nhận stdin từ pipe, pipefail đọc SIGPIPE (141) của lệnh trước thành \"không khớp\". Dùng text_grep (lib.sh) hoặc [ -n \"\$(...)\" ]"
+  done < <(grep -nE -- "$pipe_quiet_grep" "$sh" | grep -Ev '^[0-9]+:[[:space:]]*#')
 done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -S warning "${shell_files[@]}" || err "shellcheck báo lỗi"
@@ -174,7 +188,7 @@ if [ -f scripts/audit-agent.py ] && [ -n "${py:-}" ]; then
     || err "scripts/audit-agent.py: lỗi cú pháp Python"
 fi
 # Bản plugin (repo kit): manifest phải khớp agent, hook và settings.json, không thì người cài plugin thiếu đồ.
-if [ -f .claude-plugin/plugin.json ] && [ -f plugin/run-hook.sh ]; then
+if in_kit_repo; then
   if [ -n "${py:-}" ]; then
     "$py" - <<'PYEOF' || err ".claude-plugin: manifest của plugin lệch với file của kit (xem lỗi ở trên)"
 import glob, json, re, sys
