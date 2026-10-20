@@ -839,6 +839,77 @@ for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf 
         got = exc
     check(isinstance(got, list) and "xoá đệ quy" in got,
           f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
+# Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
+# gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
+for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
+            "D=/tmp/w; sh -c 'rm -rf $D/a'",                     # D không export: xoá /a
+            "D=/tmp/w; cd /tmp && sh -c 'rm -rf $D/a'",          # xoá /a
+            "bash -lc 'rm -rf /'",
+            "D=/; bash -c 'true; D=/tmp/w'; rm -rf $D",          # D gán trong thân không ra shell cha: xoá /
+            "D=/; bash -c \"true; D=/tmp/w\"; rm -rf $D",
+            'D=/tmp/w; bash -c "rm -rf \\$D/a"',                 # \$ trong nháy kép: shell con tự thay D (rỗng), xoá /a
+            "bash -c \"true; D=/tmp/w; bash -c 'rm -rf \\$D/a'\""):  # lồng nhau: D không export sang shell cháu, xoá /a
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"thân bash -c là phạm vi shell con: {cmd!r}")
+# Thân -c của shell cục bộ trơn thừa hưởng thư mục cd, biến có từ trước lấy lại giá trị sau thân, kể cả thân lồng nhau.
+for cmd in ("cd /tmp/w && bash -c 'rm -rf src'", "D=/tmp/y/; bash -c 'echo hi'; rm -rf ${D}src",
+            "D=/tmp/y/; bash -c \"bash -c 'echo hi'\"; rm -rf ${D}src"):
+    check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"thân bash -c vô hại không được thành nghi: {cmd!r}")
+got = [full for _p, full, _c, _s in a.segments('bash -c "rm -rf \\"a b\\" \\$D"', exact=True)]
+check(got == ["bash", 'rm -rf "a b" $D'], f"thân -c nháy kép gỡ thoát như bash (`\\\"` thành `\"`, `\\$` thành `$`): {got!r}")
+# Nháy lẻ trong thân heredoc đưa vào shell hay trong comment không ghép với nháy của lệnh sau thành một chuỗi nuốt rm.
+# cd lỗi thì rm sau EOF chạy ở thư mục dự án.
+for cmd, tool in (("cd /tmp/w && bash <<'EOF'\n# don't\nEOF\nrm -rf src 'x'", "Bash"),
+                  ("cd /tmp/w && bash <<'EOF'\necho don't\nEOF\nrm -rf src 'x'", "Bash"),
+                  ("# Clean build artifacts (don't touch src)\nrm -rf build 'some dir'", "Bash"),
+                  ("# don't\nrm -rf src 'x'", "Bash"), ("# don't\nRemove-Item -Recurse src 'x'", "PowerShell")):
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS, tool), f"nháy không ghép qua thân heredoc hay comment: {tool} {cmd!r}")
+check(not a.suspicious_labels("# don't\nrm -rf node_modules 'dist'", a.SUSPICIOUS), "comment có nháy lẻ: đích vô hại vẫn vô hại")
+# `\` + xuống dòng giữa shell và `<<`: bash nối thành một lệnh, thân heredoc là lệnh của shell đó.
+for cmd in ("bash \\\n<<'EOF'\nrm -rf src\nEOF", "bash \\\n  -s <<'EOF'\nrm -rf src\nEOF",
+            "bash \\\n<<'EOF'\n# x \\\nD=/; rm -rf $D\nEOF"):  # `\` cuối comment trong thân là chữ: bash xoá /
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"dòng mở heredoc nối qua `\\`: thân đưa vào bash là lệnh: {cmd!r}")
+# `\` cuối comment là chữ, bash chạy rm ở dòng sau: cách đọc exact cũng phải đọc không nối dòng (nối thì rm vào comment).
+check(a.suspicious_labels("# don't \\\nrm -rf src 'x'", a.SUSPICIOUS), "`\\` cuối comment có nháy lẻ: rm ở dòng sau vẫn nghi")
+# Cờ trước cụm c: cờ dài, `-o`/`-O` kèm tên, cụm cờ ngắn kết thúc bằng o kèm tên, `--` sau cụm c. Bash 5.2 vẫn chạy thân
+# (rm thay bằng echo), mà mọi cách đọc khác che thân như một chuỗi.
+for cmd, label in (("bash -o pipefail -c 'rm -rf /'", "xoá đệ quy"), ("bash --login -c 'rm -rf /'", "xoá đệ quy"),
+                   ("bash -euo pipefail -c 'rm -rf /'", "xoá đệ quy"), ("bash -O extglob -c 'rm -rf /'", "xoá đệ quy"),
+                   ("bash --norc --noprofile -c 'git push --force origin main'", "force-push / xoá nhánh remote"),
+                   ("D=/tmp/w; bash -euo pipefail -c 'D=/; rm -rf $D'", "xoá đệ quy"),  # xoá /
+                   ("D=/tmp/w; bash -c -- 'rm -rf $D/a'", "xoá đệ quy"),                # xoá /a
+                   # chỉ cách đọc exact có nối dòng thấy `bash -c`: xoá /
+                   ("D=/tmp/w; bash \\\n  -c 'D=/; rm -rf $D'", "xoá đệ quy")):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(label in got, f"cờ trước -c, `--` sau -c, `\\` + xuống dòng trước -c: thân vẫn là lệnh: {cmd!r}: {got!r}")
+# Cụm cờ dài hay chuỗi cờ dài không làm audit chậm: regex thân -c không được backtrack bậc hai hay mũ (cụm c
+# `-[A-Za-z]*c[A-Za-z]*` mất ~20 giây với 30000 chữ c), lần khớp từ một shell không quét lại qua các shell sau trong chuỗi
+# cờ (`bash -o bash -o …` mất ~14 giây khi tên của -o nhận cả shell). Bản tuyến tính mất dưới 0,2 giây mỗi ca.
+import time
+slow = []
+for cmd in ("sh -" + "c" * 30000, "bash -" + "c" * 16000, "bash" + " -o" * 5000 + " x", "bash" + " --a" * 5000,
+            "bash" + " -euo pipefail" * 3000, "bash -o " * 5000, "bash" + " --bash" * 5000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên cụm cờ dài (đầu lệnh, giây): {slow}")
+# Shell có tiền tố chữ nối bằng `-` (git-bash của Git for Windows) vẫn gỡ thân -c như 96f49a6. Cách đọc khác không bù
+# được: SHELL_C không nhận cụm `-lc`, còn với `-c` trơn chúng thế env của cha vào thân.
+for cmd in ("git-bash -lc 'rm -rf /'", "git-bash.exe -lc 'rm -rf /'", "D=/tmp/w; git-bash -c 'D=/; rm -rf $D'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"shell có tiền tố chữ nối bằng `-`: thân -c vẫn là lệnh: {cmd!r}: {got!r}")
+# Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
+# từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
+# `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
+slow = []
+for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -o x-bash" * 3000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:16], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ có shell sau `-` (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -1058,6 +1129,21 @@ def line():
     s = rnd.choice([" && ", "; ", " || ", " | "]).join(rnd.choice(CORE + STEP) for _ in range(rnd.randint(1, 2)))
     return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 5))) for _ in range(3000)]
+# Lô phụ, bộ sinh riêng để lô trên giữ nguyên từng lệnh: thân bash -c/sh -c có biến, cd và lồng nhau, cờ gộp, `\` + xuống
+# dòng giữa shell và `<<`, nháy lẻ trong comment hay trong thân heredoc.
+SUB = ["bash -c 'D=/; rm -rf $D'", 'sh -c "cd /tmp/w && rm -rf src"', "D=/tmp/w", "D=/", "bash -lc 'x'",
+       "bash -lc 'rm -rf $D/a'", "sh -c 'rm -rf $D/a'", 'bash -c "rm -rf \\$D/a"', 'bash -c "true; D=/tmp/w"',
+       "bash -c 'D=/tmp/w'", "bash -c \"bash -c 'rm -rf $D'\"", "bash -c 'cd /tmp/w'", "rm -rf $D", "rm -rf ${D}src",
+       "rm -rf src 'x'", "echo don't", "echo 'a b'"]
+SUB_LINE = ["bash \\\n<<'EOF'", "bash \\\n  -s <<'EOF'", "bash <<'EOF'", "cat <<'EOF'", "EOF", "# don't", "# x \\"]
+rnd2 = random.Random(2)
+def line2():
+    if rnd2.random() < 0.3:
+        return rnd2.choice(SUB_LINE)
+    s = rnd2.choice([" && ", "; ", " || ", " | "]).join(
+        rnd2.choice(SUB if rnd2.random() < 0.6 else CORE + STEP) for _ in range(rnd2.randint(1, 3)))
+    return s + rnd2.choice(TAIL)
+fuzz += ["\n".join(line2() for _ in range(rnd2.randint(1, 5))) for _ in range(1000)]
 pairs = list(dict.fromkeys(fixture + [(tool, c) for c in fuzz for tool in ("Bash", "PowerShell")]))
 ok = {(tool, c) for tool, c, _why in NARROWING_OK}
 in_fixture = set(fixture)
