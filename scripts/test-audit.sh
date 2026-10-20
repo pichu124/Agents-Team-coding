@@ -870,12 +870,24 @@ for cmd in ("bash \\\n<<'EOF'\nrm -rf src\nEOF", "bash \\\n  -s <<'EOF'\nrm -rf 
     check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"dòng mở heredoc nối qua `\\`: thân đưa vào bash là lệnh: {cmd!r}")
 # `\` cuối comment là chữ, bash chạy rm ở dòng sau: cách đọc exact cũng phải đọc không nối dòng (nối thì rm vào comment).
 check(a.suspicious_labels("# don't \\\nrm -rf src 'x'", a.SUSPICIOUS), "`\\` cuối comment có nháy lẻ: rm ở dòng sau vẫn nghi")
+# Cờ trước cụm c: cờ dài, `-o`/`-O` kèm tên, cụm cờ ngắn kết thúc bằng o kèm tên, `--` sau cụm c. Bash 5.2 vẫn chạy thân
+# (rm thay bằng echo), mà mọi cách đọc khác che thân như một chuỗi.
+for cmd, label in (("bash -o pipefail -c 'rm -rf /'", "xoá đệ quy"), ("bash --login -c 'rm -rf /'", "xoá đệ quy"),
+                   ("bash -euo pipefail -c 'rm -rf /'", "xoá đệ quy"), ("bash -O extglob -c 'rm -rf /'", "xoá đệ quy"),
+                   ("bash --norc --noprofile -c 'git push --force origin main'", "force-push / xoá nhánh remote"),
+                   ("D=/tmp/w; bash -euo pipefail -c 'D=/; rm -rf $D'", "xoá đệ quy"),  # xoá /
+                   ("D=/tmp/w; bash -c -- 'rm -rf $D/a'", "xoá đệ quy"),                # xoá /a
+                   # chỉ cách đọc exact có nối dòng thấy `bash -c`: xoá /
+                   ("D=/tmp/w; bash \\\n  -c 'D=/; rm -rf $D'", "xoá đệ quy")):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(label in got, f"cờ trước -c, `--` sau -c, `\\` + xuống dòng trước -c: thân vẫn là lệnh: {cmd!r}: {got!r}")
 # Cụm cờ dài hay chuỗi cờ dài không làm audit chậm: regex thân -c không được backtrack bậc hai hay mũ (cụm c
-# `-[A-Za-z]*c[A-Za-z]*` mất ~20 giây với 30000 chữ c). Bản tuyến tính mất dưới 0,2 giây mỗi ca.
+# `-[A-Za-z]*c[A-Za-z]*` mất ~20 giây với 30000 chữ c), lần khớp từ một shell không quét lại qua các shell sau trong chuỗi
+# cờ (`bash -o bash -o …` mất ~14 giây khi tên của -o nhận cả shell). Bản tuyến tính mất dưới 0,2 giây mỗi ca.
 import time
 slow = []
 for cmd in ("sh -" + "c" * 30000, "bash -" + "c" * 16000, "bash" + " -o" * 5000 + " x", "bash" + " --a" * 5000,
-            "bash" + " -euo pipefail" * 3000):
+            "bash" + " -euo pipefail" * 3000, "bash -o " * 5000, "bash" + " --bash" * 5000):
     t = time.monotonic()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     t = time.monotonic() - t

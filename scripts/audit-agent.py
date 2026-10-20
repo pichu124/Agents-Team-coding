@@ -121,10 +121,15 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng
 COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
-# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), rồi chuỗi nháy đơn hay kép.
-# Cụm c tìm chữ c bằng lookahead rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
-SHELL_C_BODY = re.compile(r"\b((?:bash|sh|zsh|dash)(?:\.exe)?)(?:\s+-\w+)*?\s+-(?=[A-Za-z]*c)[A-Za-z]+\s+"
-                          r"('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
+# đơn hay kép. Cờ trước cụm c: `-x`, cờ dài `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`,
+# `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`: `-o -o …` chỉ tách được một cách, không backtrack mũ. Shell không
+# đứng sau `-`, tên không là shell: lần khớp từ một shell không đi qua shell khác (`bash -o bash -o …`, `--bash --bash …`
+# quét lại tới cuối từ mỗi shell: bậc hai). Cụm c tìm chữ c bằng lookahead rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack
+# bậc hai trên cụm dài nhiều chữ c.
+SHELL_C_BODY = re.compile(r"(?<![\w-])((?:bash|sh|zsh|dash)(?:\.exe)?)"
+                          r"(?:\s+(?:-\w+|--\w[\w-]*|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
+                          r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
