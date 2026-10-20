@@ -398,6 +398,33 @@ call("s82", "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF")
 call("s84", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF")
 call("s85", "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF")
 call("sc1", "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")                     # vô hại: phép gán chắc chạy, xoá /tmp/x/src
+# Các lệnh khác của blissful-dirac mà nền (mặc định + PR #5) bỏ sót, nay bắt được nhờ các bản port youthful-fermi tương
+# ứng (thân rỗng, đích còn biến, cd sau `||`/`|`/trước `&`, biến trong thân <<EOF, gán tạm/sau &&/trong ống). Bash 5.2: rm
+# chạy ở thư mục dự án hay xoá /src.
+call("s16", "cat <<'EOF'\nEOF\nrm -rf src")
+call("s21", "cd /tmp && rm -rf $D")
+call("s23", "true | cd /tmp && rm -rf src")
+call("s26", "( D=/tmp/x ); rm -rf $D/src")
+call("s30", "true || cd /tmp/w && rm -rf src")
+call("s31", "test -d /tmp/w || cd /tmp/w && rm -rf src")
+call("s32", "cd src || cd /tmp/w && rm -rf build2")
+call("s33", "cd /tmp/w && true & rm -rf src")
+call("s34", "cd /tmp/w && rm -rf a & rm -rf src")
+call("s56", "bash <<EOF\nD=/tmp/x; rm -rf $D/src\nEOF")
+call("s57", "cat <<EOF | bash\nexport D=/tmp/x\nrm -rf $D/src\nEOF")
+call("s58", "D=src; bash <<EOF\nD=/tmp/x; rm -rf $D\nEOF")
+call("s63", "bash <<EOF; D=dist\nrm -rf $D/src\nEOF")
+call("s64", "bash <<EOF && cd dist\nD=/tmp/x; rm -rf $D/src\nEOF")
+call("s66", "D=/tmp/x bash <<EOF\nrm -rf $D/src\nEOF")
+call("s67", "D=/tmp/x cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s68", "false && D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s69", "true || D=/tmp/x\ncat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s70", "D=src | D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s71", "echo D=/tmp/x; cat <<EOF | bash\nrm -rf $D/src\nEOF")
+call("s72", "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s73", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF')
+call("s77", "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF")
+call("s83", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -960,6 +987,19 @@ for must in ("if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF", "ca
              "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF"):
     check(must in A, f"thân `<<EOF` không nháy chỉ thấy biến mà phép gán chắc đã chạy ở shell cha: {must!r}")
 check("D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF" not in A, "phép gán chắc chạy trước thân `<<EOF`: shell cha thay D, vô hại")
+for must in ("cat <<'EOF'\nEOF\nrm -rf src", "cd /tmp && rm -rf $D",
+             "true | cd /tmp && rm -rf src", "( D=/tmp/x ); rm -rf $D/src",
+             "true || cd /tmp/w && rm -rf src", "test -d /tmp/w || cd /tmp/w && rm -rf src",
+             "cd src || cd /tmp/w && rm -rf build2", "cd /tmp/w && true & rm -rf src",
+             "cd /tmp/w && rm -rf a & rm -rf src", "bash <<EOF\nD=/tmp/x; rm -rf $D/src\nEOF",
+             "cat <<EOF | bash\nexport D=/tmp/x\nrm -rf $D/src\nEOF", "D=src; bash <<EOF\nD=/tmp/x; rm -rf $D\nEOF",
+             "bash <<EOF; D=dist\nrm -rf $D/src\nEOF", "bash <<EOF && cd dist\nD=/tmp/x; rm -rf $D/src\nEOF",
+             "D=/tmp/x bash <<EOF\nrm -rf $D/src\nEOF", "D=/tmp/x cat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "false && D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", "true || D=/tmp/x\ncat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "D=src | D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", "echo D=/tmp/x; cat <<EOF | bash\nrm -rf $D/src\nEOF",
+             "true # D=/tmp/x\nbash <<EOF\nrm -rf $D/src\nEOF", 'echo " D=/tmp/x"; bash <<EOF\nrm -rf $D/src\nEOF',
+             "true # it's\necho 'a; D=/tmp/x; b'; bash <<EOF\nrm -rf $D/src\nEOF", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF"):
+    check(must in A, f"lệnh blissful-dirac nền bỏ sót, port youthful-fermi phải bắt: {must!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
