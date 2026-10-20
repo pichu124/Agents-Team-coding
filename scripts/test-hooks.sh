@@ -56,6 +56,10 @@ new_repo "$odd" main
 # Repo ở nhánh chính có tên kết thúc bằng \ (giả lập C:\vnstock\ của PowerShell trên Linux).
 bsm="$tmp/w\\"
 new_repo "$bsm" main
+# Repo ở nhánh chính có tên là mẫu glob khớp một repo ở nhánh feature (a[x]b khớp axb).
+globm="$tmp/a[x]b"
+new_repo "$globm" main
+new_repo "$tmp/axb" feat/x
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
@@ -262,6 +266,9 @@ EOF
   expect_guard ask "git -C \"$on_main\" push && git log --grep=push"
   expect_guard ask "git push && cd \"$work\" && git push" "$on_main"
   expect_guard ask "cd \"$odd\" && git push"
+  # Đường dẫn không được bị glob thành thư mục khác.
+  expect_guard ask "cd \"$globm\" && git push"
+  expect_guard ask "git -C \"$globm\" push"
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.

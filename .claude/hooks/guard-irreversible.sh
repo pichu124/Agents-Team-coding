@@ -160,6 +160,11 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|if|builtin|command|exec)[[:space:]])[[:space:]]*'
   dirs="$base$nl"
   unknown=""
+  # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
+  # here-doc: như <<< ở text_grep (lib.sh), here-doc lớn (và mọi here-doc trên bash < 5.1) đi qua
+  # file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push lọt qua.
+  set -f
+  IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS"; do
     CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
@@ -167,40 +172,34 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
     for f in "${forms[@]}"; do
       cur="$base"
       cds="$base$nl"
-      while IFS= read -r m; do
+      for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}"); do
         [ -n "$m" ] || continue
         t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
         cur="$(resolve_dir "$cur" "$t")"
         cds="$cds$cur$nl"
-      done <<EOF
-$(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}")
-EOF
+      done
       dirs="$dirs$cds"
-      while IFS= read -r m; do
+      for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
-        while IFS= read -r c; do
+        for c in $cds; do
           [ -n "$c" ] && dirs="$dirs$(resolve_dir "$c" "$t")$nl"
-        done <<EOF
-$cds
-EOF
-      done <<EOF
-$(printf '%s' "$f" | grep -Eo -- "$GDRE")
-EOF
+        done
+      done
     done
   done
   dirs="$(printf '%s' "$dirs" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
-  while IFS= read -r d; do
+  for d in $dirs; do
     [ -n "$d" ] || continue # git -C "" là thư mục của chính hook, không phải của lệnh
     branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
     fi
-  done <<EOF
-$dirs
-EOF
+  done
+  IFS=$' \t\n'
+  set +f
 fi
 
 if [ -n "$reason" ]; then
