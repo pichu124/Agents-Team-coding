@@ -172,8 +172,8 @@ ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)"
 SETS_NAMES = {"read", "mapfile", "readarray", "getopts", "local", "for"}
 EVAL = re.compile(r"(?<![\w-])(?:eval|source)(?![\w-])"
                   r"|^(?:[({!]\s*|(?:if|then|do|else|elif|while|until|builtin|command|time)\s+)*\.(?=\s|$)")
-NAME = re.compile(r"[A-Za-z_]\w*")
-CD =re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
+IDENT = re.compile(r"[A-Za-z_]\w*")
+CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).
 CD_WORD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+[^\s&-][^\s&]*\s*$", re.IGNORECASE)
 # Lệnh đổi thư mục ở vị trí lệnh bất kỳ trong đoạn (`builtin cd`, `time cd`, `FOO=1 cd`, `source`), hoặc `.` đầu lệnh.
@@ -326,7 +326,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
             plain = re.sub(r"[\"']", " ", plain)
         # strict: phép gán trong một khâu của ống chạy ở shell con (khâu cuối có thể không, lastpipe), sau `||` có thể không
         # chạy: không biết giá trị
-        piped = strict and (before in ("|", "||") or (pieces[i + 1] if i + 1 < len(pieces) else None) == "|")
+        piped = strict and (before in ("|", "||") or pieces[i + 1:i + 2] == ["|"])
         for name, val in ASSIGN.findall(full):
             if piped:
                 env.pop(name, None)
@@ -337,11 +337,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
             words = set(re.split(r"[\s(){}!]+", plain))
             if EVAL.search(lead):
                 env.clear()
-            elif words & SETS_NAMES or words & {"printf", "wait"} and words & {"-v", "-p"}:
+            elif words & SETS_NAMES or (words & {"printf", "wait"} and words & {"-v", "-p"}):
                 for word in words:
                     env.pop(word, None)
             elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in words):
-                env.update(dict.fromkeys(filter(NAME.fullmatch, words), ""))
+                env.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
