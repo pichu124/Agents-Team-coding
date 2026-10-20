@@ -196,7 +196,7 @@ mark='<!-- agent-team:kit-end'
 tpl_bytes=$(($(wc -c < "$tpl")))
 kit_part_ok() { head -c "$tpl_bytes" "$1" | cmp -s - "$tpl"; } # file mở đầu đúng bằng toàn bộ template mới
 own_part_is() { tail -c +"$((tpl_bytes + 1))" "$1" | cmp -s - "$2"; } # phần sau template giống hệt file $2
-to_crlf() { awk '{ printf "%s\r\n", $0 }'; }
+to_crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; } # file đã CRLF (clone trên Windows) giữ nguyên
 rules_repo() { # rules_repo <thư mục>: repo có CLAUDE.md riêng, đã có .claude/rules/
   new_repo "$1"
   echo "# CLAUDE.md của dự án" > "$1/CLAUDE.md"
@@ -249,9 +249,9 @@ EOF
 sep_own_x="$tmp/sep-own-x.md" # dòng trống ngăn cách + mục riêng
 { echo; cat "$own_x"; } > "$sep_own_x"
 
-# H. Template có đúng một dòng dấu, là dòng cuối, kết thúc bằng newline.
+# H. Template có đúng một dòng dấu, là dòng cuối, kết thúc bằng newline (LF, hoặc CRLF khi clone trên Windows).
 assert "H: template phải có đúng một dòng bắt đầu bằng $mark" [ "$(grep -c "^$mark" "$tpl")" = 1 ]
-case "$(tail -n 1 "$tpl")" in
+case "$(tail -n 1 "$tpl" | tr -d '\r')" in
   "$mark"*'-->') ok ;;
   *) bad "H: dòng cuối của template phải là dòng dấu $mark ... -->" ;;
 esac
