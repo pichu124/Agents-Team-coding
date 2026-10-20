@@ -41,6 +41,8 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
 | Script của kit không cho `grep -q` đọc stdin từ pipe (pipefail đọc SIGPIPE thành "không khớp") | `scripts/validate-kit.sh` (báo file:dòng, sửa bằng `text_grep` của `lib.sh`) |
 | Không bớt ca "phải hỏi" của guard để cho dễ | `scripts/guard-ask-floor` (test-hooks đỏ khi số ca dưới sàn) |
+| Kit chạy được trên macOS (`/bin/bash` 3.2, BSD grep, awk BWK) và Git Bash Windows (gawk bỏ `\r` khi đọc, `core.autocrlf=true`) | CI job `portable` trong `.github/workflows/check.yml` (macOS và Windows thật) |
+| Guard trả lời trong timeout của hook (quá timeout thì Claude Code cho lệnh chạy mà không hỏi): thay chuỗi trên lệnh dài bằng awk, không dùng `${x//a/b}` (bash 3.2 chậm bậc hai, giữ dấu nháy của chuỗi thay) | `scripts/test-hooks.sh` (lệnh dài chạy với timeout trong `settings.json`; ca nối dòng chạy thêm với `BASH_COMPAT=42`) |
 | Sửa phân tích lệnh của audit không được làm mục A bỏ sót lệnh mà bản trước vẫn báo | `scripts/test-audit.sh` (so với bản trước trên lệnh fixture và fuzz; `NARROWING_OK` cho thu hẹp có chủ ý) |
 | Phiên có bản chép (cùng uuid ở nhiều file) không được đếm hai lần trong báo cáo audit | `scripts/test-audit.sh` (chạy lại mọi fixture kèm một bản chép đầy đủ, báo cáo phải y hệt) |
 | Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |

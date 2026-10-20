@@ -48,7 +48,7 @@ scripts/
   check.local.sh                  check riêng của repo kit (không chép sang dự án khác)
 templates/agent-team-rules.md     quy ước đội, dùng khi dự án đã có CLAUDE.md
 examples/vnstock-dashboard/       check.local.sh mẫu cho dự án Python + pytest
-.github/workflows/check.yml       CI chạy ./scripts/check.sh
+.github/workflows/check.yml       CI chạy ./scripts/check.sh trên Linux, macOS (bash 3.2) và Git Bash Windows
 ```
 
 ## Bắt đầu nhanh
