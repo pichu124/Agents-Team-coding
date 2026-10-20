@@ -328,27 +328,43 @@ done
 # Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
 # kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
 # JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
-# long_input <dòng đầu> <cwd>: dòng đầu, rồi 12000 dòng `echo line-N`.
+# long_input <dòng đầu> <cwd> [cuối mỗi dòng, viết dạng JSON]: dòng đầu, rồi 12000 dòng `echo line-N`.
 long_input() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
-  printf '\\necho line-%s' {1..12000}
+  # shellcheck disable=SC2059  # phần cuối dòng ghép vào định dạng
+  printf "${3:-}"'\\necho line-%s' {1..12000}
   printf '","description":"test"}}\n'
 }
 long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
 long_input 'git push' "$on_main" > "$tmp/long-push.json"
+# Mọi dòng kết thúc bằng \ nối dòng: guard nối dòng trên cả lệnh (bash 3.2 từng mất ~50 giây với lệnh 15 KB).
+long_input 'npm run deploy' "$work" ' \\\\' > "$tmp/long-cont.json"
+# Claude Code dừng hook chạy quá timeout trong settings.json rồi cho lệnh chạy mà KHÔNG hỏi, nên guard
+# chạy với đúng giới hạn đó (cần perl; không có thì không giới hạn). macOS từng mất hàng phút ở đây.
+guard_timeout="$(awk '/guard-irreversible\.sh/ { f = 1 } f && match($0, /"timeout"[ \t]*:[ \t]*[0-9]+/) {
+  t = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", t); print t; exit }' "$root/.claude/settings.json" 2>/dev/null)"
+guard_timeout="${guard_timeout:-10}"
+# Dừng cả nhóm tiến trình: grep hay sed con còn chạy sẽ giữ stdout, $(...) phải đợi nó.
+hook_limit() {
+  command -v perl >/dev/null 2>&1 || { "$@"; return; }
+  perl -e '$t = shift; $p = fork; defined $p or die "fork: $!";
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "KILL", -$p; waitpid $p, 0; exit 142 };
+    alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
+}
 for mode in $modes; do
-  for f in long-deploy long-push; do
-    out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
+  for f in long-deploy long-push long-cont; do
+    out="$(KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
     case "$out" in
       *'"permissionDecision":"ask"'*) ok ;;
-      *) bad "guard phải hỏi [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+      *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
     esac
   done
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
 # ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
 for mode in $modes; do
-  out="$( (trap '' PIPE; KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-deploy.json") 2>"$tmp/sigpipe.err")"
+  out="$( (trap '' PIPE; KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-deploy.json") 2>"$tmp/sigpipe.err")"
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
     *) bad "guard phải hỏi [$mode] khi SIGPIPE bị bỏ qua: lệnh dài hơn pipe buffer → [$out]" ;;
