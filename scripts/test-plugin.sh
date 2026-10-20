@@ -76,7 +76,7 @@ push_input() {
 }
 expect_ask() {
   run guard-irreversible "$1" "$(push_input "$1")"
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"ask"'; then ok; else bad "$2 (exit $rc, out=$out, err=$(cat "$tmp/err"))"; fi
+  if [ "$rc" -eq 0 ] && text_grep "$out" -q '"ask"'; then ok; else bad "$2 (exit $rc, out=$out, err=$(cat "$tmp/err"))"; fi
 }
 expect_silent() {
   run guard-irreversible "$1" "$(push_input "$1")"
@@ -189,7 +189,7 @@ printf '#!/usr/bin/env bash\necho "lint hỏng"\nexit 1\n' > "$red/scripts/check
 chmod +x "$red/scripts/check.sh"
 echo x > "$red/a.py"
 run stop-gate "$red" "$(stop_input "$red" red)"
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"block"' && printf '%s' "$out" | grep -q "lint hỏng"; then ok; else bad "Stop gate của plugin phải chặn khi check đỏ (exit $rc, out=$out)"; fi
+if [ "$rc" -eq 0 ] && text_grep "$out" -q '"block"' && text_grep "$out" -q "lint hỏng"; then ok; else bad "Stop gate của plugin phải chặn khi check đỏ (exit $rc, out=$out)"; fi
 echo x > "$plain/a.py"
 run stop-gate "$plain" "$(stop_input "$plain" plain)"
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok; else bad "dự án không có scripts/check.sh: Stop gate của plugin phải im lặng (exit $rc, out=$out)"; fi

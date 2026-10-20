@@ -361,7 +361,7 @@ stop_input() { printf '{"hook_event_name":"Stop","session_id":"%s","cwd":"%s","s
 run_stop() { stop_input "${1:-$repo}" | AGENT_STOP_GATE_MAX=2 "$hooks/stop-gate.sh" 2>/dev/null; }
 # Chặn = JSON {"decision":"block"} với exit 0, hoặc exit 2 khi không có jq/Python.
 blocked() {
-  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q '"decision": *"block"'; }
+  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && text_grep "$out" -q '"decision": *"block"'; }
 }
 
 out="$(run_stop)"; code=$?
@@ -381,7 +381,7 @@ case "$out" in *"1/2)"*) ok ;; *) bad "stop-gate: lý do chặn phải ghi số 
 out="$(run_stop)"; code=$?
 assert "stop-gate: lần chặn thứ 2 vẫn phải chặn (exit $code)" blocked
 out="$(run_stop)"; code=$?
-if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
+if [ "$code" -eq 0 ] && text_grep "$out" -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
 
 # Bộ đếm phải về 0 khi không còn thay đổi: chặn 1 lần, bỏ thay đổi, rồi đỏ lại → bắt đầu từ 1.
 run_stop >/dev/null
