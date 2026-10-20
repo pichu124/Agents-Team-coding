@@ -1196,6 +1196,220 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
 PYEOF
 fi
 
+# Oracle bash: đối chiếu mục A với chính bash. Lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã cần
+# hơn 10 commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…), và phép so nhãn ở trên không thấy
+# lỗi mà bản trước và bản này cùng có. Bước này chạy một bộ lệnh fuzz cố định bằng bash thật, `rm` thay bằng stub chỉ ghi
+# thư mục và đích, rồi đỏ khi bash xoá đích nằm ngoài thư mục tạm mà suspicious_labels trả []. An toàn: stub là đường dẫn
+# tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh có git, push, reset, clean,
+# Remove-Item hay `>` bị bỏ hẳn, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là /dev/null, có timeout.
+# Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2, sh là dash.
+# Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm.
+if [ ! -f scripts/install-kit.sh ]; then
+  printf '• audit: bỏ qua oracle bash (chỉ chạy trong repo kit)\n'
+else
+  base_test="" base_why="$skip$miss"
+  if [ -z "$base_why" ]; then
+    if git show "$ref:./scripts/test-audit.sh" >"$tmp/test-audit-base.sh" 2>/dev/null; then
+      base_test="$tmp/test-audit-base.sh" base_why="$ref ($why)"
+    else
+      base_why="không có scripts/test-audit.sh ở $ref"
+    fi
+  fi
+  "$py" -I -B - "$tmp/oracle" "$base_test" "$base_why" <<'PYEOF' || status=1
+import ast, glob, importlib.util, os, random, re, shutil, signal, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor
+for s in (sys.stdout, sys.stderr):
+    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
+root, base_test, base_why = sys.argv[1:4]
+# Lệnh bash xoá đích ngoài thư mục tạm mà mục A vẫn bỏ sót, có từ trước bước này: (lệnh, "lý do"). Sửa được ca nào thì xoá
+# ca đó (bước này đỏ khi một ca đã hết sót mà còn nằm đây). Chỉ được giảm: thêm ca so với bản trước là đỏ, ca sót mới phải sửa.
+KNOWN_MISSES = [
+    ('cd /tmp/w && rm -rf $D/a',
+     'biến chưa gán ở đầu đích: bash thay bằng rỗng, `$D/a` thành `/a`, mục A coi là đường tương đối trong thư mục cd'),
+    ("echo 'a b' && cd /tmp/w && sh -c 'rm -rf $D/a' # don't",
+     'biến chưa gán ở đầu đích: bash thay bằng rỗng, `$D/a` thành `/a`, mục A coi là đường tương đối trong thư mục cd'),
+    ('unset D && D=/tmp/w/ | rm -rf ${D}src',
+     'phép gán trong một khâu của ống chạy ở shell con, không tới khâu sau: D rỗng, bash xoá src của dự án'),
+    (": <<'EOF'\nEOF\nbash <<EOF\nrm -rf src # don't",
+     'thân heredoc rỗng: dòng EOF ngay sau dòng mở không được nhận là dấu đóng, mọi dòng sau thành thân (dữ liệu)'),
+    ('cat <<\'EOF\'\nEOF\nbash -c \'cd /tmp/w && rm -rf src\'; bash -c "rm -rf $D/a"',
+     'thân heredoc rỗng: dòng EOF ngay sau dòng mở không được nhận là dấu đóng, mọi dòng sau thành thân (dữ liệu)'),
+    ('cd / || cd /tmp/nope && rm -rf /tmp/w\\\n  src',
+     '`a || cd X && rm`: a thành công thì bash bỏ qua cd X mà vẫn chạy rm ở thư mục cũ, mục A lấy thư mục X'),
+]
+t0 = time.monotonic()
+spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
+a = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(a)
+fails = []
+known = dict(KNOWN_MISSES)
+if base_test:
+    try:
+        m = re.search(r"^KNOWN_MISSES = \[\n(.*?)^\]$", open(base_test, encoding="utf-8").read(), re.M | re.S)
+        before = None if m is None else {c for c, _why in ast.literal_eval("[" + m[1] + "]")}
+    except Exception as exc:  # bản trước có danh sách mà không đọc được thì không canh được: đỏ, đừng bỏ qua
+        fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
+        before = set(known)
+    added = [] if before is None else [c for c in known if c not in before]
+    if added:
+        fails.append(f"KNOWN_MISSES chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
+                     + "; ".join(repr(c) for c in added) + ". Sửa audit-agent.py cho ca đó, đừng ghi thêm.")
+for c in known:
+    labels = a.suspicious_labels(c, a.SUSPICIOUS)
+    if labels:
+        fails.append(f"ca trong KNOWN_MISSES đã hết sót (mục A báo {', '.join(labels)}): xoá nó khỏi danh sách: {c!r}")
+
+def finish(note):
+    for f in fails:
+        print("✘ audit: oracle bash:", f, file=sys.stderr)
+    if note:
+        print(note)
+    sys.exit(1 if fails else 0)
+
+bash = shutil.which("bash")
+if os.name != "posix" or sys.platform.startswith(("cygwin", "msys")):
+    finish("• audit: bỏ qua oracle bash (không chạy trên Windows)")
+if not bash or not shutil.which("sh"):
+    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc sh)")
+ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                     universal_newlines=True, timeout=30).stdout.strip()
+if not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
+    finish(f"• audit: bỏ qua oracle bash (cần bash 5+, máy có bash {ver or '?'})")
+os.makedirs(root)
+root = os.path.realpath(root)
+if not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
+    finish(f"• audit: bỏ qua oracle bash (đường thư mục tạm có ký tự lạ: {root!r})")
+d = root
+while True:
+    if os.path.exists(os.path.join(d, ".git")):
+        finish(f"• audit: bỏ qua oracle bash (thư mục tạm {root} nằm trong repo git {d})")
+    if os.path.dirname(d) == d:
+        break
+    d = os.path.dirname(d)
+
+# Bộ sinh cố định: 1–4 dòng, mỗi dòng 1–3 lệnh nối bằng && ; || |, lệnh cuối là lõi `rm -rf <đích>` hay một thân -c. Cấu
+# trúc từng làm phân tích đọc sai: nối dòng, comment có `'` lẻ, heredoc đưa vào shell hay làm dữ liệu, bash -c có biến và lồng
+# nhau, cd (thành công, lỗi, builtin, nền), subshell, biến (gán, export, unset), `--`, `..`.
+RM = ["rm -rf src", "rm -rf src 'x'", "rm -rf $D", "rm -rf $D/a", "rm -rf ${D}src", "rm -rf -- -x", "rm -rf /tmp/w/x -- -x",
+      "rm -rf /tmp/w/x", "rm -rf /tmp/w\\\n  src", "rm -rf ../../src", "cd /tmp/w & rm -rf src"]
+CD = ["cd /tmp/w", "cd /tmp/w/s", "cd /tmp/nope", "cd src", "cd ..", "cd -", "cd", "cd /", "builtin cd /", "pushd /tmp/w",
+      "popd", "(cd /tmp/w)", "(cd /tmp/w && true)", "( cd / )"]
+VAR = ["D=/tmp/w", "D=/tmp/w/", "D=/", "D=", "export D=/tmp/w", "export D=/", "unset D", "echo 'a b'", 'echo "a b"', "true"]
+SHC = ["bash -c 'rm -rf $D/a'", "sh -c 'rm -rf $D/a'", "bash -lc 'rm -rf src'", "bash -c 'D=/; rm -rf $D'",
+       'bash -c "rm -rf $D/a"', 'bash -c "rm -rf \\$D/a"', "bash -c 'cd /tmp/w && rm -rf src'",
+       'sh -c "cd /tmp/w; rm -rf src"', "bash -c 'D=/tmp/w'", "bash -c \"bash -c 'rm -rf \\$D'\"",
+       "bash -c \"D=/; bash -c 'rm -rf $D'\"", "bash -c 'cd /tmp/w'", "bash -euo pipefail -c 'D=/; rm -rf $D'",
+       "bash -c -- 'rm -rf $D/a'"]
+LINE = ["bash <<'EOF'", "bash <<EOF", "sh <<'EOF'", "cat <<'EOF' | bash", "cat <<EOF | sh", "cat <<'EOF'", ": <<'EOF'",
+        "bash \\\n<<'EOF'", "EOF", "EOF", "# x \\", "# don't", "echo don't"]
+TAIL = ["", "", "", "", " \\", " # don't", " # x \\"]
+SEP = [" && ", " && ", "; ", " || ", " | "]
+rnd = random.Random(1)
+def line():
+    if rnd.random() < 0.3:
+        return rnd.choice(LINE)
+    parts = [rnd.choice(CD + VAR + SHC) for _ in range(rnd.randint(0, 2))] + [rnd.choice(RM + SHC)]
+    s = parts[0]
+    for p in parts[1:]:
+        s += rnd.choice(SEP) + p
+    return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
+fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)]
+FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
+cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
+
+# Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd), tmp thay cho /tmp (mục A đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w),
+# stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không xoá gì, chỉ ghi.
+STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$(dirname \"$0\")/log.$$\"\n"
+env = {"PATH": os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(p)),
+       "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C"}
+def setup(k):
+    base = os.path.join(root, str(k))
+    for sub in ("p", "tmp/w/s"):
+        os.makedirs(os.path.join(base, sub))
+    with open(os.path.join(base, "stub"), "w") as fh:
+        fh.write(STUB)
+    os.chmod(os.path.join(base, "stub"), 0o755)
+    return base
+def rm_targets(args):
+    """Đích của rm như GNU rm đọc: trước `--` đầu tiên, token mở bằng `-` (trừ `-` trơn) là cờ, ở đâu cũng vậy."""
+    end = args.index("--") if "--" in args else len(args)
+    return [t for t in args[:end] if t and (t == "-" or not t.startswith("-"))] + [t for t in args[end + 1:] if t]
+def run(base, cmd):
+    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd."""
+    tmpd = os.path.join(base, "tmp")
+    text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
+    if re.search(r"\brm\b", text.replace(root, "")) or FORBID.search(text.replace(root, "")):
+        return "văn bản chạy còn rm hay lệnh bị cấm", [], []
+    for f in glob.glob(os.path.join(base, "log.*")):
+        os.remove(f)
+    p = subprocess.Popen([bash, "-c", text], cwd=os.path.join(base, "p"), env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    err = ""
+    try:
+        p.communicate(timeout=30)  # đọc tới EOF: chờ cả job nền còn giữ stdout (`a && cd x & rm …`)
+    except subprocess.TimeoutExpired:
+        err = "quá 30 giây"
+    try:
+        os.killpg(p.pid, signal.SIGKILL)  # tiến trình nào còn sót trong nhóm không được ghi lẫn sang lệnh sau
+    except ProcessLookupError:
+        pass
+    p.wait()
+    p.stdout.close()
+    calls, bad = [], []
+    for f in sorted(glob.glob(os.path.join(base, "log.*"))):
+        with open(f, "rb") as fh:
+            pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
+        for t in rm_targets(args):
+            calls.append((pwd, t))
+            r = os.path.normpath(os.path.join(pwd, t))
+            if r != tmpd and not r.startswith(tmpd + "/"):
+                rel = os.path.relpath(r, os.path.join(base, "p"))
+                bad.append(r if rel.startswith("../../..") else "<dự án>/" + rel if rel != "." else "<dự án>")
+    return err, calls, bad
+
+W = min(8, 2 * (os.cpu_count() or 1))
+bases = [setup(k) for k in range(W)]
+# Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
+for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
+                  ("bash -lc 'rm -rf /tmp/w/x src'", ["<dự án>/src"])):
+    err, calls, bad = run(bases[0], cmd)
+    if err or not calls or bad != want:
+        fails.append(f"oracle không dựng đúng: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, "
+                     f"đích ngoài thư mục tạm {bad} (phải là {want})")
+if fails:
+    finish("")
+with ThreadPoolExecutor(W) as ex:
+    res = [r for rs in ex.map(lambda k: [(c,) + run(bases[k], c) for c in cmds[k::W]], range(W)) for r in rs]
+shutil.rmtree(root, ignore_errors=True)
+misses, danger, hit = [], 0, set()
+for c, err, _calls, bad in res:
+    if err:
+        fails.append(f"{c!r}: {err}")
+    if not bad:
+        continue
+    danger += 1
+    if a.suspicious_labels(c, a.SUSPICIOUS):
+        continue
+    if c in known:
+        hit.add(c)
+    else:
+        misses.append((len(c), c, sorted(set(bad))))
+if danger < len(cmds) // 4:  # bộ sinh hay stub hỏng thì phép so vô nghĩa
+    fails.append(f"chỉ {danger}/{len(cmds)} lệnh xoá đích ngoài thư mục tạm: bộ sinh hay stub hỏng")
+if misses:
+    fails.append(f"mục A bỏ sót {len(misses)} lệnh mà bash xoá đích ngoài thư mục tạm (ngắn nhất trước):\n"
+                 + "\n".join(f"  {c!r}: bash xoá {', '.join(bad)}" for _n, c, bad in sorted(misses)[:10])
+                 + "\n  Sửa cách segments()/suspicious_labels đọc cấu trúc đó (thêm một cách đọc rồi lấy hợp, như exact hay "
+                 "nối dòng). Không ghi thêm vào KNOWN_MISSES: danh sách chỉ được giảm.")
+gone = [c for c in known if c not in hit and not a.suspicious_labels(c, a.SUSPICIOUS)]
+for c in gone:  # mục A vẫn không báo, mà bash ở máy này không xoá gì ngoài thư mục tạm (sh khác dash?): chỉ ghi chú
+    print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
+finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy bằng bash {ver} thật (rm thay bằng stub), "
+       f"{danger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong KNOWN_MISSES "
+       f"({time.monotonic() - t0:.0f} giây)")
+PYEOF
+fi
+
 # Bất biến khi có bản chép: worker khởi động lại hay resume chép phiên sang file khác, các dòng giữ uuid. Bộ đếm cộng dồn
 # đếm chúng hai lần; đã vá từng bộ một (3e86d90 mục I/J, PR #1 mục E/F, rồi old_entries_skipped) vì không test nào canh
 # mọi bộ đếm cùng lúc. Bước này chạy lại mọi thư mục phiên ở trên (A, dòng thiếu uuid được gán uuid tất định) và A kèm
