@@ -2347,21 +2347,23 @@ for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
 sbx = sys.argv[1]
 # Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng sàn này. Đo trên
-# bash 5.2: 2481, trong đó 156 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với cd nhiều tham số, còn bash 3.2 (/bin/bash của
-# macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là 2481 - 156 = 2325, làm tròn xuống. CHỈ ĐƯỢC NÂNG. Hạ
+# bash 5.2: 2655, trong đó 165 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với cd nhiều tham số, còn bash 3.2 (/bin/bash của
+# macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là 2655 - 165 = 2490, làm tròn xuống. CHỈ ĐƯỢC NÂNG. Hạ
 # sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì sửa phân tích lệnh
 # trong audit-agent.py.
-ORACLE_FLOOR = 2300
-N = 4000  # khoảng 10 giây trên 4 CPU
+ORACLE_FLOOR = 2400
+N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc.
-#   - nháy (' hay ") trong comment hay trong thân heredoc (ngữ pháp không có nháy nào ngoài 'EOF')
+#   - nháy (' hay ") trong comment, nháy lẻ cặp hay trải nhiều dòng trong thân heredoc (ngữ pháp chỉ có nháy ở 'EOF' và giá
+#     trị gán "x /", trọn cặp trên một dòng)
 #   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
 #   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
 #   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
 #   - gán biến trong pipeline, gán tạm (`D=x cmd`), gán sau `&&`/`||`, kể cả nhóm `{ }` có phép gán ở các chỗ đó
 #   - `..` có nháy hay thoát
 #   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
+#   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
 if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
     print(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
     sys.exit(0)
@@ -2381,14 +2383,19 @@ RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `r
 rnd = random.Random(7)
 pick = rnd.choice
 CD_T = [REAL] * 6 + [GONE] * 3 + ["dist", "node_modules", "src", "..", "/", "~", "-"]
-RM_T = ["src"] * 6 + [".", "$D", "$D/src", "-- -x", "dist src", "dist", "node_modules/x", "build", REAL + "/x", "~/x", "../src"]
-D_V = [REAL, REAL, "src", "dist", "/", "~"]
+# Đích có biến sau phần trông lành, và giá trị đưa nó ra ngoài (`x /` tách thành hai đích): audit không thay được biến thì đích
+# chữ trông vô hại.
+VAR_T = [REAL + "/$D", "node_modules/$D", "dist/$D"]
+D_OUT = ["..", "../..", "../proj", '"x /"']
+RM_T = ["src"] * 6 + [".", "$D", "$D/src", "-- -x", "dist src", "dist", "node_modules/x", "build", REAL + "/x", "~/x", "../src"] + VAR_T
+D_V = [REAL, REAL, "src", "dist", "/", "~"] + D_OUT
 COMMENT = ["# a", "# a ; b", "# a && b", "# a | b", "# x &&", "# x |", "# cd " + REAL + " &&", "# cd dist"]
 OTHER = ["true"] * 4 + ["false"] * 2 + [":", "echo a", "popd", "wait", "echo a\\|#b", "echo a\\|#b"]
 P_HD, P_COMP, P_CD, P_RM, P_OTHER = .15, .25, .35, .3, .25
 P_OPC, P_TRC, P_LINEC = .3, .3, .1  # comment sau &&/||/|, cuối dòng, dòng riêng
 TOPLEN = [1, 2, 2, 3, 3, 4]
 P_TRAP = .5
+P_VAR = .3  # trong các bẫy: bẫy biến
 
 
 def cd():
@@ -2463,10 +2470,32 @@ def trap_items(depth, top):
     return items
 
 
+def var_trap(depth, top):
+    """Bẫy biến: D gán giá trị đưa đích ra ngoài ở shell này, gán lại trong subshell, trước `&`, trong thân heredoc (không đổi D
+    của shell này) hay gán thường, nhiễu, rồi rm đích có $D sau phần trông lành. Cách đọc cũ của audit giữ phép gán lại, cách
+    đọc exact bỏ hết biến ở ranh giới shell con: cả hai đều có thể làm đích chữ trông vô hại."""
+    items = [item(depth, top) for _ in range(rnd.randint(0, 1))]
+    items.append(([pick(["D=", "export D="]) + pick(D_OUT)], "assign", True))
+    v = "D=" + pick(D_V)
+    k = rnd.randrange(4 if top else 3)  # heredoc chỉ ở mức ngoài cùng, như heredoc()
+    if k == 0:
+        items.append((["( " + v + " )"], "", False))
+    elif k == 1:
+        items.append(([v + " & true"], "", False))
+    elif k == 2:
+        items.append(([v], "assign", True))
+    else:
+        items.append(([pick(["bash <<'EOF'", "bash <<EOF", "cat <<EOF | bash"]) + "\n" + v + "\nEOF"], "heredoc", False))
+    if rnd.random() < 0.5:
+        items.append(item(depth, top))
+    items.append(([RM, " -rf " + pick(VAR_T)], "", False))
+    return items
+
+
 def lst(depth, top):
     """(mảnh, có phép gán chạy ở shell này)."""
     if rnd.random() < P_TRAP:
-        items = trap_items(depth, top)
+        items = var_trap(depth, top) if rnd.random() < P_VAR else trap_items(depth, top)
     else:
         items = [item(depth, top) for _ in range(pick(TOPLEN) if top else rnd.randint(1, 3))]
     out, bg = [], False
