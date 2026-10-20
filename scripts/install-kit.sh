@@ -129,9 +129,10 @@ rules_mark='<!-- agent-team:kit-end'
 # own_part <file cũ> <có dấu 0|1>: in phần dự án tự viết trong file cũ.
 # Có dấu: mọi thứ sau dòng dấu đầu tiên, nguyên văn. Không có dấu (bản cài cũ): dòng trống + các mục
 # heading # hoặc ## (ngoài code fence) mà template không có, nguyên văn; ### trở xuống thuộc mục cha.
-# \r đi qua awk dưới dạng \001: gawk của Git for Windows bỏ \r khi đọc, phần riêng CRLF sẽ thành LF.
+# \r đi qua awk dưới dạng \001: gawk của Git for Windows bỏ \r khi đọc, phần riêng CRLF sẽ thành LF. tr đọc
+# theo byte (LC_ALL=C): tr của macOS trong locale UTF-8 dừng ở byte không phải UTF-8. Byte \001 vốn có (rất hiếm) thành \r.
 own_part() {
-  tr '\r' '\001' < "$1" | awk -v has_mark="$2" -v mark="$rules_mark" '
+  LC_ALL=C tr '\r' '\001' < "$1" | awk -v has_mark="$2" -v mark="$rules_mark" '
     function is_heading(s,   t, c, n) { # cập nhật trạng thái code fence; 1 nếu s là heading cấp 1-2 ngoài fence
       t = s # fence được thụt tối đa 3 dấu cách (không dùng / ? ? ?/: mawk 1.3.4 chỉ khớp 1 dấu cách)
       if (match(t, /^ +/) && RLENGTH <= 3) t = substr(t, RLENGTH + 1)
@@ -158,7 +159,7 @@ own_part() {
       if (keep && !kept++) print ""
     }
     keep
-  ' "$rules_tpl" - | tr '\001' '\r'
+  ' "$rules_tpl" - | LC_ALL=C tr '\001' '\r'
 }
 
 if [ -f "$target/CLAUDE.md" ]; then
