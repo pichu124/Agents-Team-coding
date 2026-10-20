@@ -287,7 +287,7 @@ call("hv1", "bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF")                     # D 
 call("hv2", "D=/srv/; bash <<EOF\nD=/tmp/x/\nrm -rf ${D}src\nEOF")          # shell cha thay D=/srv/: xoá /srv/src
 call("hv3", "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF")        # D rỗng: xoá /src (chạy ở /tmp/x)
 call("hv4", "D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF")        # `\$`: shell con thay, xoá /srv/src
-call("hv5", "D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF")                   # vô hại: shell cha thay D, xoá /tmp/y/src
+call("hv5", "D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF")                   # bash xoá /tmp/y/src, audit báo thừa (s86–s91)
 # Thân <<'EOF' chỉ được đưa vào bash nhờ `\` cuối dòng mở kéo `| bash`: biến đã export của shell cha vẫn thấy trong thân.
 call("hv6", "export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF")  # xoá /srv/src (chạy ở /tmp/x)
 call("hv7", "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF")               # xoá /srv/src
@@ -397,7 +397,16 @@ call("s81", "PWD=/tmp/x; cd src; bash <<EOF\nrm -rf $PWD\nEOF")
 call("s82", "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF")
 call("s84", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF")
 call("s85", "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF")
-call("sc1", "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")                     # vô hại: phép gán chắc chạy, xoá /tmp/x/src
+call("sc1", "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF")                     # bash xoá /tmp/x/src, audit báo thừa (s86–s91)
+# Audit không đoán biến của shell cha trong thân `<<EOF` không nháy (blissful-dirac cd828ea): vòng lặp thế lại thân mỗi lần
+# chạy, bash lấy cả từ `EOF.x`, `EOF-1`, `EOF\r` làm delimiter (audit chỉ đọc `EOF`), shell con brace-expand giá trị đã thế.
+# Bash 5.2: rm xoá /src hay /x/src.
+call("s86", "D=/tmp/x\nwhile bash <<EOF\nrm -rf $D/src\ntest -n \"$D\"\nEOF\ndo unset D\ndone")
+call("s87", "D=/tmp/x\nbash <<EOF.x\ntrue\nEOF.x\nunset D\nrm -rf $D/src")
+call("s88", "D=/tmp/x\nbash <<EOF-1\nEOF-1\nD=\nrm -rf $D/src")
+call("s89", "D=/tmp/x\nbash <<EOF\r\ntrue\nEOF\r\nunset D\nrm -rf $D/src")
+call("s90", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF")
+call("s91", "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF")
 # Các lệnh khác của blissful-dirac mà nền (mặc định + PR #5) bỏ sót, nay bắt được nhờ các bản port youthful-fermi tương
 # ứng (thân rỗng, đích còn biến, cd sau `||`/`|`/trước `&`, biến trong thân <<EOF, gán tạm/sau &&/trong ống). Bash 5.2: rm
 # chạy ở thư mục dự án hay xoá /src.
@@ -922,7 +931,9 @@ for must in ("bash <<EOF\nD=/tmp/x\nrm -rf $D/src\nEOF", "D=/srv/; bash <<EOF\nD
              "cd /tmp/x && bash <<EOF\nD=/tmp/y\nrm -rf $D/src\nEOF"):
     check(must in A, f"heredoc không nháy: shell cha thay biến trước, biến gán trong thân không đổi phép thay: {must!r}")
 check("D=/tmp/x/; bash <<EOF\nD=/srv/\nrm -rf \\${D}src\nEOF" in A, "`\\$` trong thân heredoc không nháy: shell con thay biến")
-check("D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF" not in A, "heredoc không nháy: shell cha thay biến bằng thư mục tạm, vô hại")
+# Báo thừa chấp nhận (như blissful-dirac cd828ea đổi assert của nó): bash xoá /tmp/y/src, nhưng audit không đoán biến của shell
+# cha trong thân `<<EOF` không nháy (s86–s91: giá trị đoán từng sai).
+check("D=/tmp/y/; bash <<EOF\nrm -rf ${D}src\nEOF" in A, "thân `<<EOF` không nháy: audit không đoán `$D` mà shell cha dùng để thế")
 for must in ("export D=/srv/; cat <<'EOF' \\\n| bash\ncd /tmp/x && rm -rf ${D}src\nEOF",
              "export D=/srv/; cat <<'EOF' \\\n| bash\nrm -rf ${D}src\nEOF"):
     check(must in A, f"`\\` cuối dòng mở kéo `| bash`: thân <<'EOF' thấy biến đã export của shell cha: {must!r}")
@@ -986,7 +997,12 @@ for must in ("if false; then\nD=/tmp/x\nfi\nbash <<EOF\nrm -rf $D/src\nEOF", "ca
              "D=/tmp/x; bash -s $[D=5] <<EOF\nrm -rf $D/src\nEOF", "RANDOM=/tmp/x; bash <<EOF\nrm -rf $RANDOM/src\nEOF",
              "_=/tmp/x; bash <<EOF\nrm -rf $_/src\nEOF"):
     check(must in A, f"thân `<<EOF` không nháy chỉ thấy biến mà phép gán chắc đã chạy ở shell cha: {must!r}")
-check("D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF" not in A, "phép gán chắc chạy trước thân `<<EOF`: shell cha thay D, vô hại")
+check("D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF" in A, "thân `<<EOF` không nháy: audit không đoán `$D` mà shell cha dùng để thế")
+for must in ("D=/tmp/x\nwhile bash <<EOF\nrm -rf $D/src\ntest -n \"$D\"\nEOF\ndo unset D\ndone",
+             "D=/tmp/x\nbash <<EOF.x\ntrue\nEOF.x\nunset D\nrm -rf $D/src", "D=/tmp/x\nbash <<EOF-1\nEOF-1\nD=\nrm -rf $D/src",
+             "D=/tmp/x\nbash <<EOF\r\ntrue\nEOF\r\nunset D\nrm -rf $D/src", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF",
+             "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF"):
+    check(must in A, f"audit không đoán biến của shell cha trong thân `<<EOF` không nháy (vòng lặp, delimiter lạ, brace): {must!r}")
 for must in ("cat <<'EOF'\nEOF\nrm -rf src", "cd /tmp && rm -rf $D",
              "true | cd /tmp && rm -rf src", "( D=/tmp/x ); rm -rf $D/src",
              "true || cd /tmp/w && rm -rf src", "test -d /tmp/w || cd /tmp/w && rm -rf src",
