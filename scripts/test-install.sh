@@ -407,7 +407,8 @@ for f in "$q"/.claude/agents/*.md "$q"/.claude/skills/*/SKILL.md; do
 done
 out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
 assert "P: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
-awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$q/.claude/agents/verifier.md" > "$tmp/crlf.md"
+# to_crlf sau awk: gawk của Git for Windows bỏ \r khi đọc, file sẽ thành LF.
+awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$q/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
 cat "$tmp/crlf.md" > "$q/.claude/agents/verifier.md"
 out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
 assert "P: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
