@@ -916,11 +916,16 @@ MUST_FLAG = [
     # biến chưa gán ở đầu đích: bash thay bằng rỗng, đích thành tuyệt đối
     "cd /tmp/w && rm -rf $D/a",                                  # xoá /a
     "echo 'a b' && cd /tmp/w && sh -c 'rm -rf $D/a' # don't",     # xoá /a
+    # phép gán hay cd trong một khâu của ống chạy ở shell con, không tới khâu sau hay lệnh sau ống
+    "unset D && D=/tmp/w/ | rm -rf ${D}src",                      # xoá src của dự án
+    "D=/tmp/w/ | true; rm -rf ${D}src",                           # xoá src của dự án
+    "rm -rf /tmp/w/x | cd /tmp/w && rm -rf src",                  # xoá src của dự án
 ]
 for cmd in MUST_FLAG:
     check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash xoá đích ngoài thư mục tạm, mục A phải báo: {cmd!r}")
 for cmd in (
     "D=src; cd /tmp/w && rm -rf $D",
+    "D=/tmp/w/; echo x | cat; rm -rf ${D}src", "cd /tmp/w && rm -rf src | cat",
 ):
     check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash chỉ xoá trong thư mục tạm, không được thành nghi: {cmd!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
@@ -1238,8 +1243,6 @@ root, base_test, base_why = sys.argv[1:4]
 # Lệnh bash xoá đích ngoài thư mục tạm mà mục A vẫn bỏ sót, có từ trước bước này: (lệnh, "lý do"). Sửa được ca nào thì xoá
 # ca đó (bước này đỏ khi một ca đã hết sót mà còn nằm đây). Chỉ được giảm: thêm ca so với bản trước là đỏ, ca sót mới phải sửa.
 KNOWN_MISSES = [
-    ('unset D && D=/tmp/w/ | rm -rf ${D}src',
-     'phép gán trong một khâu của ống chạy ở shell con, không tới khâu sau: D rỗng, bash xoá src của dự án'),
     (": <<'EOF'\nEOF\nbash <<EOF\nrm -rf src # don't",
      'thân heredoc rỗng: dòng EOF ngay sau dòng mở không được nhận là dấu đóng, mọi dòng sau thành thân (dữ liệu)'),
     ('cat <<\'EOF\'\nEOF\nbash -c \'cd /tmp/w && rm -rf src\'; bash -c "rm -rf $D/a"',

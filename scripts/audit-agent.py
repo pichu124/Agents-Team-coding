@@ -220,7 +220,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     ra ngoài. Các cách trên thế env của cha vào thân, để biến gán trong thân lọt ra, và che thân `-lc '…'` như một chuỗi.
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
-    `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
+    `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs). Khâu của ống là shell con: phép gán và cd trong đó không ra
+    ngoài.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact)
@@ -246,7 +247,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
     parts = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(parts))
     out, ctx, env, sep, saved, inherit = [], "", {}, None, [], False
-    for i, seg in enumerate(re.split("(" + SPLIT.pattern + ")", marked)):
+    parts = re.split("(" + SPLIT.pattern + ")", marked)
+    for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
             if sep in (None, "\n"):
                 sep = seg
@@ -256,6 +258,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
             continue
         raw = re.sub(r"\0(\d+)\0", unkeep, seg)
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
+        # exact: một khâu của ống chạy ở shell con, phép gán và cd trong đó không tới khâu sau hay lệnh sau ống
+        # (`D=/tmp/w/ | true; rm -rf ${D}src`).
+        piped = exact and not mark_only and (sep == "|" or i + 1 < len(parts) and parts[i + 1] == "|")
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
         if not mark_only:
@@ -268,6 +273,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
+        before = (dict(env), ctx) if piped else None
         for name, val in ASSIGN.findall(full):
             env[name] = val.strip("\"'")
         head, lead = full.lstrip("({ "), plain.lstrip("({ ")
@@ -287,6 +293,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False):
             ctx = ""  # đổi thư mục không ở dạng cd đơn đầu đoạn: không biết thư mục
         if not mark_only:
             out.append((plain, full, ctx, "$" in raw))
+        if before:
+            env, ctx = before
         if re.search(r"[)}]", seg):
             ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
         # Dò dấu trên raw: nháy lẻ trong thân (`# don't`) ghép với nháy sau EOF có thể nuốt dòng dấu vào một chuỗi.
