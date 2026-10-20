@@ -27,6 +27,7 @@ jobs:
           - os: windows-latest
             shell: bash # từ khoá bash trên Windows là Git Bash (lệnh bash trong PATH có thể là WSL)
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90 # Windows chạy khoảng 1 giờ; treo thì không giữ runner tới 6 giờ mặc định
     defaults:
       run:
         shell: ${{ matrix.shell }}
