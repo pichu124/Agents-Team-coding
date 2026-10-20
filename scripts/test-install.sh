@@ -397,6 +397,26 @@ for f in $repo_only; do
   esac
 done
 
+# P. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
+#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
+q="$tmp/crlf checkout"
+new_repo "$q"
+install "$q"
+for f in "$q"/.claude/agents/*.md "$q"/.claude/skills/*/SKILL.md; do
+  to_crlf < "$f" > "$tmp/crlf.md" && cat "$tmp/crlf.md" > "$f"
+done
+out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
+awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$q/.claude/agents/verifier.md" > "$tmp/crlf.md"
+cat "$tmp/crlf.md" > "$q/.claude/agents/verifier.md"
+out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
+assert "P: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
+case "$out" in
+  *"verifier.md: name phải là 'verifier'"*) ok ;;
+  *) bad "P: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
+esac
+assert "P: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
