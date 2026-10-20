@@ -418,6 +418,18 @@ case "$out" in
 esac
 assert "P: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
 
+# Q. Phần riêng có byte không phải UTF-8 (é kiểu Latin-1), chạy trong locale UTF-8: tr của macOS đọc theo ký tự
+#    thì báo "Illegal byte sequence" và installer dừng. Phải cài được và giữ nguyên byte.
+l1="$tmp/latin1 rules"
+rules_repo "$l1"
+own_l1="$tmp/own-latin1.md"
+printf '## Riêng Z\n- caf\351 viết bằng Latin-1\n' > "$own_l1"
+cat "$tpl" "$own_l1" > "$l1/.claude/rules/agent-team.md"
+# Locale chỉ đặt cho installer: máy không có en_US.UTF-8 thì cảnh báo locale của bash con vào /dev/null.
+env LC_ALL=en_US.UTF-8 "$kit/scripts/install-kit.sh" "$l1" >/dev/null 2>&1
+assert "Q: cài lại khi phần riêng có byte không phải UTF-8 phải exit 0" [ $? -eq 0 ]
+assert "Q: byte không phải UTF-8 trong phần riêng phải còn nguyên văn" own_part_is "$l1/.claude/rules/agent-team.md" "$own_l1"
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
