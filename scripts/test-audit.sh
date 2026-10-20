@@ -1119,6 +1119,14 @@ got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
 check(dt < 4 and "xoá đệ quy" in got,
       f"2000 lần `<<EOF ` trên dòng không có `\\n` phải xong dưới 4 s, rm ở dòng trước vẫn nghi: {dt:.1f} s, {got!r}")
+# expand không được chạy re.sub cho mọi biến của env ở mỗi đoạn: quá 512 tên khác nhau thì bộ đệm regex của `re` không giữ
+# nổi, regex bị dịch lại mỗi lần. 20/10/2026 (4 nhân), 600 phép gán khác tên rồi rm: 0437c0b 69,9 s, bản bỏ qua tên vắng
+# trong text 0,60 s (trung vị 9 lần). Ngưỡng 6 s cách hai bản ~10–12 lần. Bash xoá ./src.
+cmd = "; ".join("V%d=/tmp/x" % i for i in range(600)) + "; rm -rf src"
+t0 = time.perf_counter()
+got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+dt = time.perf_counter() - t0
+check(dt < 6 and "xoá đệ quy" in got, f"600 phép gán khác tên rồi rm phải xong dưới 6 s, rm vẫn nghi: {dt:.1f} s, {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
