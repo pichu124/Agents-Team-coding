@@ -138,7 +138,8 @@ QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
 # ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
 QUOTED_XB = re.compile(r"\\.|" + QUOTED_X.pattern, re.MULTILINE)
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
-# `-` lẻ nếu có, rồi chuỗi nháy đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
+# `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
+# (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`, `-o 'pipefail'`), `--rcfile`/
 # `--init-file` kèm tham số. Cụm c là token giống cụm c đầu tiên như bash đọc (có o thì thử kèm tên trước); cờ trước nó
 # không được giống cụm c, không thì `bash -c -c …` (không thân) thử cụm c ở từng `-c` rồi quét tới cuối, bậc hai. Cờ kèm tên
@@ -158,7 +159,7 @@ _FLAG = rf"(?:[-+][A-Za-z]*o\s+{_NAME}|--(?:rcfile|init-file)\s+{_ARG}|(?:--?|\+
 _C = r"[-+](?=[A-Za-z]*c)"
 SHELL_C_BODY = re.compile(rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
                           rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
-                          rf"(?:\s+--?)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+                          rf"(?:\s+--?)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\"|\$'(?:[^'\\]|\\.)*')", re.IGNORECASE)
 # Regex thân -c của 1667825, nguyên văn: cách đọc exact dùng nó để y hệt bản trước. Sửa nó tại chỗ từng làm lệnh lồng
 # (`bash … -c "… sh -c '…'"`) mất nhãn; regex mở rộng ở trên chỉ dùng ở cách đọc strict.
 SHELL_C_BODY_EXACT = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
@@ -239,11 +240,14 @@ def unwrap_shell_c(text, rx):
     """Thay `bash -c '<thân>'` (rx: SHELL_C_BODY hay SHELL_C_BODY_EXACT) bằng shell rồi thân giữa dòng OPEN_RAW và dòng
     CLOSE: thân là phạm vi shell con như thân <<'EOF'. Thân nháy kép được gỡ thoát như bash (`\\$`, `\\``, `\\"`, `\\\\` thành
     ký tự, `\\` + xuống dòng bỏ hẳn) mà vẫn dùng OPEN_RAW: biến cha không thoát mà cha tự thay cũng thành rỗng. Báo thừa, vì
-    các cách đọc không gỡ vẫn thay giá trị của cha. Thân lồng nhau gỡ đệ quy bằng cùng rx."""
+    các cách đọc không gỡ vẫn thay giá trị của cha. Thân ANSI-C `$'…'` (chỉ SHELL_C_BODY nhận) giải `\\n`, `\\t` thành xuống
+    dòng, tab; escape khác giữ ký tự sau `\\` (`\\'` thành `'`): đủ để dò. Thân lồng nhau gỡ đệ quy bằng cùng rx."""
     def sub(m):
         body = m.group(2)[1:-1]
         if m.group(2)[0] == '"':
             body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
+        elif m.group(2)[0] == "$":
+            body = re.sub(r"\\(.)", lambda x: {"n": "\n", "t": "\t"}.get(x[1], x[1]), body[1:])
         return "\n".join((m.group(1), OPEN_RAW, unwrap_shell_c(body, rx), CLOSE, ""))
     return rx.sub(sub, text)
 
@@ -263,13 +267,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, exact=False, strict=False
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
     strict=True (dùng với exact): đọc sát bash thêm ở chỗ exact giữ y như bản trước, để thêm cách đọc mà không đổi cách cũ.
-    Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`); exact giữ regex
-    của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát, không mở chuỗi
-    nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF
-    dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /).
-    Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection hay trong nháy: `read D<<</etc`, `printf -v "D"`),
-    trong một khâu của ống hay sau `||` là không biết; unset làm rỗng; eval, source, `.` làm mọi biến thành không biết. cd
-    ngay sau `||` hay `|` không cho biết thư mục.
+    Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`, `bash -c $'…'`);
+    exact giữ regex của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát,
+    không mở chuỗi nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`). Thân heredoc có thể
+    rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF dùng giá trị biến lúc mở thân: shell cha thay trước khi shell con chạy
+    (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /). Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection
+    hay trong nháy: `read D<<</etc`, `printf -v "D"`), trong một khâu của ống hay sau `||` là không biết; unset làm rỗng;
+    eval, source, `.` làm mọi biến thành không biết. cd ngay sau `||` hay `|` không cho biết thư mục.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, exact, strict)

@@ -1063,6 +1063,11 @@ for cmd in ('D=/tmp/w; read D<<</etc; rm -rf "$D"', 'D=/tmp/w; read D<<<"/etc"; 
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"tên biến dính redirection, trong nháy, trong cờ gộp: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("D=/tmp/w; unset -f 'D'; rm -rf $D/a", a.SUSPICIOUS), "unset -f 'D' chỉ xoá hàm: biến giữ giá trị")
+# Thân -c dạng nháy ANSI-C `$'…'` vẫn là lệnh: bash 5.2 xoá / hay .. (rm thay bằng echo).
+for cmd in ("bash +e -c $'rm -rf /'", "bash --rcfile /dev/null -c $'rm -rf /'", "bash -o pipefail -c $'rm -rf /'",
+            "bash -o 'pipefail' -c $'rm -rf ..'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"thân -c dạng nháy ANSI-C `$'…'` vẫn là lệnh: {cmd!r}: {got!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
