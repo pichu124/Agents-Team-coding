@@ -14,3 +14,64 @@ jobs:
       # Khi dự án có dependency, thêm bước cài đặt ở đây (vd: actions/setup-node + npm ci).
       - name: Chạy đúng lệnh mà agent và Stop hook dùng
         run: ./scripts/check.sh
+
+  # Máy của người dùng kit: macOS chỉ có /bin/bash 3.2 và BSD grep của hệ thống (PATH chỉ gồm thư
+  # mục hệ thống, không lấy bash/grep của Homebrew), Windows chạy hook bằng Git Bash.
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            shell: /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash --noprofile --norc {0}
+          - os: windows-latest
+            shell: bash # từ khoá bash trên Windows là Git Bash (lệnh bash trong PATH có thể là WSL)
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Môi trường
+        run: |
+          echo "bash: $BASH $BASH_VERSION"
+          command -v grep && grep --version 2>&1 | head -n 1
+          for c in jq python3 python py git shellcheck; do printf '%s: %s\n' "$c" "$(command -v "$c")"; done
+          git config --show-origin core.autocrlf || true
+      - name: validate-kit
+        if: ${{ !cancelled() }}
+        run: ./scripts/validate-kit.sh
+      - name: test-hooks
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-hooks.sh
+      - name: test-install
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-install.sh
+      - name: check.sh (KIT_SELFTEST=1)
+        if: ${{ !cancelled() }}
+        run: KIT_SELFTEST=1 ./scripts/check.sh
+      # Lệnh nguy hiểm ở dòng đầu, theo sau ~20000 dòng (hơn 64 KiB pipe buffer), đưa qua stdin:
+      # guard phải hỏi 10/10 lần ở mọi cách đọc JSON.
+      - name: guard hỏi với lệnh dài hơn pipe buffer
+        if: ${{ !cancelled() }}
+        run: |
+          f="$RUNNER_TEMP/long-deploy.json"
+          {
+            printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"npm run deploy' "$PWD"
+            printf '\\necho line-%s' {1..20000}
+            printf '","description":"test"}}\n'
+          } > "$f"
+          echo "input: $(wc -c < "$f") byte"
+          status=0
+          for mode in auto jq python sed; do
+            n=0
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              out="$(KIT_JSON_TOOL="$mode" .claude/hooks/guard-irreversible.sh < "$f")"
+              case "$out" in *'"permissionDecision":"ask"'*) n=$((n + 1)) ;; esac
+            done
+            echo "$mode: hỏi $n/10"
+            [ "$n" = 10 ] || status=1
+          done
+          exit "$status"
