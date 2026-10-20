@@ -369,9 +369,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         bg = bool(background)
         before = sep
         after_or_pipe, sep = sep in ("||", "|"), None
-        if frozen:  # parent_env, thân <<EOF: `\$` là `$` chữ, shell cha không thay; shell con thay bằng env không biết
-            hold = next(c for c in "\x06\ue000\ue001\ue002" if c not in raw)
-            full = expand(re.sub(r"(?<!\\)((?:\\\\)*)\\\$", lambda x: x[1] + "\\" + hold, raw), env).replace(hold, "$")
+        if frozen:  # parent_env, thân <<EOF: `\$` là `$` chữ, shell cha không thay; shell con thay bằng env không biết.
+            # Chỉ thay biến ở các mảnh giữa những `\$` lẻ: không cần chỗ giữ nên không phụ thuộc ký tự có trong lệnh
+            full = "".join(x if k % 2 else expand(x, env) for k, x in enumerate(re.split(r"((?<!\\)(?:\\\\)*\\\$)", raw)))
         else:
             full = expand(raw, env)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), env)

@@ -1170,6 +1170,14 @@ for cmd in ("D=/tmp/x; bash <<EOF -c 'D=$HOME/proj; rm -rf $D'\nEOF", "D=/tmp/x;
             "X=/tmp/a; bash <<EOF -c 'rm -rf $X'\nEOF"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"toán tử heredoc giữa shell và -c: thân -c vẫn là phạm vi shell con: {cmd!r}: {got!r}")
+# Thân <<EOF có sẵn mọi ký tự mà cách đọc parent_env từng dùng làm chỗ giữ cho `\$` (reviewer): không được ném lỗi làm sập
+# cả báo cáo, rm vẫn nghi.
+for cmd in ("bash <<EOF\nrm -rf src \x06\ue000\ue001\ue002\nEOF", "D=/tmp/x; bash <<EOF\nrm -rf \\$D/src \x06\ue000\ue001\ue002\nEOF"):
+    try:
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    except Exception as exc:
+        got = exc
+    check(isinstance(got, list) and "xoá đệ quy" in got, f"ký tự lạ trong thân <<EOF không làm audit chết, rm vẫn nghi: {cmd!r}: {got!r}")
 # Shell nhận cả sau `-` thì cờ và tên của -o không được đi qua chỗ một shell khác mở (`--x-bash`, `-o x-bash`): lần khớp
 # từ mỗi shell quét lại tới cuối chuỗi cờ, bậc hai (~10 giây với cờ dài `--\w[\w-]*`, ~6 giây với tên `\w[\w-]*`).
 # `bash -bash …`, `git-bash --x-git-bash …` không ở đây: chậm sẵn từ 27727f5, do SHELL_C và mẫu filter-branch.
