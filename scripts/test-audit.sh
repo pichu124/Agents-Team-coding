@@ -1003,14 +1003,16 @@ for cmd in ("cat <<EOF \\\n\x000\x00\nEOF\nrm -rf src", "echo \x000\x00; rm -rf 
     check(isinstance(got, list) and "xoá đệ quy" in got,
           f"chuỗi trùng chỗ giữ nháy không làm audit chết, rm vẫn nghi: {cmd[:40]!r}: {str(got)[:120]}")
 # `\` cuối mỗi dòng thân kéo dòng kế vào lệnh: kéo từng dòng không được tốn thời gian bậc hai theo số dòng. Bản bậc hai
-# mất ~45 s với 40000 dòng, bản tuyến tính ~0,1 s. Bash nối cả 40002 dòng thành lệnh mở, thân rỗng, rm chạy sau EOF.
+# (trước b7ccd40) mất ~45 s với 40000 dòng, bản tuyến tính ~0,5 s (12 cách đọc; 20/10/2026: nhỏ nhất 0,51 s, trung vị 0,53 s
+# qua 9 lần đo). Ngưỡng 5 s cách cả hai khoảng 9 lần, để máy CI chậm hơn không đỏ giả. Bash nối cả 40002 dòng thành lệnh
+# mở, thân rỗng, rm chạy sau EOF.
 import time
 cmd = "cat <<'EOF' \\\n" + "x \\\n" * 40000 + "| bash\nEOF\nrm -rf src"
 t0 = time.perf_counter()
 got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
-check(dt < 2 and "xoá đệ quy" in got,
-      f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 2 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
+check(dt < 5 and "xoá đệ quy" in got,
+      f"40000 dòng `x \\` kéo vào dòng mở heredoc phải xong dưới 5 s, rm sau EOF vẫn nghi: {dt:.1f} s, {got!r}")
 # Heredoc chưa đóng: bash đọc thân tới hết chuỗi (cảnh báo delimited by end-of-file), rm là dữ liệu của cat, không chạy.
 got = a.suspicious_labels("cat > f <<'EOF'\nrm -rf src", a.SUSPICIOUS)
 check(got == [], f"heredoc chưa đóng nuốt tới hết chuỗi như bash: {got!r}")
