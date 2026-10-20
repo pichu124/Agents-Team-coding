@@ -129,17 +129,28 @@ QUOTED_PS = re.compile(r"\"[^\"]*\"|'[^']*'")  # PowerShell không escape bằng
 COMMENT = r"|(?:(?<=[\s;&|()])|^)#[^\n]*"
 QUOTED_X = re.compile(QUOTED.pattern + COMMENT, re.MULTILINE)
 QUOTED_PS_X = re.compile(QUOTED_PS.pattern + COMMENT, re.MULTILINE)
-# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
-# đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ trước cụm c: `-x`,
-# `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`:
-# `-o -o …` chỉ tách được một cách, không backtrack mũ. Không `-` nào trong cờ đứng ngay trước shell + khoảng trắng, tên
-# không là shell: lần khớp từ một shell không đi qua chỗ một shell khác mở (`bash -o bash -o …`, `--bash --bash …`,
-# `--x-bash …` quét lại tới cuối từ mỗi shell: bậc hai), thân vẫn được gỡ từ shell sau. Cụm c tìm chữ c bằng lookahead
-# rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
-SHELL_C_BODY = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
-                          r"(?:\s+(?:--?(?!(?:bash|sh|zsh|dash)\s)\w(?:\w|-(?!(?:bash|sh|zsh|dash)\s))*"
-                          r"|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
-                          r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+# Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` nếu
+# có, rồi chuỗi nháy đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
+# `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`, `-o 'pipefail'`), `--rcfile`/
+# `--init-file` kèm tham số. Cụm c là token giống cụm c đầu tiên như bash đọc (có o thì thử kèm tên trước); cờ trước nó
+# không được giống cụm c, không thì `bash -c -c …` (không thân) thử cụm c ở từng `-c` rồi quét tới cuối, bậc hai. Cờ kèm tên
+# thử trước cờ trơn: ngược lại `'pipefail'` của `-c -o 'pipefail' '…'` thành thân. Tên mở bằng `\w` hay nháy, tham số không
+# mở bằng `-`/`+`: `-o -o …`, `--rcfile --rcfile …` chỉ tách được một cách, không backtrack mũ. Không cờ, tên hay tham số nào
+# đi qua chỗ một shell khác mở (không `-` hay ký tự không phải chữ nào đứng ngay trước shell + khoảng trắng, tên không là
+# shell, trong nháy không có khoảng trắng): lần khớp từ một shell không quét lại tới cuối qua các shell sau (`bash -o bash
+# -o …`, `--x-bash …`, `--rcfile /bash …`: bậc hai), thân vẫn được gỡ từ shell sau. Cụm c tìm chữ c bằng lookahead rồi lấy
+# trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
+_SH = r"(?:bash|sh|zsh|dash)"
+_NOT_SH = rf"(?!{_SH}(?:\.exe)?\s)"
+_WORD = rf"\w(?:\w|-(?!{_SH}\s))*"
+_QUOTED = r"(?:'[^'\s]*'|\"[^\"\s]*\")"
+_NAME = rf"(?:(?!{_SH}\b){_WORD}|{_QUOTED})"
+_ARG = rf"(?:(?![-+]){_NOT_SH}(?:\w|[^\s\w'\"]{_NOT_SH})+|{_QUOTED})"
+_FLAG = rf"(?:[-+][A-Za-z]*o\s+{_NAME}|--(?:rcfile|init-file)\s+{_ARG}|(?:--?|\+)(?!{_SH}\s){_WORD})"
+_C = r"[-+](?=[A-Za-z]*c)"
+SHELL_C_BODY = re.compile(rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
+                          rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
+                          rf"(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
 # cd có đúng MỘT đích (bản đã che nháy): không cờ, không nhiều tham số, không `&` (chạy nền ở shell con).

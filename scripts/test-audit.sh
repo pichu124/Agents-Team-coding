@@ -955,6 +955,43 @@ for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ có shell sau `-` (đầu lệnh, giây): {slow}")
+# Cờ `+` (`+e`, cụm `+c`), cờ sau cụm c (`-c -x`, `-c -o pipefail`), tên của -o trong nháy hay có `-`, `--rcfile`/`--init-file`
+# kèm tham số, cụm c có o kèm tên (`-co pipefail`, `-oc pipefail`, `-cO extglob`): bash 5.2 vẫn chạy thân (rm thay bằng echo,
+# đích ghi bên cạnh), mà mọi cách đọc khác che thân như một chuỗi. `--login` trước `-c +e` và `-c -o pipefail`: không có nó thì
+# SHELL_C nhận `bash -c`, thân không bị che và `+e`, `pipefail` bị coi là đích của rm, nên đã nghi sẵn mà không nhờ gỡ thân.
+for cmd in ("bash +e -c 'rm -rf /'", "D=/tmp/w; bash +e -c 'rm -rf $D/a'",  # xoá /a
+            "D=/tmp/w; bash +e -c 'D=/; rm -rf $D'",                         # xoá /
+            "D=/tmp/w; bash -c -x 'rm -rf $D/a'", "D=/tmp/w; bash -c -x 'D=/; rm -rf $D'",
+            "D=/tmp/w; bash -o pipefail -c -e 'rm -rf $D/a'",
+            "bash -o 'pipefail' -c 'rm -rf /'", "D=/tmp/w; bash -o 'pipefail' -c 'rm -rf $D/a'",
+            "D=/tmp/w; bash -o \"pipefail\" -c 'rm -rf $D/a'",
+            "bash -o interactive-comments -c 'rm -rf /'", "D=/tmp/w; bash -o interactive-comments -c 'rm -rf $D/a'",
+            "bash --rcfile /dev/null -c 'rm -rf /'", "D=/tmp/w; bash --rcfile /dev/null -c 'rm -rf $D/a'",
+            "D=/tmp/w; bash --init-file x -c 'rm -rf $D/a'", "D=/tmp/w; bash --login --rcfile x -c 'rm -rf $D/a'",
+            "bash -co pipefail 'rm -rf /'", "D=/tmp/w; bash -co pipefail 'rm -rf $D/a'",
+            "D=/tmp/w; bash -oc pipefail 'rm -rf $D/a'", "D=/tmp/w; bash -cO extglob 'rm -rf $D/a'",
+            "D=/tmp/w; bash +c 'rm -rf $D/a'", "D=/tmp/w; bash +ec 'rm -rf $D/a'",
+            "D=/tmp/w; bash --login -c +e 'rm -rf $D/a'", "D=/tmp/w; bash --login -c -o pipefail 'rm -rf $D/a'",
+            "D=/tmp/w; bash +x -c -o 'pipefail' 'rm -rf $D/a'"):  # thử `-o` trơn trước `-o tên` thì `'pipefail'` thành thân
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"cờ `+`, cờ sau cụm c, tên của -o, --rcfile, cụm c có o: thân vẫn là lệnh: {cmd!r}: {got!r}")
+# Các dạng cờ trên không làm regex thân -c chậm. Cờ trước cụm c không được giống cụm c: không thì `bash -c -c …` (không thân)
+# thử cụm c ở từng `-c` rồi quét cờ sau tới cuối, bậc hai từ một shell. Tham số của --rcfile không mở bằng `-`/`+`: không thì
+# `--rcfile --rcfile …` tách được theo Fibonacci cách. Cờ `+`, tên, tham số không đi qua chỗ một shell khác mở (`+bash`,
+# `-o x-bash` sau cụm c, `--rcfile bash`, `--rcfile /bash`, `--rcfile /bash.exe`).
+slow = []
+for cmd in ("bash -c" + " -x" * 10000, "bash" + " -c" * 10000, "bash" + " +c" * 10000, "bash" + " +e" * 5000,
+            "bash" + " -o 'x'" * 5000, "bash" + " -o a-b" * 5000, "bash" + " --rcfile /x" * 5000,
+            "bash" + " --rcfile /bash" * 5000, "bash -c" + " -o x-bash" * 3000, "bash" + " -co x" * 5000,
+            "bash -c -x " * 3000, "bash" + " -o bash" * 5000, "bash" + " --rcfile bash" * 5000,
+            "bash" + " --rcfile /bash.exe" * 5000, "bash" + " +bash" * 5000, "bash" + " --rcfile" * 5000,
+            "bash" + " --rcfile +x" * 5000):
+    t = time.monotonic()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    t = time.monotonic() - t
+    if t > 3:
+        slow.append((cmd[:24], round(t, 1)))
+check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ `+`, cờ sau cụm c, tên, --rcfile (đầu lệnh, giây): {slow}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
