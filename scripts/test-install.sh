@@ -365,6 +365,38 @@ cp "$tmp/lib.sh.orig" "$lib"
 (cd "$n" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
 
+# O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
+#    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
+repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
+o="$tmp/own scripts"
+new_repo "$o"
+mkdir -p "$o/scripts" "$o/plugin"
+for f in $repo_only; do
+  printf '#!/usr/bin/env bash\nif printf x %s grep -q x; then echo ok; fi\n' "$bar" > "$o/$f"
+done
+echo 'if then' >> "$o/plugin/run-hook.sh" # lỗi cú pháp: bash -n cũng không được chạy trên file của dự án
+install "$o"
+assert "O: install phải exit 0 khi dự án có file trùng tên mà kit không chép" [ $? -eq 0 ]
+out="$(cd "$o" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit không được kiểm file shell của dự án → $out" [ $? -eq 0 ]
+p="$tmp/kit copy"
+mkdir -p "$p/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$p/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$p/"
+(cd "$p" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "O: validate-kit trong bản chép repo kit phải xanh" [ $? -eq 0 ]
+for f in $repo_only; do
+  printf 'printf x %s grep -q x\n' "$bar" >> "$p/$f"
+done
+out="$(cd "$p" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit ở repo kit phải đỏ khi file chỉ repo kit có vi phạm" [ $? -ne 0 ]
+for f in $repo_only; do
+  case "$out" in
+    *"$f:$(wc -l < "$p/$f" | tr -d ' '): "*) ok ;;
+    *) bad "O: ở repo kit phải báo $f:<dòng cuối> → $out" ;;
+  esac
+done
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
