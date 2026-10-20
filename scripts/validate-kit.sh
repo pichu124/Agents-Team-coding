@@ -18,12 +18,13 @@ err() {
   errors=$((errors + 1))
 }
 
+# Bỏ \r cuối dòng: clone trên Windows (core.autocrlf=true) cho file .md CRLF, Claude Code vẫn đọc được.
 has_frontmatter() {
-  [ "$(head -n 1 "$1")" = "---" ] && awk 'NR > 1 && $0 == "---" { found = 1; exit } END { exit !found }' "$1"
+  awk '{ sub(/\r$/, "") } NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { found = 1; exit } END { exit !found }' "$1"
 }
 
 fm_value() {
-  awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1" \
+  awk '{ sub(/\r$/, "") } NR == 1 { next } $0 == "---" { exit } { print }' "$1" \
     | sed -n "s/^$2:[[:space:]]*//p" | head -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
