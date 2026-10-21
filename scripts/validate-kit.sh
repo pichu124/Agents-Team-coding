@@ -10,7 +10,9 @@ KIT_SKILLS="team-lead create-verify-skill correct agent-audit"
 KIT_HOOKS="lib.sh guard-irreversible.sh stop-gate.sh post-edit-format.sh"
 KIT_SCRIPTS="check.sh validate-kit.sh test-hooks.sh audit-agent.sh test-audit.sh" # installer chép sang repo đích
 # Chỉ kiểm ở repo kit: installer không chép, ở repo đích file cùng tên là của dự án.
-KIT_REPO_SHELL="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
+KIT_REPO_SHELL="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh
+  .claude/skills/verify-kit/helpers/sandbox.sh"
+KIT_REPO_SKILLS="verify-kit" # skill kiểm chứng của chính repo kit: installer không chép, plugin không phát
 
 errors=0
 err() {
@@ -67,7 +69,9 @@ for name in $KIT_AGENTS; do
   fi
 done
 
-for name in $KIT_SKILLS; do
+skills="$KIT_SKILLS"
+in_kit_repo && skills="$skills $KIT_REPO_SKILLS"
+for name in $skills; do
   d=".claude/skills/$name"
   f="$d/SKILL.md"
   if [ ! -f "$f" ]; then
@@ -191,7 +195,7 @@ fi
 # Bản plugin (repo kit): manifest phải khớp agent, hook và settings.json, không thì người cài plugin thiếu đồ.
 if in_kit_repo; then
   if [ -n "${py:-}" ]; then
-    "$py" - <<'PYEOF' || err ".claude-plugin: manifest của plugin lệch với file của kit (xem lỗi ở trên)"
+    KIT_SKILLS="$KIT_SKILLS" KIT_REPO_SKILLS="$KIT_REPO_SKILLS" "$py" - <<'PYEOF' || err ".claude-plugin: manifest của plugin lệch với file của kit (xem lỗi ở trên)"
 import glob, json, os, re, sys
 errs = []
 plugin = json.load(open(".claude-plugin/plugin.json", encoding="utf-8"))
@@ -202,6 +206,12 @@ settings = json.load(open(".claude/settings.json", encoding="utf-8"))["hooks"]
 agents = sorted("./" + f.replace(os.sep, "/") for f in glob.glob(".claude/agents/*.md"))
 if sorted(plugin.get("agents", [])) != agents:
     errs.append(f"plugin.json agents phải liệt kê đủ {agents}")
+# Liệt kê từng skill: trỏ cả .claude/skills/ thì skill riêng của repo kit (verify-kit) lọt sang mọi dự án.
+skills = plugin.get("skills")
+skills = [skills] if isinstance(skills, str) else skills or []
+want = sorted("./.claude/skills/" + s for s in os.environ["KIT_SKILLS"].split())
+if sorted(s.rstrip("/") for s in skills) != want:
+    errs.append(f"plugin.json skills phải liệt kê đúng {want}, không phát {os.environ['KIT_REPO_SKILLS']} (chỉ dùng trong repo kit)")
 if [p["name"] for p in market["plugins"]] != [plugin["name"]]:
     errs.append("marketplace.json phải có đúng một plugin trùng tên với plugin.json")
 if "version" in plugin or any("version" in p for p in market["plugins"]):
@@ -241,4 +251,4 @@ if [ "$errors" -gt 0 ]; then
   exit 1
 fi
 printf '✔ kit hợp lệ: %s agents, %s skills, %s hooks, %s link nội bộ\n' \
-  "$(echo "$KIT_AGENTS" | wc -w | tr -d " ")" "$(echo "$KIT_SKILLS" | wc -w | tr -d " ")" "$hook_count" "$link_count"
+  "$(echo "$KIT_AGENTS" | wc -w | tr -d " ")" "$(echo "$skills" | wc -w | tr -d " ")" "$hook_count" "$link_count"

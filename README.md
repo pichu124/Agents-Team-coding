@@ -11,6 +11,7 @@ Bộ khởi động để xây dựng **đội AI agent hỗ trợ lập trình*
 3. [docs/03-lo-trinh-trien-khai.md](docs/03-lo-trinh-trien-khai.md): 6 cấp độ trưởng thành, kế hoạch 30 ngày, cách cài, prompt mẫu, chỉ số.
 4. [docs/04-thu-nghiem-vnstock-dashboard.md](docs/04-thu-nghiem-vnstock-dashboard.md): triển khai thử vào một dự án Python thật trên Windows, từng bước.
 5. [docs/05-cai-cho-moi-du-an.md](docs/05-cai-cho-moi-du-an.md): cài dạng plugin một lần cho mọi dự án trên máy (CLI và app).
+6. [docs/viec-can-lam.md](docs/viec-can-lam.md): việc còn tồn, ai đang làm, việc cần bạn quyết. Xong việc nào thì xoá việc đó.
 
 ## Trong bộ kit có gì
 
@@ -31,6 +32,7 @@ plugin/                           hooks.json + run-hook.sh: hook của plugin (S
     create-verify-skill/          /create-verify-skill: sinh skill verify-<app> kèm feature map
     correct/                      /correct: mã hoá bài học vào type, lint, hook, test
     agent-audit/                  /agent-audit: dò sự cố từ file phiên, sửa kèm test, mở PR nháp
+    verify-kit/                   verify-kit: kiểm chứng chính kit trên repo đã cài (chỉ ở repo kit, không cài, không vào plugin)
   hooks/
     stop-gate.sh                  Stop: chưa được "báo xong" khi check còn đỏ
     guard-irreversible.sh         PreToolUse(Bash|PowerShell): hỏi người trước force-push, deploy, xoá dữ liệu...

@@ -367,11 +367,12 @@ assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
 
 # O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
 #    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
-repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh"
+repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh
+  .claude/skills/verify-kit/helpers/sandbox.sh"
 o="$tmp/own scripts"
 new_repo "$o"
-mkdir -p "$o/scripts" "$o/plugin"
 for f in $repo_only; do
+  mkdir -p "$o/$(dirname "$f")"
   printf '#!/usr/bin/env bash\nif printf x %s grep -q x; then echo ok; fi\n' "$bar" > "$o/$f"
 done
 echo 'if then' >> "$o/plugin/run-hook.sh" # lỗi cú pháp: bash -n cũng không được chạy trên file của dự án
@@ -397,26 +398,150 @@ for f in $repo_only; do
   esac
 done
 
-# P. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
-#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
-q="$tmp/crlf checkout"
+# P. check.sh: bước plugin và việc file plugin đổi kích hoạt test của kit chỉ có ở repo kit. Ở repo đích,
+#    scripts/test-plugin.sh, plugin/, .claude-plugin/ là của dự án. test-hooks.sh và test-audit.sh thay bằng
+#    stub exit 0 (bản thật mất ~2 phút): ca này chỉ kiểm check.sh quyết định chạy gì.
+plugin_paths="scripts/test-plugin.sh plugin/run-hook.sh plugin/hooks.json .claude-plugin/marketplace.json"
+edit_valid() { # edit_valid <file>: sửa mà JSON vẫn parse được, shell vẫn qua bash -n
+  case "$1" in
+    *.json) echo >> "$1" ;;
+    *) echo '# sửa' >> "$1" ;;
+  esac
+}
+q="$tmp/own plugin"
 new_repo "$q"
+mkdir -p "$q/scripts" "$q/plugin" "$q/.claude-plugin"
+cat > "$q/scripts/test-plugin.sh" <<'EOF'
+#!/usr/bin/env bash
+# test-plugin.sh riêng của dự án: cần tên plugin.
+[ $# -gt 0 ] || { echo "cách dùng: $0 <plugin>" >&2; exit 1; }
+EOF
+chmod +x "$q/scripts/test-plugin.sh"
+printf '#!/usr/bin/env bash\necho hook\n' > "$q/plugin/run-hook.sh"
+echo '{}' > "$q/plugin/hooks.json"
+echo '{}' > "$q/.claude-plugin/marketplace.json"
 install "$q"
-for f in "$q"/.claude/agents/*.md "$q"/.claude/skills/*/SKILL.md; do
+assert "P: install phải exit 0 khi dự án có test-plugin.sh, plugin/, .claude-plugin/ riêng" [ $? -eq 0 ]
+for s in test-hooks test-audit; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$q/scripts/$s.sh"
+done
+git -C "$q" -c core.autocrlf=false add -A
+git -C "$q" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
+out="$(cd "$q" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+assert "P: ở repo đích, KIT_SELFTEST=1 check.sh phải xanh dù test-plugin.sh của dự án đỏ → $out" [ $? -eq 0 ]
+case "$out" in
+  *"▶ plugin"*) bad "P: ở repo đích, check.sh không được chạy scripts/test-plugin.sh của dự án → $out" ;;
+  *"▶ hooks"*) ok ;;
+  *) bad "P: KIT_SELFTEST=1 check.sh phải chạy test của kit (▶ hooks) → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$q/$f"
+  out="$(cd "$q" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) bad "P: ở repo đích, sửa $f (của dự án) không được kích hoạt test của kit → $out" ;;
+    *"bỏ qua test của kit"*) ok ;;
+    *) bad "P: ở repo đích, sửa $f phải in 'bỏ qua test của kit' → $out" ;;
+  esac
+  git -C "$q" checkout -q -- .
+done
+# Repo kit: giữ nguyên hành vi. check.local.sh của repo kit chạy test-install.sh: thay bằng stub để không đệ quy.
+r="$tmp/kit repo"
+new_repo "$r"
+mkdir -p "$r/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$r/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$r/"
+for s in test-hooks test-audit check.local; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$r/scripts/$s.sh"
+done
+printf '#!/usr/bin/env bash\necho "test-plugin (stub ca P)"\n' > "$r/scripts/test-plugin.sh"
+git -C "$r" -c core.autocrlf=false add -A
+git -C "$r" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+out="$(cd "$r" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+case "$out" in
+  *"▶ plugin"*"test-plugin (stub ca P)"*) ok ;;
+  *) bad "P: ở repo kit, KIT_SELFTEST=1 check.sh phải chạy scripts/test-plugin.sh → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$r/$f"
+  out="$(cd "$r" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) ok ;;
+    *) bad "P: ở repo kit, sửa $f phải kích hoạt test của kit (▶ hooks) → $out" ;;
+  esac
+  git -C "$r" checkout -q -- .
+done
+
+# Q. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
+#    manifest plugin chỉ được phát 4 skill của kit (trỏ cả .claude/skills/ thì verify-kit lọt sang mọi
+#    dự án cài plugin). Ở repo đích, skill cùng tên là của dự án, không bị kiểm.
+vq="$tmp/kit copy Q"
+mkdir -p "$vq/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$vq/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$vq/"
+vk="$vq/.claude/skills/verify-kit"
+cp "$vk/SKILL.md" "$tmp/vk-skill.orig"
+cp "$vk/features/README.md" "$tmp/vk-features.orig"
+cp "$vq/.claude-plugin/plugin.json" "$tmp/plugin.json.orig"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh trước khi sửa" [ $? -eq 0 ]
+sed 's/^name: verify-kit$/name: verify-khac/' "$tmp/vk-skill.orig" > "$vk/SKILL.md"
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: verify-kit sai name phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/SKILL.md: name phải là 'verify-kit'"*) ok ;;
+  *) bad "Q: phải báo name sai của verify-kit → $out" ;;
+esac
+cp "$tmp/vk-skill.orig" "$vk/SKILL.md"
+printf '\n[gãy](khong-co.md)\n' >> "$vk/features/README.md"
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: link gãy trong feature map của verify-kit phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/features/README.md: link gãy → khong-co.md"*) ok ;;
+  *) bad "Q: phải báo link gãy trong features/README.md → $out" ;;
+esac
+cp "$tmp/vk-features.orig" "$vk/features/README.md"
+"$py" - "$vq/.claude-plugin/plugin.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["skills"] = "./.claude/skills/"
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PYEOF
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: plugin.json trỏ cả .claude/skills/ (phát luôn verify-kit) phải đỏ" [ $? -ne 0 ]
+case "$out" in *"plugin.json skills"*) ok ;; *) bad "Q: phải báo plugin.json skills → $out" ;; esac
+cp "$tmp/plugin.json.orig" "$vq/.claude-plugin/plugin.json"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+vr="$tmp/own verify skill"
+new_repo "$vr"
+mkdir -p "$vr/.claude/skills/verify-kit"
+printf 'không có frontmatter\n[gãy](khong-co.md)\n' > "$vr/.claude/skills/verify-kit/SKILL.md"
+install "$vr"
+assert "Q: install phải exit 0 khi dự án có skill verify-kit riêng" [ $? -eq 0 ]
+out="$(cd "$vr" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
+case "$out" in *"4 skills"*) ok ;; *) bad "Q: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
+
+# R. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
+#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
+cr="$tmp/crlf checkout"
+new_repo "$cr"
+install "$cr"
+for f in "$cr"/.claude/agents/*.md "$cr"/.claude/skills/*/SKILL.md; do
   to_crlf < "$f" > "$tmp/crlf.md" && cat "$tmp/crlf.md" > "$f"
 done
-out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
+out="$(cd "$cr" && ./scripts/validate-kit.sh 2>&1)"
+assert "R: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
 # to_crlf sau awk: gawk của Git for Windows bỏ \r khi đọc, file sẽ thành LF.
-awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$q/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
-cat "$tmp/crlf.md" > "$q/.claude/agents/verifier.md"
-out="$(cd "$q" && ./scripts/validate-kit.sh 2>&1)"
-assert "P: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
+awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$cr/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
+cat "$tmp/crlf.md" > "$cr/.claude/agents/verifier.md"
+out="$(cd "$cr" && ./scripts/validate-kit.sh 2>&1)"
+assert "R: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
 case "$out" in
   *"verifier.md: name phải là 'verifier'"*) ok ;;
-  *) bad "P: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
+  *) bad "R: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
 esac
-assert "P: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
+assert "R: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
