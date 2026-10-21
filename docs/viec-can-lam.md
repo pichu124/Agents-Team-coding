@@ -28,16 +28,17 @@ Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR
 - **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
 
 ### 2.2 Việc dở của nice-hamilton (sau khi nhánh tích hợp merge)
-- **P2: nhận heredoc như bash**, 41 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–55, 61–70, 72, 83–87, 91–102).
+- **P2: nhận heredoc như bash**, 40 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–54, 61–70, 72, 83–87, 91–102). Ca 55 của P2 (`<<E\X`) đã nghi.
   - Vì sao: nhận heredoc hiện là heuristic. Cần cách đọc "tên là cả từ shell": bỏ nháy tên, `$"…"`, `\`⏎ trong tên, giải `$'…'`, `\r`, tên mở bằng chữ số; `<<` trong `$((`/`((`/`$[` là dịch bit; `<<` trong nháy, comment hay sau `\`; `<<\EOF`; `$(…)` và backtick trong thân dữ liệu không nháy (phải tuyến tính).
   - Thiết kế đề xuất: thêm cách đọc `segments(..., exact=True, strict=True, bash=True)` với bộ nhận `heredocs_word` port từ vibrant-pascal 970114a (audit-agent.py khoảng dòng 234–270), hợp nhãn, bỏ qua khi lệnh không có `<<`.
   - Tái hiện: bỏ chỉ số khỏi PENDING rồi chạy test-audit, hoặc `suspicious_labels(MISSED_VP[i][0], SUSPICIOUS)` trả `[]`.
   - Thêm: here-string đưa vào shell `bash <<< 'rm -rf src'` (bash xoá src, mọi bản trả `[]`).
   - Xong khi: hết chỉ số P2 trong PENDING, assert xanh, nhãn ⊇ bản trước.
-- **P3: env chỉ học từ phép gán thuần**, 17 ca trong PENDING (10, 11, 12, 29, 30, 32, 35, 36, 76, 77, 79–82, 88, 89, 90). **Cùng việc với 2.3**, làm một lần.
-  - Vì sao: env chỉ nên học từ đoạn chỉ gồm phép gán thuần, đứng sau đầu dòng, `;` hay xuống dòng, không đứng trước `|`, `|&`, `&`. Gán ở chỗ khác (`echo D=`, gán tạm, sau `&&`, `local`, `D[0]=`, `((D=0))`, `${N:=}`) phải thành "không biết". Cần ngăn xếp env cho `(`/`)`; IFS; `r\ead`, `read -aD`; cd trong nháy hay có `\`. Ca 88–90: ASSIGN chạy trên `full` đã trả comment, nên `# D=/tmp/w` thành phép gán.
+- **P3: env chỉ học từ phép gán thuần**, 7 ca trong PENDING (29, 32, 35, 36, 76, 77, 79). 10 ca khác của P3 (10, 11, 12, 30, 80–82, 88–90) đã nghi sau khi nhánh tích hợp merge nhánh mặc định và 357c9ce; chú thích của PENDING ở test-audit.sh liệt kê chung 11 ca đã nghi, gồm 10 ca này và ca 55 của P2. **Cùng việc với 2.3**, làm một lần.
+  - Vì sao: env chỉ nên học từ đoạn chỉ gồm phép gán thuần, đứng sau đầu dòng, `;` hay xuống dòng, không đứng trước `|`, `|&`, `&`. Gán ở chỗ khác (`echo D=`, gán tạm, sau `&&`, `local`, `D[0]=`, `((D=0))`, `${N:=}`) phải thành "không biết". Cần ngăn xếp env cho `(`/`)`; IFS; `r\ead`, `read -aD`; cd trong nháy hay có `\`.
   - Thêm: `D=/tmp/w; read -aD <<< /etc; rm -rf "$D"`, `unset D -f`.
   - Xong khi: PENDING rỗng; so với `AUDIT_BASE_REF=970114a` chỉ mất nhãn ở 52 lệnh mà vibrant-pascal báo thừa (bash thật không xoá ngoài /tmp/w).
+- **Phép gán có nháy trong thân đưa vào shell qua ống**: `cat <<'EOF' | bash` ⏎ `D=~; D="x /"; D=/tmp/w & true; rm -rf /tmp/w/$D` ⏎ `EOF` (bash xoá `/`), mọi bản trả `[]`. Có `| bash` thì shell_c bật, nháy không được che, nên `ASSIGN_STMT` của strict_assign không nhận `D="x /"` là phép gán. Ngữ pháp oracle của 1792c19 sinh được lớp này ở seed khác (seed 7 và 1009 không gặp). Xong khi: lệnh trên có assert vào A, oracle xanh.
 
 ### 2.3 Việc dở của blissful-dirac (cùng việc với P3 ở 2.2)
 Nhánh `claude/blissful-dirac-i6vpym` còn giữ commit gốc. Fixture s101–s137 nằm trong test-audit.sh của 98b74d0. Mỗi ý xong khi assert vào A có nhãn "xoá đệ quy", oracle xanh, `AUDIT_BASE_REF=<nền> ./scripts/test-audit.sh` exit 0.
@@ -47,8 +48,8 @@ Nhánh `claude/blissful-dirac-i6vpym` còn giữ commit gốc. Fixture s101–s1
 - **Oracle 876ad37 và 78e474a:** ngữ pháp sinh gán qua đối số, gán tạm, gán trong pipeline (WIP e69f5dd: sàn 2500, KNOWN_GAPS bỏ gán tạm/pipeline) và gán có điều kiện, `if`, thân hàm, `{ }|` (ORACLE_FLOOR 2600, đo được 2836). Oracle 78e474a phải đỏ trên nền trước khi port 5b32600.
 
 ### 2.4 Đường chậm bậc hai có từ trước
-- SHELL_C `(-\w+\s+)*` (`"bash" + " -bash"*5000`: 6–9 giây) và mẫu `\bgit\b.*\bfilter-(branch|repo)\b` (`"git-bash" + " --x-git-bash"*5000`: khoảng 14 giây): **nice-hamilton e089bd1 đã sửa** (0,17 và 0,44 giây), vào main cùng nhánh tích hợp.
-- Còn lại, mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
+- Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
+- `expand` là O(số biến × số đoạn có `$`), mỗi cách đọc một lượt: `" ".join("v%d=1" % i for i in range(5000)) + "; " + "echo $x; " * 5000` 13,7 giây (31893fb 11,4 giây; cách đọc strict thêm một lượt); `"unset v0 … v4999; " + "echo $x; " * 5000` 3,1 giây (31893fb 0,24 giây: cách đọc strict ghi 5000 tên bị unset thành biến rỗng). Đoạn không có `$` thì expand đã bỏ qua: hai lệnh trên với `true; ` thay `echo $x; ` mất 4,6 và 2,7 giây ở b06eb79 (31893fb 2,3 và 0,1 giây), nay 0,3 giây, có assert.
 - **Xong khi:** mỗi ca dưới 1 giây, có assert hiệu năng, nhãn không đổi. Các regex này thuộc cách đọc cũ, nên phải so ⊇ với bản trước trên fixture, fuzz và oracle.
 
 ### 2.5 Chưa kiểm chứng
@@ -72,12 +73,26 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 - `\;` hay `\|` làm SPLIT tách sai nên `fi` bị trừ độ sâu: `if false; then echo a\; fi; D=/tmp/x; fi; rm -rf $D/src`.
 - `for D in ..; do :; done; rm -rf node_modules/$D`.
 - `read D </dev/null; rm -rf $D/src`.
+- `D=/tmp/w; D+=/../..; rm -rf $D`: ASSIGN không nhận `+=`, nên mọi bản giữ D là /tmp/w và trả `[]`; bash xoá `/tmp/w/../..`, tức `/`.
 - Delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), CRLF.
 - `\$D` và `'$D'` là chữ.
 - `D=/; rm -rf /tmp/$D`: xoá chính /tmp, luật under_temp coi là vô hại.
 - `git checkout .&`: mẫu nhãn `\.(\s|$)` không nhận `&`.
 - Từ báo cáo của PR #8: `(export D=/tmp/w && cd /tmp/w/s)` ⏎ `rm -rf ${D}src`; `false && D=/tmp/w/; rm -rf ${D}src`; `{ D=/tmp/w/; } | true; rm -rf ${D}src`; `true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src`; `rm -rf {,/}src`; `D=/tmp/w/ true; rm -rf ${D}src`.
 - `su -c 'rm -rf src'`; `{ D=/tmp/w; } | true; rm -rf $D` (gán trong nhóm thuộc ống); `rm -rf {/tmp/a,/}`; `| /bin/bash`; nameref, trap, hàm.
+- Heredoc lồng trong thân heredoc đưa vào shell: HEREDOC_STRICT chỉ nhận toán tử ngoài cùng, thân lồng đọc như lệnh của thân ngoài. `bash <<'A'` ⏎ `bash <<X -c 'rm -rf /'` ⏎ `X` ⏎ `A` (bash xoá /); `D=/; bash <<'EOF'` ⏎ `D=/tmp/w; bash <<EOF2` ⏎ `rm -rf \$D/x` ⏎ `EOF2` ⏎ `EOF` (bash xoá /x: thân EOF2 không nháy để `$D` cho shell cháu, nơi D không export là rỗng). Mọi bản trả `[]` (đã thử 3b87a56, 4fba736, 13b4f43, af91da1, 31893fb và bản có bản so mẫu thứ hai cho thân <<EOF). Nhận thân lồng ngay trong cách đọc strict thì thân dữ liệu lồng (`cat <<X` trong thân) thôi là lệnh, mất nhãn mà bản trước báo: cần một cách đọc thêm rồi hợp nhãn.
+- `\` trong cờ: `rm \-rf /x` (bash xoá /x), cả trong thân <<EOF: `O=-rf; bash <<EOF` ⏎ `rm \\$O /x` ⏎ `EOF` (shell cha đổi `\\` thành `\`, shell con bỏ `\`: xoá /x). Mọi bản trả `[]`: mẫu xoá đệ quy so trên chữ còn `\` (`\s-\w*r` không khớp `\-rf`).
+- `cat <<'EOF' | X=1 bash`, `cat <<'EOF' | env bash` ⏎ `rm -rf /x` ⏎ `EOF`: PIPE_SHELL chỉ nhận shell ngay sau `|`, nên thân thành dữ liệu (bash xoá /x; mọi bản trả `[]`).
+- Biến ở vị trí cờ hay tên lệnh mà giá trị không học được: trong nháy kép `X=-rf; rm "$X" /x`, `X=rm; "$X" -rf /x`; biến không biết `read O <<< -rf; rm $O /x`, `O=$(echo -rf); rm $O /x`; giá trị mặc định `rm ${O:--rf} /x` (bash xoá /x; mọi bản trả `[]`).
+- **Thay biến trong thân `<<EOF` không nháy đưa vào shell (cách đọc `strict`), còn để ngỏ khi nhánh tích hợp mở PR.** Reviewer chặn ba vòng liên tiếp cùng lớp này; hai vòng đầu đã sửa (b06eb79: `\$` để shell con thay, env chụp tại toán tử, ở bản đầy đủ; 5e5a67b: bản so mẫu thứ hai `plain2`, env của shell con `kid`, lưới `heredoc_grid` 2040 lệnh kiểm bằng bash thật). Biến thể vòng ba dưới đây là lỗ mọi bản đều bỏ sót (3b87a56, 4fba736, 13b4f43, e09ff4d cùng trả `[]`, bash 5.2 xoá /x hay //y), không phải hồi quy; người dùng chọn mở PR và thiết kế lại ở PR riêng.
+  - `kid` học cả phép gán mà bash không áp dụng (strict có strict_assign=False nên mọi `NAME=VAL` trong đoạn vào `kid`; snap[2] lấy ASSIGN.findall trên cả phần trước SNAP): tham số lệnh `export O=-rf; bash <<EOF` ⏎ `echo O=-f; rm \$O /x` ⏎ `EOF`; gán tạm `…` ⏎ `O=-f true; rm \$O /x` ⏎ `…`; sau `&&` `…` ⏎ `false && O=-f; rm \$O /x` ⏎ `…`; trong ống `…` ⏎ `O=-f | true; rm \$O /x` ⏎ `…`; gán tạm của lệnh trước ống `export O=-rf; O=-f cat <<EOF | bash` ⏎ `rm \$O /x` ⏎ `EOF`; gán tạm của lệnh nền đứng trước `export O=-rf; O=-f true & bash <<EOF` ⏎ `rm \$O /x` ⏎ `EOF`; tham số vị trí `export O=-rf; bash -s O=-f <<EOF` ⏎ `rm \$O /x` ⏎ `EOF`.
+  - Hai heredoc trên một dòng: HEREDOC_STRICT chỉ nhận một toán tử mỗi dòng, thân thứ hai đọc như lệnh ngoài cùng và học phép gán mà shell cha đã thay trước. `D=/; bash <<A; bash <<B` ⏎ `true` ⏎ `A` ⏎ `D=/tmp/w; rm -rf $D/y` ⏎ `B` (xoá //y); `C=rm; bash <<A; bash <<B` ⏎ `true` ⏎ `A` ⏎ `C=echo; $C -rf /y` ⏎ `B` (xoá /y); cũng sai với `cat <<A; bash <<B`, `true <<A; bash <<B`, `bash <<A <<B`.
+  - Vì sao vá theo biến thể không hội tụ: mỗi vòng mô hình hoá chính xác hơn một chút ngữ nghĩa env của bash bằng heuristic, nên luôn còn biến thể sâu hơn. Hướng thiết kế lại (architect phác, chưa đo xong): giá trị biến là TẬP ứng viên — mọi phép gán không chắc được áp (tham số lệnh, gán tạm, sau `&&`/`||`, trong ống, chạy nền, tham số vị trí `bash -s`, lệnh trước ống trong `cat <<EOF | bash`) cho cả giả thuyết có áp và không áp; bản so mẫu sinh các biến thể có trần (vượt trần thì biến là không biết, kèm chính sách cho biến không biết ở vị trí cờ/tên lệnh) rồi hợp nhãn; nhận mọi toán tử heredoc trên dòng mở, thân theo thứ tự, mỗi thân có SNAP và env riêng. Giữ ⊇ theo cấu trúc (chỉ thêm đoạn/biến thể); đo chi phí báo thừa trên fixture, fuzz và file phiên thật.
+  - Xong khi: các lệnh trên có assert vào A; `heredoc_grid` có thêm chiều sinh được chúng (phép gán không thuần trong thân, `cat <<EOF | bash`, `bash -s NAME=`, lệnh nền đứng trước, nhiều toán tử trên dòng mở) và oracle xanh; reviewer mới cho qua.
+
+### 2.9 Oracle của PR #8 chạy với PATH có `rm` và `git` thật
+- **Vì sao:** `run()` của oracle thứ hai (PR #8) thay `rm` bằng stub bằng phép thay trên văn bản lệnh (`\brm\b`) rồi chạy bash với PATH đầy đủ. Dạng che tên lệnh (`r\m`, `'r'm`, `"r"m`, `$X` mang tên rm, `command rm`, `$(echo rm)`, `env rm`, `/bin/rm`) lọt qua phép thay và chạy rm thật: chuyện này đã xảy ra với một lệnh thăm dò ngoài repo (`r\m -rf /x`, /x không tồn tại nên không mất gì). Reviewer vòng 4 của nhánh tích hợp đã kiểm tĩnh 2365 lệnh fuzz và 2040 lệnh lưới: hiện không lệnh nào có đường tới rm hay git thật, nhưng chỉ nhờ ngữ pháp không bao giờ che tên lệnh. Oracle chung đã an toàn (PATH chỉ có bash và cat).
+- **Xong khi:** `run()` chạy với PATH là thư mục chỉ có symlink tới bash/sh/cat (không có rm, git), và đỏ khi văn bản lệnh (sau khi bỏ nháy và `\`) còn `\brm\b`/`\bgit\b`, hoặc có `$(`, backtick, `eval`, `env`, `command`, `exec`, `xargs`, `find`, `/bin/` — chỉ hạn chế PATH chưa đủ, vì ngữ pháp có `bash -lc` mà `/etc/profile` của Debian đặt lại PATH ở login shell.
 
 ## 3. PR đang mở (ảnh chụp)
 
