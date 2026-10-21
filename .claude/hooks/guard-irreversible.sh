@@ -205,8 +205,10 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   dirs="$(printf '%s' "$dirs" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
   for d in $dirs; do
-    [ -n "$d" ] || continue # git -C "" là thư mục của chính hook, không phải của lệnh
-    branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
+    # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
+    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
+    branch="$(CDPATH='' cd -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
