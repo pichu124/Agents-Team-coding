@@ -1308,8 +1308,8 @@ check(dt < 3 and got == ["xoá đệ quy"],
 # gọi thẳng segments. Bỏ một điều kiện của reading_key thì lệnh ghi chú bên cạnh đổi nhãn, trừ vế OPEN_RAW của parent_env
 # (assert mức đoạn ở dưới canh) và điều kiện raw_marks. raw_marks không lệnh nào canh được: các tổ hợp raw_marks khác nhau
 # mà b có SNAP thì b đã khác (SNAP chèn chỉ khi raw_marks=False, khi đó byte có sẵn đã bị trung hoà). Bỏ parent_env khỏi
-# khoá đệm b cũng không đỏ: hai chuỗi b chỉ khác ở SNAP, SNAP chỉ đổi phép thay `$`, mà b có `$` và dấu mở thì trường
-# parent_env của khoá đã tách lớp.
+# khoá đệm b thì nhãn không đổi nhưng assert mức đoạn đỏ: SNAP đứng ngay trước `#` sau toán tử heredoc làm `#` thôi là
+# comment, nháy trong đó mở chuỗi.
 import re
 def every_reading(cmd, tool="Bash"):
     joins = (True,) if tool == "PowerShell" else (False, True)
@@ -1351,6 +1351,7 @@ REPS = [("Bash", c) for c in (
     "D=/tmp/x/ true; rm -rf ${D}src",                              # strict_assign khi b có `$`
     "D=/srv/\n\x02\nD=/tmp/x/\nrm -rf ${D}src",                    # parent_env khi b có `$` và dấu mở
     "D=/tmp/x; bash <<EOF\nrm -rf $D/src\nEOF",                    # blank khi b có `$` và dấu mở
+    "bash <<'EOF'#'\nrm -rf src\nEOF\necho '\n",                    # parent_env trong khoá đệm b (SNAP trước `#`)
     "echo \"x\" | grep -c x && ls -la /home/user\ncat > f <<'EOF'\nEOF\necho '\x01'\nV=1 rm -rf src",
     "bash <<'EOF'\nEOF\ntrue \\\ncat <<'EOF' \\\nD=/tmp/x/; rm -rf ${D}src \\",
     "true | cd /tmp/x && rm -rf y #'\ncat <<'EOF' \\\n# don't $x\nEOF",
