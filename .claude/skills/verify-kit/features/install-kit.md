@@ -41,7 +41,7 @@ Preconditions:
 
 ## Gotchas
 
-- Bản cài trước bản sửa đã chép CLAUDE.md của repo kit sang dự án. Installer không tự sửa CLAUDE.md đó, chỉ cảnh báo ⚠ ở mọi lần chạy chừng nào nó còn chuỗi `/team-lead <task>`. Người dùng tự xoá các dòng trùng.
+- Bản cài trước bản sửa đã chép CLAUDE.md của repo kit sang dự án. Installer không tự sửa CLAUDE.md đó, chỉ cảnh báo ⚠ ở mọi lần chạy chừng nào nó còn cả chuỗi `/team-lead <task>` lẫn `Rule ↔ Thứ thực thi` (mọi bản CLAUDE.md của kit đều có cả hai). Người dùng tự xoá các dòng trùng.
 - Installer từ chối khi repo đích chính là repo kit (`✘ repo đích trùng với kit`). Luôn cài vào sandbox.
 - Không có Python thì installer không gộp được settings.json có sẵn: nó chỉ in cảnh báo. `merge-settings` khi đó là INCONCLUSIVE, không phải FAIL.
 - `--force` ghi đè file của dự án. Chỉ dùng trong sandbox, và không dùng để làm `conflict` pass.

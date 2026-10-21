@@ -166,7 +166,10 @@ own_part() {
 
 kept="CLAUDE.md đã có nên giữ nguyên; "
 if [ ! -f "$target/CLAUDE.md" ]; then
-  cp "$kit/templates/project-CLAUDE.md" "$target/CLAUDE.md"
+  if ! cp "$kit/templates/project-CLAUDE.md" "$target/CLAUDE.md"; then
+    echo "✘ không tạo được CLAUDE.md (symlink gãy thì xoá hoặc sửa nó rồi chạy lại)" >&2
+    exit 1
+  fi
   echo "✔ tạo CLAUDE.md (điền các mục TODO)"
   kept=""
 fi
@@ -198,8 +201,8 @@ else
   fi
 fi
 
-# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có chuỗi này.
-if grep -qF '/team-lead <task>' "$target/CLAUDE.md"; then
+# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả hai chuỗi này.
+if grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md"; then
   echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
   echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
@@ -208,7 +211,9 @@ fi
 # Không ghi ngày giờ: chạy lại cùng commit kit cho file y hệt.
 manifest="$target/.claude/agent-team-kit.txt"
 commit=unknown
-if sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
+# Chỉ khi kit là gốc repo: kit giải nén vào trong một repo khác thì HEAD là của repo đó.
+if cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] &&
+  sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
   commit="$sha"
   [ -n "$(git -C "$kit" status --porcelain --untracked-files=no 2>/dev/null)" ] && commit="$sha-dirty"
 fi

@@ -537,6 +537,14 @@ assert "R: install phải exit 0" [ $? -eq 0 ]
 assert "R: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
 assert "R: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$noc/CLAUDE.md"
 assert "R: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$noc/CLAUDE.md"
+# Agent, skill và hook của kit trỏ tới các mục này "trong CLAUDE.md".
+assert "R: CLAUDE.md mới phải có quy ước commit" grep -qF 'Conventional Commits' "$noc/CLAUDE.md"
+assert "R: CLAUDE.md mới phải có mục Quyền tự chủ" grep -qx '## Quyền tự chủ' "$noc/CLAUDE.md"
+assert "R: mục cuối của CLAUDE.md mới phải là bảng Rule ↔ Thứ thực thi → $(grep '^## ' "$noc/CLAUDE.md" | tail -n 1)" \
+  [ "$(grep '^## ' "$noc/CLAUDE.md" | tail -n 1)" = '## Rule ↔ Thứ thực thi' ]
+assert "R: bảng Rule ↔ Thứ thực thi của dự án phải có header, chưa có dòng nào → $(tail -n 2 "$noc/CLAUDE.md")" \
+  [ "$(tail -n 2 "$noc/CLAUDE.md")" = '| Rule | Thực thi bởi |
+|---|---|' ]
 assert "R: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
 assert "R: không được cảnh báo về CLAUDE.md" no_claude_warning
 if grep -q 'CLAUDE.md đã có' "$tmp/out"; then bad "R: vừa tạo CLAUDE.md thì không được báo CLAUDE.md đã có"; else ok; fi
@@ -712,6 +720,47 @@ assert "Z: kit có file đã theo dõi bị sửa thì kit-commit phải kèm -d
   grep -qx "kit-commit: $gk_sha-dirty" "$gt/$man"
 assert "Z: phải báo commit trước khi trạng thái kit đổi → $(grep "^✔ $man" "$tmp/out")" \
   grep -qxF "✔ $man: kit ${gk_sha:0:7}-dirty (trước: ${gk_sha:0:7})" "$tmp/out"
+
+# AA. CLAUDE.md riêng có nhắc /team-lead <task> nhưng không có bảng Rule ↔ Thứ thực thi: không phải bản chép
+#     CLAUDE.md của kit cũ (mọi bản đó có cả hai chuỗi), nên không cảnh báo.
+own_tl="$tmp/own team-lead"
+new_repo "$own_tl"
+# shellcheck disable=SC2016  # dấu ` là chữ markdown
+echo 'Dùng `/team-lead <task>` cho task lớn.' > "$own_tl/CLAUDE.md"
+cp "$own_tl/CLAUDE.md" "$tmp/own-tl-claude.orig"
+run_install "$own_tl"
+assert "AA: install phải exit 0" [ $? -eq 0 ]
+assert "AA: CLAUDE.md riêng chỉ nhắc /team-lead <task> thì không được cảnh báo về CLAUDE.md → $(cat "$tmp/err")" no_claude_warning
+assert "AA: không được sửa CLAUDE.md có sẵn" cmp -s "$tmp/own-tl-claude.orig" "$own_tl/CLAUDE.md"
+
+# AB. CLAUDE.md là symlink gãy: coi như chưa có, cp không ghi qua được thì báo ✘ và exit 1, không báo đã tạo.
+#     Đích nằm trong thư mục không có để cp của GNU lẫn BSD đều lỗi.
+dang="$tmp/dangling claude"
+new_repo "$dang"
+if ln -s khong-co/khong-co.md "$dang/CLAUDE.md" 2>/dev/null && [ -L "$dang/CLAUDE.md" ]; then
+  run_install "$dang"
+  assert "AB: không tạo được CLAUDE.md thì phải exit khác 0" [ $? -ne 0 ]
+  if grep -qF '✔ tạo CLAUDE.md' "$tmp/out"; then bad "AB: cp lỗi thì không được báo ✔ tạo CLAUDE.md"; else ok; fi
+  assert "AB: phải báo ✘ (stderr) không tạo được CLAUDE.md → $(cat "$tmp/err")" grep -q '^✘.*CLAUDE\.md' "$tmp/err"
+else
+  printf '⚠ bỏ qua ca AB: không tạo được symlink ở máy này\n'
+fi
+
+# AC. Kit giải nén vào thư mục con của một git repo khác (vd home là repo dotfiles): kit không phải gốc repo
+#     nên kit-commit: unknown, không lấy commit hay trạng thái -dirty của repo bên ngoài.
+outer="$tmp/dotfiles"
+new_repo "$outer"
+echo "dotfiles" > "$outer/README"
+git -C "$outer" add README
+git -C "$outer" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m dotfiles
+echo "sửa" >> "$outer/README"
+kit_copy "$outer/tools/kit"
+nk="$tmp/from nested kit"
+new_repo "$nk"
+"$outer/tools/kit/scripts/install-kit.sh" "$nk" >/dev/null 2>&1
+assert "AC: cài từ kit trong repo khác phải exit 0" [ $? -eq 0 ]
+assert "AC: kit không phải gốc repo thì phải ghi kit-commit: unknown → $(grep '^kit-commit' "$nk/$man")" \
+  grep -qx 'kit-commit: unknown' "$nk/$man"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
