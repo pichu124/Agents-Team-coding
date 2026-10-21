@@ -89,13 +89,6 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 
 ## 4. Kit, ngoài audit
 
-### 4.1 Cài lại kit sinh quy ước đội ở hai nơi
-- **Vì sao:** chạy lại `scripts/install-kit.sh` trên repo mà lần cài đầu đã tạo `CLAUDE.md` thì sinh thêm `.claude/rules/agent-team.md`, nên quy ước đội nằm ở hai nơi. Điều này trái với dòng "Chạy lại nhiều lần vẫn cho cùng kết quả" ở đầu installer. Lỗi do PR #17 tìm ra và reviewer của nó đã tái hiện độc lập. Ca A của `scripts/test-install.sh` không có bước cài lại, nên test không bắt được.
-- **Xong khi:**
-  - ca A có bước cài lại, đỏ trước rồi xanh sau khi sửa installer;
-  - hành trình reinstall trong `.claude/skills/verify-kit/features/install-kit.md` (đang ghi FAIL có chủ ý) chuyển sang xanh;
-  - `KIT_SELFTEST=1 ./scripts/check.sh` exit 0.
-
 ### 4.2 Cài lại kit trên macOS dừng khi phần riêng có byte không phải UTF-8 (ca Q của PR #22)
 - **Vì sao:** reviewer của PR #22 suy ra installer dừng trên macOS trong locale UTF-8 khi `.claude/rules/agent-team.md` có byte Latin-1. Ca Q đỏ trên macos-latest (run 39454475168, 1/98). Bản sửa `LC_ALL=C tr` (3749c74) không làm ca này xanh, nên nguyên nhân không chỉ ở `tr`; nghi awk BWK hay grep của macOS. Ca test 6a08ee9 và bản sửa 3749c74 đã được revert khỏi PR #22.
 - **Tái hiện trên macOS:** repo có CLAUDE.md; tạo `.claude/rules/agent-team.md` = `templates/agent-team-rules.md` + `printf '## Riêng Z\n- caf\351\n'`; chạy `env LC_ALL=en_US.UTF-8 bash -x ./scripts/install-kit.sh <repo>`, tìm lệnh exit khác 0. Chạy thêm với install-kit.sh của e5a6756 để biết lỗi có sẵn hay là hồi quy.
