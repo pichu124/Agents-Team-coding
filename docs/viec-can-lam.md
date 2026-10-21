@@ -29,16 +29,17 @@ Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR
 - **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
 
 ### 2.2 Việc dở của nice-hamilton (sau khi nhánh tích hợp merge)
-- **P2: nhận heredoc như bash**, 41 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–55, 61–70, 72, 83–87, 91–102).
+- **P2: nhận heredoc như bash**, 40 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–54, 61–70, 72, 83–87, 91–102).
   - Vì sao: nhận heredoc hiện là heuristic. Cần cách đọc "tên là cả từ shell": bỏ nháy tên, `$"…"`, `\`⏎ trong tên, giải `$'…'`, `\r`, tên mở bằng chữ số; `<<` trong `$((`/`((`/`$[` là dịch bit; `<<` trong nháy, comment hay sau `\`; `<<\EOF`; `$(…)` và backtick trong thân dữ liệu không nháy (phải tuyến tính).
   - Thiết kế đề xuất: thêm cách đọc `segments(..., exact=True, strict=True, bash=True)` với bộ nhận `heredocs_word` port từ vibrant-pascal 970114a (audit-agent.py khoảng dòng 234–270), hợp nhãn, bỏ qua khi lệnh không có `<<`.
   - Tái hiện: bỏ chỉ số khỏi PENDING rồi chạy test-audit, hoặc `suspicious_labels(MISSED_VP[i][0], SUSPICIOUS)` trả `[]`.
   - Thêm: here-string đưa vào shell `bash <<< 'rm -rf src'` (bash xoá src, mọi bản trả `[]`).
   - Xong khi: hết chỉ số P2 trong PENDING, assert xanh, nhãn ⊇ bản trước.
-- **P3: env chỉ học từ phép gán thuần**, 17 ca trong PENDING (10, 11, 12, 29, 30, 32, 35, 36, 76, 77, 79–82, 88, 89, 90). **Cùng việc với 2.3**, làm một lần.
+- **P3: env chỉ học từ phép gán thuần**, 7 ca trong PENDING (29, 32, 35, 36, 76, 77, 79; 10 ca khác đã nghi sau khi nhánh tích hợp merge nhánh mặc định và 357c9ce). **Cùng việc với 2.3**, làm một lần.
   - Vì sao: env chỉ nên học từ đoạn chỉ gồm phép gán thuần, đứng sau đầu dòng, `;` hay xuống dòng, không đứng trước `|`, `|&`, `&`. Gán ở chỗ khác (`echo D=`, gán tạm, sau `&&`, `local`, `D[0]=`, `((D=0))`, `${N:=}`) phải thành "không biết". Cần ngăn xếp env cho `(`/`)`; IFS; `r\ead`, `read -aD`; cd trong nháy hay có `\`. Ca 88–90: ASSIGN chạy trên `full` đã trả comment, nên `# D=/tmp/w` thành phép gán.
   - Thêm: `D=/tmp/w; read -aD <<< /etc; rm -rf "$D"`, `unset D -f`.
   - Xong khi: PENDING rỗng; so với `AUDIT_BASE_REF=970114a` chỉ mất nhãn ở 52 lệnh mà vibrant-pascal báo thừa (bash thật không xoá ngoài /tmp/w).
+- **Phép gán có nháy trong thân đưa vào shell qua ống**: `cat <<'EOF' | bash` ⏎ `D=~; D="x /"; D=/tmp/w & true; rm -rf /tmp/w/$D` ⏎ `EOF` (bash xoá `/`), mọi bản trả `[]`. Có `| bash` thì shell_c bật, nháy không được che, nên `ASSIGN_STMT` của strict_assign không nhận `D="x /"` là phép gán. Ngữ pháp oracle của 1792c19 sinh được lớp này ở seed khác (seed 7 và 1009 không gặp). Xong khi: lệnh trên có assert vào A, oracle xanh.
 
 ### 2.3 Việc dở của blissful-dirac (cùng việc với P3 ở 2.2)
 Nhánh `claude/blissful-dirac-i6vpym` còn giữ commit gốc. Fixture s101–s137 nằm trong test-audit.sh của 98b74d0. Mỗi ý xong khi assert vào A có nhãn "xoá đệ quy", oracle xanh, `AUDIT_BASE_REF=<nền> ./scripts/test-audit.sh` exit 0.
@@ -48,8 +49,7 @@ Nhánh `claude/blissful-dirac-i6vpym` còn giữ commit gốc. Fixture s101–s1
 - **Oracle 876ad37 và 78e474a:** ngữ pháp sinh gán qua đối số, gán tạm, gán trong pipeline (WIP e69f5dd: sàn 2500, KNOWN_GAPS bỏ gán tạm/pipeline) và gán có điều kiện, `if`, thân hàm, `{ }|` (ORACLE_FLOOR 2600, đo được 2836). Oracle 78e474a phải đỏ trên nền trước khi port 5b32600.
 
 ### 2.4 Đường chậm bậc hai có từ trước
-- SHELL_C `(-\w+\s+)*` (`"bash" + " -bash"*5000`: 6–9 giây) và mẫu `\bgit\b.*\bfilter-(branch|repo)\b` (`"git-bash" + " --x-git-bash"*5000`: khoảng 14 giây): **nice-hamilton e089bd1 đã sửa** (0,17 và 0,44 giây), vào main cùng nhánh tích hợp.
-- Còn lại, mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
+- Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
 - **Xong khi:** mỗi ca dưới 1 giây, có assert hiệu năng, nhãn không đổi. Các regex này thuộc cách đọc cũ, nên phải so ⊇ với bản trước trên fixture, fuzz và oracle.
 
 ### 2.5 Chưa kiểm chứng
