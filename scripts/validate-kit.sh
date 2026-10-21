@@ -20,12 +20,13 @@ err() {
   errors=$((errors + 1))
 }
 
+# Bỏ \r cuối dòng: clone trên Windows (core.autocrlf=true) cho file .md CRLF, Claude Code vẫn đọc được.
 has_frontmatter() {
-  [ "$(head -n 1 "$1")" = "---" ] && awk 'NR > 1 && $0 == "---" { found = 1; exit } END { exit !found }' "$1"
+  awk '{ sub(/\r$/, "") } NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { found = 1; exit } END { exit !found }' "$1"
 }
 
 fm_value() {
-  awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1" \
+  awk '{ sub(/\r$/, "") } NR == 1 { next } $0 == "---" { exit } { print }' "$1" \
     | sed -n "s/^$2:[[:space:]]*//p" | head -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
@@ -201,7 +202,8 @@ plugin = json.load(open(".claude-plugin/plugin.json", encoding="utf-8"))
 market = json.load(open(".claude-plugin/marketplace.json", encoding="utf-8"))
 hooks = json.load(open(plugin["hooks"], encoding="utf-8"))["hooks"]
 settings = json.load(open(".claude/settings.json", encoding="utf-8"))["hooks"]
-agents = sorted("./" + f for f in glob.glob(".claude/agents/*.md"))
+# Python trên Windows trả .claude/agents\x.md: đổi về / như trong plugin.json.
+agents = sorted("./" + f.replace(os.sep, "/") for f in glob.glob(".claude/agents/*.md"))
 if sorted(plugin.get("agents", [])) != agents:
     errs.append(f"plugin.json agents phải liệt kê đủ {agents}")
 # Liệt kê từng skill: trỏ cả .claude/skills/ thì skill riêng của repo kit (verify-kit) lọt sang mọi dự án.

@@ -932,8 +932,15 @@ def fuzz_vp_c():
     return ["\n".join(block() for _ in range(rnd.randint(2, 4))) for _ in range(1000)]
 PYEOF
 
-"$py" - "$out" "$code" "$nofile" "$md" "$other" "$all" "$plain" "$allmd" "$learn" "$learncode" "$learnmd" "$tmp/learn-expect.json" "$review" "$vp" "$tmp" <<'PYEOF'
+# Báo cáo markdown đi qua file, không qua argv: dòng lệnh trên Windows giới hạn 32767 ký tự, ba báo cáo
+# cộng lại ~42000 ("Argument list too long" trên Git Bash).
+printf '%s' "$md" > "$tmp/md.txt"
+printf '%s' "$allmd" > "$tmp/allmd.txt"
+printf '%s' "$learnmd" > "$tmp/learnmd.txt"
+"$py" - "$out" "$code" "$nofile" "$tmp/md.txt" "$other" "$all" "$plain" "$tmp/allmd.txt" "$learn" "$learncode" "$tmp/learnmd.txt" "$tmp/learn-expect.json" "$review" "$vp" "$tmp" <<'PYEOF'
 import importlib.util, json, os, sys
+for i in (4, 8, 11):  # đường dẫn file báo cáo markdown → nội dung
+    sys.argv[i] = open(sys.argv[i], encoding="utf-8").read()
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 code, nofile, md = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 fails = []
