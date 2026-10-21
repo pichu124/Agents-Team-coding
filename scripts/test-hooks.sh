@@ -68,6 +68,12 @@ symf="$tmp/sym feat"
 new_repo "$symf" feat/x
 mkdir -p "$on_main/sub"
 ln -s "$on_main/sub" "$symf/link" 2>/dev/null && [ -L "$symf/link" ] || symf=""
+# Chiều ngược lại: repo ở main có symlink trỏ vào thư mục con của repo ở feature. cd của shell đi theo đường
+# logic, nên cd "$symm/link/.." vào repo ở main dù đường vật lý là repo ở feature.
+symm="$tmp/sym main"
+new_repo "$symm" main
+mkdir -p "$work/sub"
+ln -s "$work/sub" "$symm/link" 2>/dev/null && [ -L "$symm/link" ] || symm=""
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
@@ -294,6 +300,10 @@ EOF
     expect_guard ask "git -C link/.. push" "$symf"
     expect_guard ask "git --git-dir=link/../.git push" "$symf"
     expect_guard ask "GIT_DIR=link/../.git git push" "$symf"
+  fi
+  if [ -n "$symm" ]; then
+    expect_guard ask "cd \"$symm/link/..\" && git push"
+    expect_guard ask "pushd \"$symm/link/..\"; git push"
   fi
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
