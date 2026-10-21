@@ -129,10 +129,12 @@ LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\`
 # toán tử heredoc, còn lệnh (`bash <<'EOF' && cd x && bash`): shell nhận thân không phải lệnh cuối dòng. SNAP đánh dấu chỗ
 # toán tử heredoc trên dòng mở: env của thân chụp tại đó, trước lệnh sau toán tử (segments, cách đọc parent_env và strict).
 OPEN, OPEN_RAW, CLOSE, NOT_LAST, SNAP = "\x02", "\x03", "\x01", "\x04", "\x05"
-# segments(strict=True) dời SNAP từ chỗ toán tử tới cuối đoạn chứa toán tử: trước `;`, `&&`, `|`, xuống dòng hay chuỗi `\`
-# không có chữ theo sau. Cùng đoạn nên env chụp vẫn vậy, nhưng SNAP không chen giữa shell và cờ (`bash <<EOF +e -c '…'`:
-# SHELL_C, SHELL_C_BODY_STRICT vẫn khớp) hay ngay trước `#`, và `\` trước xuống dòng còn nguyên cho LINE_JOIN.
-SNAP_END = re.compile(SNAP + r"((?:[^\n;&|\\]|&(?!&)|\\+(?=[^\n;&|\\]))*)(?=(\n|$)?)")
+# segments(strict=True) dời SNAP từ chỗ toán tử tới cuối lệnh chứa toán tử: trước `;`, `&&`, `|`, `&` chạy nền (không phải
+# `&>`, `>&`), xuống dòng hay chuỗi `\` không có chữ theo sau. Cùng đoạn nên env chụp vẫn vậy, nhưng SNAP không chen giữa
+# shell và cờ (`bash <<EOF +e -c '…'`: SHELL_C, SHELL_C_BODY_STRICT vẫn khớp) hay ngay trước `#`, và `\` trước xuống dòng
+# còn nguyên cho LINE_JOIN. Phần trước SNAP là lệnh nhận thân cùng các lệnh chạy nền trước nó: gán tạm của lệnh đó vào env
+# của shell con, phép gán sau `&` (`bash <<EOF & D=x`) chạy sau khi shell con đã tách ra thì không.
+SNAP_END = re.compile(SNAP + r"((?:[^\n;&|\\]|(?<=[<>])&|&(?=>)|\\+(?=[^\n;&|\\]))*)(?=(\n|$)?)")
 # Lệnh nhận thân heredoc là chính shell cục bộ: thân chạy ở thư mục của nó. Không nhận `ssh h bash`, `env -C / bash`...
 LOCAL_SHELL = re.compile(r"^(bash|sh|zsh|dash)(\s+-\w+)*\s*$")
 # Cờ trước -c không được đúng là tên shell (`-bash`): không thì lần khớp từ mỗi shell trong `bash -bash -bash …` quét lại
@@ -251,6 +253,18 @@ def expand(text, env):
     return text
 
 
+def expand_body(text, outer, inner):
+    """Thay biến trong một đoạn của thân <<EOF không nháy như bash: `$X` shell cha thay bằng outer (env tại toán tử
+    heredoc); `\\$X` (số `\\` lẻ) shell cha để lại `$X` cho shell con thay bằng inner (env của shell con, đã có phép gán trong
+    thân). Các `\\\\` đứng ngay trước `\\$` bỏ cùng nó: coi như shell con vẫn thay (thừa thì chỉ báo thừa)."""
+    parts = re.split(r"(?<!\\)(?:\\\\)*\\\$", text)
+    out = expand(parts[0], outer)
+    for x in parts[1:]:
+        m = re.match(r"\{?([A-Za-z_][A-Za-z0-9_]*)\b\}?", x)  # cùng dạng tên mà expand thay
+        out += inner[m[1]] + expand(x[m.end():], outer) if m and m[1] in inner else "$" + expand(x, outer)
+    return out
+
+
 def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False,
                         strict=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
@@ -355,12 +369,15 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     Thân -c gỡ bằng regex mở rộng (SHELL_C_BODY_STRICT: `bash +e -c '…'`, `bash -c -x '…'`, `bash -c - '…'`, `bash -c $'…'`);
     exact giữ regex của 1667825 vì sửa tại chỗ từng làm lệnh lồng mất nhãn. Bash: `\\'`, `\\"` ngoài nháy là ký tự thoát,
     không mở chuỗi nuốt lệnh sau (`echo it\\'s⏎rm -rf src 'x'`); `\\'` trong `$'…'` không đóng chuỗi. Thân heredoc có thể
-    rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF dùng giá trị biến tại toán tử heredoc, trước gán tạm và lệnh sau toán
-    tử trên dòng mở: shell cha thay trước khi shell con chạy (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /, `D=/; bash
-    <<EOF; D=/tmp/w⏎rm -rf $D/x` xoá //x); `\\$D` để shell con thay. Biến gán bằng read, mapfile, printf -v, for… (cả tên
-    dính redirection hay trong nháy: `read D<<</etc`, `printf -v "D"`), trong một khâu của ống hay sau `||` là không biết;
-    unset làm rỗng; eval, source, `.` làm mọi biến thành không biết. Here-string `<<<` không mở heredoc: dòng sau `cat <<<
-    EOF` là lệnh.
+    rỗng (`cat <<'EOF'⏎EOF⏎rm -rf src`). Thân <<EOF: shell cha thay `$D` bằng giá trị tại toán tử heredoc, trước gán tạm
+    và lệnh sau toán tử trên dòng mở, trước khi shell con chạy (`D=/; bash <<EOF⏎D=/tmp/w; rm -rf $D` xoá /, `D=/; bash
+    <<EOF; D=/tmp/w⏎rm -rf $D/x` xoá //x); `\\$D` để shell con thay bằng env của nó: env tại toán tử (coi như đã export)
+    cộng gán tạm của lệnh nhận thân, rồi phép gán trong thân (`O=-f; bash <<EOF⏎O=-rf; rm \\$O /x` xoá /x). Đoạn nào trong
+    thân mà thay như thế khác bản so mẫu cũ thì có thêm một đoạn phụ (bản so mẫu thay như bash, cùng bản đầy đủ): biến là
+    cờ hay tên lệnh cũng khớp mẫu. Bản đầy đủ chỉ thay biến có cùng giá trị tại toán tử và lúc mở thân, để nguyên `\\$D`.
+    Biến gán bằng read, mapfile, printf -v, for… (cả tên dính redirection hay trong nháy: `read D<<</etc`, `printf -v "D"`),
+    trong một khâu của ống hay sau `||` là không biết; unset làm rỗng; eval, source, `.` làm mọi biến thành không biết.
+    Here-string `<<<` không mở heredoc: dòng sau `cat <<< EOF` là lệnh.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict)
@@ -402,8 +419,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
     # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới).
     groups, lst, bg = [], {}, False
-    # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), một
-    # cặp (env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân).
+    # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), gồm
+    # env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân, env tại toán tử, và env của shell con (kid:
+    # env tại toán tử cộng gán tạm của lệnh nhận thân, rồi theo phép gán trong thân).
     pinned = []
     parts = re.split("(" + SPLIT.pattern + ")", marked)
     for i, seg in enumerate(parts):
@@ -425,12 +443,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         commented = comment
         if not comment and (raw.lstrip("({ ").startswith("#") or re.search(r"(?:^|[\s()])#", seg)):
             comment, csep = True, sep if raw.lstrip("({ ").startswith("#") else None
-        # Đoạn có toán tử heredoc đưa vào shell: bỏ SNAP rồi đọc như cũ, ghi env trước và sau phép gán của đoạn.
+        # Đoạn có toán tử heredoc đưa vào shell: bỏ SNAP rồi đọc như cũ, ghi env trước và sau phép gán của đoạn, và env của
+        # shell con: env trước đoạn cộng phép gán ở phần trước SNAP (gán tạm của lệnh nhận thân, có cả khi lệnh ở trong ống).
         snapped = scoped and not raw_marks and SNAP in raw
         if snapped:
+            op = raw[:raw.index(SNAP)]
             seg, raw, pre = seg.replace(SNAP, "").strip(), raw.replace(SNAP, "").strip(), dict(env)
             if not seg:
-                snap = pre, pre
+                snap = pre, pre, pre
                 continue
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
         # pipe_scope (PR #8): một khâu của ống chạy ở shell con, phép gán và cd trong đoạn ngay trước hay ngay sau `|`
@@ -461,17 +481,22 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         after_or_pipe, sep = sep in ("||", "|"), None
         # strict: trong thân <<EOF, biến đã được shell cha thay (pinned), không theo phép gán trong thân. Bản so mẫu thay bằng
         # env lúc mở thân như bản trước (mẫu khớp như cũ); bản đầy đủ (benign_delete đọc) chỉ thay biến có cùng giá trị tại
-        # toán tử và lúc mở thân, nên không tin giá trị nào mà bản trước không tin.
+        # toán tử và lúc mở thân, nên không tin giá trị nào mà bản trước không tin. Bản so mẫu thứ hai (plain2) thay như bash
+        # (expand_body): `$X` bằng env tại toán tử, `\$X` bằng env của shell con; khác bản so mẫu thì thành một đoạn phụ cùng
+        # bản đầy đủ, nên mẫu so trên cả hai mà đoạn cũ giữ nguyên. Biến là cờ hay tên lệnh (`rm $O /x`, `\$C -rf /x`) chỉ
+        # khớp mẫu khi thay đúng giá trị.
         pin = pinned[-1] if pinned else None
-        shown, values = pin or (env, env)
+        shown, values = pin[:2] if pin else (env, env)
         if frozen or pin:  # thân <<EOF: `\$` là `$` chữ, shell cha không thay; shell con thay bằng env không biết.
             # Chỉ thay biến ở các mảnh giữa những `\$` lẻ: không cần chỗ giữ nên không phụ thuộc ký tự có trong lệnh
             full = "".join(x if k % 2 else expand(x, values) for k, x in enumerate(re.split(r"((?<!\\)(?:\\\\)*\\\$)", raw)))
         else:
             full = expand(raw, values)
         plain = expand(re.sub(r"\0\d+\0", '""', seg), shown)
+        plain2 = expand_body(re.sub(r"\0\d+\0", '""', seg), pin[2], pin[3]) if pin else plain
+        kid = pin[3] if pin else {}  # phép gán áp cả cho env của shell con; ngoài thân <<EOF thì vào một dict bỏ đi
         if shell_c:
-            plain = re.sub(r"[\"']", " ", plain)
+            plain, plain2 = re.sub(r"[\"']", " ", plain), re.sub(r"[\"']", " ", plain2)
         assigns = not strict_assign or not detached and ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
         before = (dict(env), ctx) if piped else None
         # strict: phép gán trong một khâu của ống chạy ở shell con (khâu cuối có thể không, lastpipe), sau `||` có thể không
@@ -480,10 +505,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         for name, val in (ASSIGN.findall(full) if assigns and not frozen else ()):
             if forget:
                 env.pop(name, None)
+                kid.pop(name, None)
             else:
-                env[name] = val.strip("\"'")
+                env[name] = kid[name] = val.strip("\"'")
         if snapped:
-            snap = pre, dict(env)
+            snap = pre, dict(env), {**pre, **{n: v.strip("\"'") for n, v in ASSIGN.findall(expand(op, values))}}
         if before:  # khâu của ống: phép gán trong đoạn không ra ngoài. Trả env trước khi `)` đóng nhóm lấy env lúc mở nhóm
             env = before[0]
         for _c in closes:  # subshell đóng, hay nhóm chạy nền: phép gán bên trong không ra ngoài
@@ -499,11 +525,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             words = set(re.split(r"[\s(){}!<>;&|]+", re.sub(r"[\"']", "", full)))
             if EVAL.search(lead):
                 env.clear()
+                kid.clear()
             elif words & SETS_NAMES or (words & {"printf", "wait"} and any(w[:2] in ("-v", "-p") for w in words)):
                 for word in words | {w[2:] for w in words if w[:2] in ("-v", "-p")}:  # `printf -vD`: tên dính cờ
                     env.pop(word, None)
+                    kid.pop(word, None)
             elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in re.split(r"[\s(){}!]+", plain)):
                 env.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
+                kid.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
         m = CD.match(head)
         if m and m.group(2).strip().strip("\"'") not in ("-", ""):
             target = m.group(2).strip().strip("\"'")
@@ -530,7 +559,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 ctx = ""
         if BACKGROUND.search(seg):
             ctx = ""  # `cd x && a & b`: cả `cd x && a` chạy nền ở shell con, b chạy ở thư mục cũ
+        if plain2 != plain and CHDIR.search(plain2.lstrip("({ ")):
+            ctx = ""  # thân <<EOF: tên lệnh qua biến là cd (`$C /`, `\$C /`): không biết thư mục
         if not mark_only:
+            if plain2 != plain:  # đoạn phụ đứng trước: out[-1] (LOCAL_SHELL đọc ở dấu mở thân) vẫn là đoạn như cũ
+                out.append((plain2, full, ctx, "$" in raw))
             out.append((plain, full, ctx, "$" in raw))
         if before:
             ctx = before[1]
@@ -560,13 +593,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 # đọc cũ chỉ nhớ phạm vi mở sau cùng như 2f68e61
                 saved = (saved if exact else []) + [env]
                 if strict:
-                    # Phạm vi lồng trong thân <<EOF vẫn theo giá trị của shell cha ngoài cùng. Thân <<EOF: shell cha thay bằng
-                    # env tại toán tử (SNAP), trước gán tạm và lệnh sau toán tử trên dòng mở; biến có giá trị khác lúc mở
-                    # thân (giá trị bản trước dùng) thì không thay. SNAP có thể đứng trước thân -c gỡ ra sau toán tử: dấu mở
-                    # của thân -c không bỏ nó.
-                    at = snap[0] if snap else env
-                    pinned.append(pinned[-1] if pinned and pinned[-1] is not None else
-                                  (dict(env), {k: v for k, v in at.items() if env.get(k) == v}) if mark == OPEN else None)
+                    # Phạm vi lồng trong thân <<EOF vẫn theo giá trị của shell cha ngoài cùng, với bản chép env của shell con
+                    # (phép gán trong phạm vi lồng không ra ngoài). Thân <<EOF: shell cha thay bằng env tại toán tử (SNAP),
+                    # trước gán tạm và lệnh sau toán tử trên dòng mở; biến có giá trị khác lúc mở thân (giá trị bản trước
+                    # dùng) thì bản đầy đủ không thay. Shell con bắt đầu với env tại toán tử cộng gán tạm của lệnh nhận thân
+                    # (snap[2]; lệnh sau toán tử chưa chạy), coi như mọi biến đã export. SNAP có thể đứng trước thân -c gỡ ra
+                    # sau toán tử: dấu mở của thân -c không bỏ nó.
+                    at, top = snap[0] if snap else env, pinned[-1] if pinned else None
+                    pinned.append(top[:3] + (dict(top[3]),) if top else
+                                  (dict(env), {k: v for k, v in at.items() if env.get(k) == v}, dict(at),
+                                   dict(snap[2] if snap else env)) if mark == OPEN else None)
                 env = dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else dict(env)
                 if parent_env and snap:
                     env = dict(snap[1] if mark == OPEN_RAW else snap[0])
@@ -672,7 +708,7 @@ def reading_key(cmd, tool, combo, bodies):
       chỉ trông như `bash`, `sh -s`… khi b có "sh" hay có `$` để ghép ra. SNAP ở b khi scoped, không raw_marks thì đi
       cùng dấu mở thân.
     - pipe_scope (PR #8) đổi cả thư mục lẫn env quanh `|` và `||` ngoài b: giữ nguyên trong lớp, không gộp.
-    - strict đổi b (HEREDOC_STRICT, SHELL_C_BODY_STRICT, SNAP ở cuối đoạn có toán tử) và, ngoài b, cách che nháy
+    - strict đổi b (HEREDOC_STRICT, SHELL_C_BODY_STRICT, SNAP ở cuối lệnh có toán tử) và, ngoài b, cách che nháy
       (QUOTED_XB) cùng env (read, unset, eval…, gán trong ống, thân <<EOF): giữ nguyên trong khoá đệm b và trong lớp,
       không gộp."""
     join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict = combo

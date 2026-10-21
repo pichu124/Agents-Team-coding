@@ -932,12 +932,58 @@ def fuzz_vp_c():
     return ["\n".join(block() for _ in range(rnd.randint(2, 4))) for _ in range(1000)]
 PYEOF
 
+# Lưới của lớp lỗi "thay biến trong thân <<EOF không nháy đưa vào shell", dùng chung cho assert (theo mô hình, chạy mọi nơi)
+# và oracle bash của PR #8 (kiểm mô hình bằng bash thật). Reviewer chặn hai vòng liền, mỗi vòng một ví dụ của cùng lớp
+# (b06eb79 chỉ sửa biến là đích): lưới đi hết lớp thay vì theo ví dụ.
+grid="$tmp/heredoc_grid.py"
+cat > "$grid" <<'PYEOF'
+def heredoc_grid():
+    """[(lệnh, nguy theo mô hình, mô tả)]. Biến X ở vị trí đích, cờ, tên lệnh (rm, hay cd đổi thư mục của rm sau nó) hay
+    phần của đích (`${X}src`) trong thân <<EOF hay <<-EOF đưa vào bash hay sh; hai giá trị a, b gán ở hai chỗ: a trước toán
+    tử (có khi export), b là gán tạm, sau toán tử (`;`, `&&`, `&`, `|`, `||`) hay trong thân (có khi export); thân tham
+    chiếu `$X` hay `\\$X`; có hay không mẹo nháy (`\\'`, `$'…'`) mà chỉ cách đọc strict che đúng. Mỗi chỗ gán xét (a, b) =
+    (nguy, mồi) rồi đảo lại. Mô hình: shell cha thay `$X` bằng giá trị tại toán tử heredoc (a); `\\$X` để shell con thay
+    bằng env của nó: gán trong thân, không thì gán tạm, không thì a nếu đã export, còn lại rỗng (`${X}src` rỗng là `src`
+    của dự án). sh (dash) không biết `$'…'`: nháy mở chuỗi nuốt dòng rm. Mẹo nháy dùng `:` chứ không `echo`: vế trái của
+    `|` không in gì nên không chết vì SIGPIPE."""
+    # (vị trí, thân, giá trị nguy, giá trị mồi, các giá trị làm bash xoá đệ quy ngoài thư mục tạm)
+    POS = [("đích", "rm -rf {}", "/x", "/tmp/w", ("/x",)), ("cờ", "rm {} /x", "-rf", "-f", ("-rf",)),
+           ("tên lệnh", "{} -rf /x", "rm", "echo", ("rm",)),
+           ("tên lệnh cd", "cd /tmp/w && {} / && rm -rf x", "cd", "true", ("cd",)),
+           ("phần của đích", "rm -rf {}src", "/", "/tmp/w/", ("/", ""))]
+    OPS = [";", " &&", " &", " |", " ||"]
+    # (chỗ gán, trước toán tử, gán tạm, sau toán tử, trong thân, tham chiếu `\$X`)
+    PLACES = ([("trước toán tử", "X={a}", "", "", "", False), ("gán tạm", "X={a}", "X={b} ", "", "", False)]
+              + [("sau toán tử" + o, "X={a}", "", o + " X={b}", "", False) for o in OPS]
+              + [("trong thân", "X={a}", "", "", "X={b}; ", False),
+                 ("export trong thân", "X={a}", "", "", "export X={b}; ", False),
+                 ("trong thân, \\$", "X={a}", "", "", "X={b}; ", True), ("gán tạm, \\$", "X={a}", "X={b} ", "", "", True),
+                 ("export, \\$", "export X={a}", "", "", "", True)]
+              + [("export, sau toán tử" + o + ", \\$", "export X={a}", "", o + " X={b}", "", True) for o in OPS])
+    TRICKS = [("", ""), (": it\\'s\n", ": 'x'\n"), (": $'a\\'b\\n'\n", ": 'x'\n")]
+    out = []
+    for pos, body, real, decoy, bad in POS:
+        for place, pre, temp, after, inner, esc in PLACES:
+            ref = ("\\$" if esc else "$") + ("{X}" if pos == "phần của đích" else "X")
+            for a, b in ((real, decoy), (decoy, real)):
+                val = (b if inner or temp else a if pre.startswith("export") else "") if esc else a
+                for t1, t2 in TRICKS:
+                    lines = (t1 + inner.format(b=b) + body.format(ref) + "\n" + t2).splitlines()
+                    for sh in ("bash", "sh"):
+                        for dash, tab in (("", ""), ("-", "\t")):
+                            cmd = (pre.format(a=a) + "; " + temp.format(b=b) + sh + " <<" + dash + "EOF" + after.format(b=b)
+                                   + "\n" + "".join(tab + x + "\n" for x in lines) + tab + "EOF")
+                            out.append((cmd, val in bad and not (sh == "sh" and "$'" in t1),
+                                        f"{pos}, {place}, X={a} rồi {b}, {t1.strip() or 'không mẹo nháy'}, {sh} <<{dash}EOF"))
+    return out
+PYEOF
+
 # Báo cáo markdown đi qua file, không qua argv: dòng lệnh trên Windows giới hạn 32767 ký tự, ba báo cáo
 # cộng lại ~42000 ("Argument list too long" trên Git Bash).
 printf '%s' "$md" > "$tmp/md.txt"
 printf '%s' "$allmd" > "$tmp/allmd.txt"
 printf '%s' "$learnmd" > "$tmp/learnmd.txt"
-"$py" - "$out" "$code" "$nofile" "$tmp/md.txt" "$other" "$all" "$plain" "$tmp/allmd.txt" "$learn" "$learncode" "$tmp/learnmd.txt" "$tmp/learn-expect.json" "$review" "$vp" "$tmp" <<'PYEOF'
+"$py" - "$out" "$code" "$nofile" "$tmp/md.txt" "$other" "$all" "$plain" "$tmp/allmd.txt" "$learn" "$learncode" "$tmp/learnmd.txt" "$tmp/learn-expect.json" "$review" "$vp" "$tmp" "$grid" <<'PYEOF'
 import importlib.util, json, os, sys
 for i in (4, 8, 11):  # đường dẫn file báo cáo markdown → nội dung
     sys.argv[i] = open(sys.argv[i], encoding="utf-8").read()
@@ -1512,6 +1558,24 @@ for cmd in ("D=/tmp/w; bash <<EOF\necho it\\'s\nrm -rf \\$D/a\necho 'x'\nEOF",  
             "bash <<EOF +e -c 'rm -rf /'; true\necho it\\'s\nEOF"):                         # xoá /
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"thân <<EOF: `\\$` là của shell con, env của shell cha chụp tại toán tử: {cmd!r}: {got!r}")
+# Cùng lớp khi biến là cờ hay tên lệnh (reviewer chặn vòng 3; mọi bản trước trả []): bản so mẫu cũng phải thay `$X` bằng giá
+# trị tại toán tử, và `\$X` bằng env của shell con (gán trong thân) sau khi bỏ `\`. Bash 5.2 chạy `rm -rf /x`.
+for cmd in ("O=-rf; bash <<EOF; O=-f\necho it\\'s\nrm $O /x\necho 'x'\nEOF",        # cờ, gán sau toán tử
+            "O=-rf; O=-f bash <<EOF\necho it\\'s\nrm $O /x\necho 'x'\nEOF",         # cờ, gán tạm
+            "C=rm; bash <<EOF; C=echo\necho it\\'s\n$C -rf /x\necho 'x'\nEOF",      # tên lệnh, gán sau toán tử
+            "C=rm; C=echo bash <<EOF\necho it\\'s\n$C -rf /x\necho 'x'\nEOF",       # tên lệnh, gán tạm
+            "C=echo; bash <<EOF\necho it\\'s\nC=rm; \\$C -rf /x\necho 'x'\nEOF",   # `\$`: shell con thay
+            "O=-f; bash <<EOF\nO=-rf; rm \\$O /x\nEOF"):                              # `\$`, không mẹo nháy
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"thân <<EOF: biến là cờ hay tên lệnh: {cmd!r}: {got!r}")
+# Cả lớp đó (lưới dùng chung với oracle bash của PR #8, nơi bash thật kiểm mô hình của lưới): mọi lệnh nguy phải vào A.
+spec = importlib.util.spec_from_file_location("heredoc_grid", sys.argv[16])
+hg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hg)
+grid = [(c, why) for c, danger, why in hg.heredoc_grid() if danger]
+missed = [(len(c), c, why) for c, why in grid if "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS)]
+check(len(grid) >= 800 and not missed, f"lưới thân <<EOF ({len(grid)} lệnh nguy): mục A bỏ sót {len(missed)}, ngắn nhất: "
+      + "; ".join(f"{why}: {c!r}" for _n, c, why in sorted(missed)[:5]))
 # Thư mục cd không biết: cd ngay sau `||` chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (bash chạy rm ở thư mục dự
 # án). Đích còn `$` hay lệnh lồng sau khi thay biến đã biết có thể là đường tuyệt đối: cd vào thư mục tạm không làm nó vô hại
 # (D chưa gán, `echo` in rỗng: bash xoá /a).
@@ -2277,12 +2341,12 @@ else
       base_why="không có scripts/test-audit.sh ở $ref"
     fi
   fi
-  "$py" -I -B - "$tmp/oracle-pr8" "$base_test" "$base_why" <<'PYEOF' || status=1
+  "$py" -I -B - "$tmp/oracle-pr8" "$base_test" "$base_why" "$grid" <<'PYEOF' || status=1
 import ast, glob, importlib.util, os, random, re, shutil, signal, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
-root, base_test, base_why = sys.argv[1:4]
+root, base_test, base_why, grid_file = sys.argv[1:5]
 # Lệnh bash xoá đích ngoài thư mục tạm mà mục A vẫn bỏ sót, có từ trước bước này: (lệnh, "lý do"). Sửa được ca nào thì xoá
 # ca đó (bước này đỏ khi một ca đã hết sót mà còn nằm đây). Chỉ được giảm: thêm ca so với bản trước là đỏ, ca sót mới phải sửa.
 KNOWN_MISSES = [
@@ -2397,8 +2461,9 @@ def rm_targets(args):
     """Đích của rm như GNU rm đọc: trước `--` đầu tiên, token mở bằng `-` (trừ `-` trơn) là cờ, ở đâu cũng vậy."""
     end = args.index("--") if "--" in args else len(args)
     return [t for t in args[:end] if t and (t == "-" or not t.startswith("-"))] + [t for t in args[end + 1:] if t]
-def run(base, cmd):
-    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd."""
+def run(base, cmd, rec=False):
+    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd. rec: chỉ tính đích ngoài thư mục
+    tạm của lần gọi có cờ đệ quy."""
     tmpd = os.path.join(base, "tmp")
     text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
     if re.search(r"\brm\b", text.replace(root, "")) or FORBID.search(text.replace(root, "")):
@@ -2422,10 +2487,11 @@ def run(base, cmd):
     for f in sorted(glob.glob(os.path.join(base, "log.*"))):
         with open(f, "rb") as fh:
             pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
+        deep = not rec or any(re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*|--recursive", t) for t in args)
         for t in rm_targets(args):
             calls.append((pwd, t))
             r = os.path.normpath(os.path.join(pwd, t))
-            if r != tmpd and not r.startswith(tmpd + "/"):
+            if deep and r != tmpd and not r.startswith(tmpd + "/"):
                 rel = os.path.relpath(r, os.path.join(base, "p"))
                 bad.append(r if rel.startswith("../../..") else "<dự án>/" + rel if rel != "." else "<dự án>")
     return err, calls, bad
@@ -2441,9 +2507,27 @@ for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src"
                      f"đích ngoài thư mục tạm {bad} (phải là {want})")
 if fails:
     finish("")
+# Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
+# lưới gọi là nguy, ở đây bash thật kiểm mô hình đó (rm đệ quy ngoài thư mục tạm đúng ở các lệnh ấy) và mục A báo đủ.
+spec = importlib.util.spec_from_file_location("heredoc_grid", grid_file)
+hg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hg)
+grid = hg.heredoc_grid()
 with ThreadPoolExecutor(W) as ex:
     res = [r for rs in ex.map(lambda k: [(c,) + run(bases[k], c) for c in cmds[k::W]], range(W)) for r in rs]
+    gres = [r for rs in ex.map(lambda k: [(c, d, why) + run(bases[k], c, rec=True) for c, d, why in grid[k::W]],
+                                range(W)) for r in rs]
 shutil.rmtree(root, ignore_errors=True)
+model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d]
+if model:
+    fails.append(f"lưới thân <<EOF: bash thật khác mô hình của lưới ở {len(model)}/{len(grid)} lệnh (sửa heredoc_grid):\n"
+                 + "\n".join(f"  {why}: {c!r}: bash xoá đệ quy {bad or 'không gì'}" for why, c, bad in model[:5]))
+gmiss = sorted((len(c), why, c) for c, _d, why, err, _calls, bad in gres
+               if not err and bad and "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS))
+fails += [f"{c!r}: {err}" for c, _d, _why, err, _calls, _bad in gres if err]
+if gmiss:
+    fails.append(f"lưới thân <<EOF: mục A bỏ sót {len(gmiss)} lệnh mà bash xoá đệ quy ngoài thư mục tạm:\n"
+                 + "\n".join(f"  {why}: {c!r}" for _n, why, c in gmiss[:10]))
 misses, danger, hit = [], 0, set()
 for c, err, _calls, bad in res:
     if err:
@@ -2469,7 +2553,8 @@ for c in gone:  # mục A vẫn không báo, mà bash ở máy này không xoá 
     print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
 finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy bằng bash {ver} thật (rm thay bằng stub), "
        f"{danger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong KNOWN_MISSES "
-       f"(chỉ được giảm: {ratchet}; {time.monotonic() - t0:.0f} giây)")
+       f"(chỉ được giảm: {ratchet}); lưới thân <<EOF: {len(grid)} lệnh khớp mô hình, mục A báo đủ "
+       f"{sum(1 for g in gres if g[5])} lệnh nguy ({time.monotonic() - t0:.0f} giây)")
 PYEOF
 fi
 # Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
