@@ -37,7 +37,9 @@ bash_input() {
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-gitc() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false -c core.autocrlf=false "${@:2}"; }
+# cd rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /tmp/... có [ ] sang đường Windows cho
+# git.exe, nên git -C "$tmp/a[x]b" báo "cannot change to" và repo không được tạo.
+gitc() { (cd "$1" && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false -c core.autocrlf=false "${@:2}"); }
 # new_repo <thư mục> <nhánh>
 new_repo() {
   mkdir -p "$1"
