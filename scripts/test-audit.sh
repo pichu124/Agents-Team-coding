@@ -1294,9 +1294,10 @@ got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
 check(dt < 6 and "xoá đệ quy" in got, f"600 phép gán khác tên rồi rm phải xong dưới 6 s, rm vẫn nghi: {dt:.1f} s, {got!r}")
 # Lệnh bật mọi chiều của phép hợp cách đọc (NAME=, byte dấu, heredoc thân rỗng) không được đọc lại cả lệnh theo từng tổ hợp
-# khi các tổ hợp cho cùng kết quả. 20/10/2026 (4 nhân), 1000 dòng không `$`, `#`, `\` rồi heredoc thân rỗng, byte \x01,
-# `V=1 rm`: 38bf5bb 8,8 s (88 lần gọi segments), e5a6756 0,47 s (bỏ sót rm), bản gộp tổ hợp trùng 0,25 s (4 lần gọi),
-# trung vị 5 lần. Ngưỡng 3 s cách bản gộp ~12 lần, 38bf5bb ~2,9 lần. Bash xoá ./src.
+# khi các tổ hợp cho cùng kết quả. 21/10/2026 (4 nhân, Python 3.13), 1000 dòng không `$`, `#`, `\` rồi heredoc thân rỗng,
+# byte \x01, `V=1 rm`, trung vị 5 lần: 38bf5bb 6,2 s (88 lần gọi segments), be281ef (thêm pipe_scope) 7,5 s (104 lần gọi),
+# bản gộp tổ hợp trùng 0,40 s (7 lần gọi); e5a6756 xong 0,47 s nhưng bỏ sót rm (20/10). Ngưỡng 3 s cách bản gộp ~7,5 lần,
+# be281ef ~2,5 lần. Bash xoá ./src.
 cmd = "\n".join(['echo "x" | grep -c x && ls -la /home/user'] * 1000) + "\ncat > f <<'EOF'\nEOF\necho '\x01'\nV=1 rm -rf src"
 t0 = time.perf_counter()
 got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -1304,9 +1305,11 @@ dt = time.perf_counter() - t0
 check(dt < 3 and got == ["xoá đệ quy"],
       f"1000 dòng rồi heredoc thân rỗng, byte \\x01, `V=1 rm` phải xong dưới 3 s, nhãn đúng ['xoá đệ quy']: {dt:.1f} s, {got!r}")
 # Gộp tổ hợp đọc trùng (reading_key) không được đổi nhãn hay thứ tự nhãn: so với phép hợp đọc đủ mọi tổ hợp như 38bf5bb,
-# gọi thẳng segments. Bỏ một điều kiện của reading_key thì lệnh ghi chú bên cạnh đổi nhãn. Riêng điều kiện raw_marks
-# không lệnh nào canh được: các tổ hợp raw_marks khác nhau mà b có SNAP thì b đã khác (SNAP chèn chỉ khi raw_marks=False,
-# khi đó byte có sẵn đã bị trung hoà).
+# gọi thẳng segments. Bỏ một điều kiện của reading_key thì lệnh ghi chú bên cạnh đổi nhãn, trừ vế OPEN_RAW của parent_env
+# (assert mức đoạn ở dưới canh) và điều kiện raw_marks. raw_marks không lệnh nào canh được: các tổ hợp raw_marks khác nhau
+# mà b có SNAP thì b đã khác (SNAP chèn chỉ khi raw_marks=False, khi đó byte có sẵn đã bị trung hoà). Bỏ parent_env khỏi
+# khoá đệm b cũng không đỏ: hai chuỗi b chỉ khác ở SNAP, SNAP chỉ đổi phép thay `$`, mà b có `$` và dấu mở thì trường
+# parent_env của khoá đã tách lớp.
 import re
 def every_reading(cmd, tool="Bash"):
     joins = (True,) if tool == "PowerShell" else (False, True)
@@ -1364,6 +1367,32 @@ REPS = [("Bash", c) for c in (
 for tool, cmd in REPS:
     got, want = a.suspicious_labels(cmd, a.SUSPICIOUS, tool), every_reading(cmd, tool)
     check(got == want, f"gộp tổ hợp đọc trùng không được đổi nhãn hay thứ tự nhãn: {tool} {cmd!r}: {got!r}, đọc đủ: {want!r}")
+# Mọi tổ hợp cùng lớp reading_key phải cho đúng cùng danh sách đoạn, không chỉ cùng nhãn: nhãn có thể còn nguyên chỉ nhờ
+# cách đọc khác đọc thừa. Bỏ vế OPEN_RAW khỏi điều kiện parent_env thì REPS vẫn xanh, nhưng `D=/tmp/x/; bash <<'EOF'⏎rm -rf
+# ${D}src⏎EOF` gộp tổ hợp cho `rm -rf /tmp/x/src` với tổ hợp cho `rm -rf src`. Canh cả lúc sửa segments mà quên reading_key:
+# bước so với bản trước không thấy cách đọc mà bản trước chưa có. Lệnh sinh cố định (hạt 7) từ cấu trúc mà các chiều của
+# phép hợp đọc khác nhau: biến, cd, heredoc mọi kiểu, byte dấu, comment, nháy lẻ, `\` cuối dòng, thân -c, ống, `||`, `&`.
+import random
+KTOK = ["rm -rf src", "rm -rf /tmp/x", "rm -rf $D", "rm -rf ${D}src", "D=/tmp/x/", "D=/", "D=/tmp/x/ true", "cd /tmp/x",
+        "bash", "sh -s", "bash -c 'D=/; rm -rf $D'", 'sh -c "rm -rf $D"', "bash <<EOF", "bash <<'EOF'", "cat <<'EOF'",
+        "cat <<EOF", "EOF", "<<'EOF'", "# x", "#'", "# don't", "don't", "'", '"', "\\", "\x01", "\x02", "\x03", "\x04", "\x05",
+        "$B", "B=sh", "${A}sh", "echo x", "true", "(", ")", "{", "}", "&", "export D=/tmp/x", "| bash", "IFS=/", "s\\\nh",
+        "$HOME", "x=$(", "-c", "--", "Set-Location /tmp/x", "Remove-Item -Recurse -Force src"]
+KSEP = [" ", "\n", "; ", " && ", " || ", " | ", " \\\n", "\n", "\n"]
+krnd = random.Random(7)
+def kcmd():
+    c = "".join(krnd.choice(KTOK) + krnd.choice(KSEP) for _ in range(krnd.randint(1, 9)))
+    return c.rstrip(" ") if krnd.random() < 0.5 else c
+clash = []
+for tool, cmd in REPS + [(t, kcmd()) for t in ("Bash", "Bash", "PowerShell") for _ in range(500)]:
+    bodies, seen = {}, {}
+    for combo in a.reading_combos(cmd, tool):
+        key, segs = a.reading_key(cmd, tool, combo, bodies), a.segments(cmd, tool, *combo)
+        if seen.setdefault(key, (combo, segs))[1] != segs:
+            clash.append((len(cmd), tool, cmd, seen[key][0], combo))
+            break
+check(not clash, f"reading_key gộp hai tổ hợp cho danh sách đoạn khác nhau ({len(clash)} lệnh), ngắn nhất: "
+                 f"{sorted(clash)[:1]!r}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
