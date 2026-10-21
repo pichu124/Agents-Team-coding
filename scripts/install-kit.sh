@@ -3,10 +3,16 @@
 #   ./scripts/install-kit.sh <repo-đích> [--force]
 # - Chép agents, hooks, 4 skill của kit, scripts/{check,validate-kit,test-hooks,audit-agent,test-audit}.sh, audit-agent.py, guard-ask-floor.
 # - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
-# - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md. Cài lại chỉ thay phần
-#   của kit (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
+# - Repo chưa có CLAUDE.md: tạo từ templates/project-CLAUDE.md. Đã có thì không đụng (CLAUDE.md còn quy ước
+#   đội chép từ kit cũ thì cảnh báo).
+# - Luôn tạo hoặc cập nhật .claude/rules/agent-team.md (quy ước đội). Cài lại chỉ thay phần của kit
+#   (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
+# - Ghi .claude/agent-team-kit.txt: commit kit đã cài và danh sách file của kit. Cài lại thì báo ⚠ file mà kit
+#   đã bỏ nhưng repo vẫn còn (không tự xoá), báo tiếp ở mọi lần cài cho tới khi người dùng xoá.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
-# - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
+# - File của kit mà repo đã có và khác bản kit hiện tại: trùng một bản đã commit trong lịch sử kit (dự án chưa
+#   sửa; chỉ khác dòng kết thúc cũng tính là trùng) thì cập nhật luôn. Không trùng bản nào (dự án đã sửa, hoặc
+#   file riêng trùng tên) thì dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
 set -uo pipefail
 
@@ -46,14 +52,40 @@ done < <(
     scripts/audit-agent.sh scripts/audit-agent.py scripts/test-audit.sh
 )
 
+# Chỉ khi kit là gốc repo: kit giải nén vào trong một repo khác thì HEAD và lịch sử là của repo đó.
+kit_repo=""
+cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] && kit_repo=1
+
+# kit_had <f>: file <f> của repo đích trùng một bản đã commit của <f> trong lịch sử kit, kể cả bản chỉ merge commit
+# mới có (-m: diff của merge với từng parent; thiếu nó thì git log --raw bỏ qua merge). Băm hai cách, cách nào
+# trùng cũng được: qua filter eol của kit (--path; kit clone với core.autocrlf=true có file CRLF mà blob là LF) và
+# byte thô (--no-filters; lịch sử có blob CRLF thì filter lại đổi file sang LF). Git lỗi thì coi như không trùng.
+kit_had() {
+  local blob hist opt
+  [ -n "$kit_repo" ] || return 1
+  hist="$(git -C "$kit" log --format= --raw --no-abbrev --no-renames -m -- "$1" 2>/dev/null)" || return 1
+  for opt in --path="$1" --no-filters; do
+    blob="$(git -C "$kit" hash-object "$opt" -- "$target/$1" 2>/dev/null)" || continue
+    case "$hist" in *" $blob "*) return 0 ;; esac
+  done
+  return 1
+}
+
 conflicts=0
+updated=()
 for f in "${files[@]}"; do
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
-    echo "✘ $f đã tồn tại và khác bản của kit" >&2
-    conflicts=$((conflicts + 1))
+    if kit_had "$f"; then
+      updated+=("$f")
+    elif [ "$force" = "--force" ]; then
+      echo "⚠ ghi đè $f: bản trong repo khác bản của kit" >&2
+    else
+      echo "✘ $f đã tồn tại và khác bản của kit" >&2
+      conflicts=$((conflicts + 1))
+    fi
   fi
 done
-if [ "$conflicts" -gt 0 ] && [ "$force" != "--force" ]; then
+if [ "$conflicts" -gt 0 ]; then
   echo "✘ dừng: $conflicts file trùng. Đổi tên file của bạn, hoặc chạy lại với --force để ghi đè." >&2
   exit 1
 fi
@@ -112,6 +144,10 @@ for f in "${files[@]}"; do
   case "$f" in *.sh) chmod +x "$target/$f" ;; esac
 done
 echo "✔ đã chép ${#files[@]} file của kit"
+if [ "${#updated[@]}" -gt 0 ]; then
+  echo "✔ cập nhật ${#updated[@]} file kit mà dự án chưa sửa"
+  printf '  %s\n' "${updated[@]}"
+fi
 
 if [ ! -f "$settings" ]; then
   cp "$kit/.claude/settings.json" "$settings"
@@ -161,36 +197,99 @@ own_part() {
   ' "$rules_tpl" - | tr '\001' '\r'
 }
 
-if [ -f "$target/CLAUDE.md" ]; then
-  rules="$target/.claude/rules/agent-team.md"
-  mkdir -p "$target/.claude/rules"
-  if [ ! -f "$rules" ]; then
-    cp "$rules_tpl" "$rules"
-    echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
-  else
-    has_mark=0
-    grep -q "^$rules_mark" "$rules" && has_mark=1
-    # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
-    if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
-      echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
-      exit 1
-    fi
-    own="${own%x}"
-    # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
-    { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
-    if [ -n "$own" ]; then
-      n=$(($(printf '%s' "$own" | wc -l)))
-      echo "✔ CLAUDE.md đã có nên giữ nguyên; .claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
-    else
-      echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
-    fi
-    if [ "$has_mark" = 0 ]; then
-      echo "  (bản cài cũ chưa có dòng $rules_mark -->: chỉ giữ được mục #/## mà template không có, sửa trong phần của kit đã bị thay; xem git diff)"
-    fi
+kept="CLAUDE.md đã có nên giữ nguyên; "
+if [ ! -f "$target/CLAUDE.md" ]; then
+  if ! cp "$kit/templates/project-CLAUDE.md" "$target/CLAUDE.md"; then
+    echo "✘ không tạo được CLAUDE.md (symlink gãy thì xoá hoặc sửa nó rồi chạy lại)" >&2
+    exit 1
   fi
-else
-  cp "$kit/CLAUDE.md" "$target/CLAUDE.md"
   echo "✔ tạo CLAUDE.md (điền các mục TODO)"
+  kept=""
+fi
+
+rules="$target/.claude/rules/agent-team.md"
+mkdir -p "$target/.claude/rules"
+if [ ! -f "$rules" ]; then
+  cp "$rules_tpl" "$rules"
+  echo "✔ ${kept}quy ước đội ở .claude/rules/agent-team.md"
+else
+  has_mark=0
+  grep -q "^$rules_mark" "$rules" && has_mark=1
+  # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
+  if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
+    echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
+    exit 1
+  fi
+  own="${own%x}"
+  # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
+  { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
+  if [ -n "$own" ]; then
+    n=$(($(printf '%s' "$own" | wc -l)))
+    echo "✔ ${kept}.claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
+  else
+    echo "✔ ${kept}quy ước đội ở .claude/rules/agent-team.md"
+  fi
+  if [ "$has_mark" = 0 ]; then
+    echo "  (bản cài cũ chưa có dòng $rules_mark -->: chỉ giữ được mục #/## mà template không có, sửa trong phần của kit đã bị thay; xem git diff)"
+  fi
+fi
+
+# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả hai chuỗi này.
+if grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md"; then
+  echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
+  echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
+fi
+
+# .claude/agent-team-kit.txt: commit kit đã cài và file của kit, để biết repo nào đang dùng kit cũ.
+# Không ghi ngày giờ: chạy lại cùng commit kit cho file y hệt.
+manifest="$target/.claude/agent-team-kit.txt"
+commit=unknown
+if [ -n "$kit_repo" ] && sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
+  commit="$sha"
+  [ -n "$(git -C "$kit" status --porcelain --untracked-files=no 2>/dev/null)" ] && commit="$sha-dirty"
+fi
+nl=$'\n'
+cr=$'\r'
+kit_list="$(printf '%s\n' "${files[@]}")"
+# File kit mà lần cài trước liệt kê (kit-files, kit-dropped), kit mới không còn nhưng repo vẫn có: báo, không
+# xoá, ghi vào kit-dropped để lần sau vẫn báo. Chỉ đọc đường dẫn, không thực thi gì trong file.
+prev=""
+dropped=""
+ndropped=0
+if [ -f "$manifest" ]; then
+  in_list=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%"$cr"}"
+    case "$line" in
+      'kit-commit: '*) prev="${line#kit-commit: }" ;;
+      kit-files: | kit-dropped:) in_list=1 ;;
+      '' | '#'*) ;;
+      *)
+        [ "$in_list" = 1 ] && [ -e "$target/$line" ] || continue
+        # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
+        case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
+        dropped="$dropped$line$nl"
+        ndropped=$((ndropped + 1))
+        ;;
+    esac
+  done < "$manifest"
+fi
+{
+  echo "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay."
+  echo "# Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates"
+  echo "kit-commit: $commit"
+  echo "kit-files:"
+  printf '%s\n' "$kit_list"
+  echo "kit-dropped:"
+  printf '%s' "$dropped"
+} > "$manifest"
+short() { case "$1" in *-dirty) printf '%s-dirty' "${1:0:7}" ;; *) printf '%s' "${1:0:7}" ;; esac; }
+was=""
+[ -n "$prev" ] && [ "$prev" != "$commit" ] && was=" (trước: $(short "$prev"))"
+echo "✔ .claude/agent-team-kit.txt: kit $(short "$commit")$was"
+if [ "$ndropped" -gt 0 ]; then
+  echo "⚠ kit đã bỏ $ndropped file mà repo này vẫn còn. Dự án không dùng thì xoá (git rm):" >&2
+  printf '%s' "$dropped" | sed 's/^/  /' >&2
 fi
 
 attrs="$target/.gitattributes"
@@ -202,7 +301,7 @@ fi
 
 ignored=()
 for probe in .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/skills/team-lead/SKILL.md \
-             .claude/rules/agent-team.md .claude/settings.json scripts/check.sh; do
+             .claude/rules/agent-team.md .claude/settings.json .claude/agent-team-kit.txt scripts/check.sh; do
   [ -e "$target/$probe" ] || continue
   git -C "$target" check-ignore -q "$probe" && ignored+=("$probe")
 done
@@ -214,7 +313,7 @@ if [ "${#ignored[@]}" -gt 0 ]; then
     # Chỉ ghi !dir/ (không ghi !dir/**): dạng ** đứng cuối file sẽ đè luật .env, *.log... phía trên.
     for p in "${ignored[@]}"; do
       case "$p" in
-        .claude/settings.json) echo "!.claude/settings.json" ;;
+        .claude/settings.json | .claude/agent-team-kit.txt) echo "!$p" ;;
         .claude/*) d="${p#.claude/}"; printf '!.claude/%s/\n' "${d%%/*}" ;;
         *) printf '!%s/\n' "${p%%/*}" ;;
       esac

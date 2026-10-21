@@ -15,7 +15,6 @@ Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR
 | `claude/blissful-dirac-i6vpym` | 357c9ce (port 749e0c6) và 1792c19 (port oracle 751a129) đi qua nhánh tích hợp; phần dở ghi ở 2.3 | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
 | `claude/vibrant-pascal-b81ljt` | nice-hamilton đã nhận hết (d7ce707: 103 ca MISSED, fuzz_b/fuzz_c; bảng commit ở PR của nhánh tích hợp); phần dở ở 2.2 (P2, P3) | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
 | `claude/practical-hawking-le9toi` (PR #8) | Merge chính PR #8, sau khi verifier và reviewer mới cho qua a744f97. Phần riêng của nó: cách đọc `pipe_scope` (bắt `D=/tmp/x/; true && D=/srv/; true \| D=/tmp/x/; rm -rf ${D}src`, bash xoá /srv/src, nhánh mặc định trả `[]`); oracle thứ hai bổ sung cho oracle chung (xem 2.1); MUST_FLAG 18 lệnh phải báo và 5 lệnh vô hại. 4 ca sửa cũ của nó (0c347b2, a43055e, 3543fb4, 6b50142) nhánh mặc định đã báo nhờ PR #18 | Đang chạy; archive khi PR #8 merge |
-| `claude/laughing-ride-ot94no` (PR #22) | Mọi commit tới b561645, đã xanh trên macOS và Windows thật (run 39447944773) và 01d6d51; revert 6a08ee9, 3749c74 (ca Q, xem 4.2); merge nhánh mặc định rồi chờ 3 job CI | Đang chạy; archive khi PR #22 merge |
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
@@ -85,16 +84,9 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 | PR | Nội dung | Trạng thái |
 |---|---|---|
 | #8 | fix(audit): oracle bash cho mục A, cách đọc `pipe_scope` (`claude/practical-hawking-le9toi`) | Nháp, đầu a744f97 đã merge 53f3ff2, check cục bộ xanh. Chờ verifier và reviewer mới, cập nhật mô tả, rồi merge (mục 1) |
-| #22 | fix: kit chạy đúng trên macOS (bash 3.2) và Git Bash Windows, CI portable (`claude/laughing-ride-ot94no`) | Nháp. Đang revert ca Q, merge nhánh mặc định, chờ 3 job CI |
+| #25 | fix(install): quy ước đội luôn ở `.claude/rules`, manifest `.claude/agent-team-kit.txt`, cài lại tự cập nhật file kit mà dự án chưa sửa (nhận theo lịch sử git của kit); docs cập nhật kit và auto-update plugin | Nháp, mở ngày 21/10. Đã qua verifier và reviewer mới; CI xanh trên Linux, macOS và Windows (9ee8be3). Chờ người review. Việc còn lại: 4.6–4.9 |
 
 ## 4. Kit, ngoài audit
-
-### 4.1 Cài lại kit sinh quy ước đội ở hai nơi
-- **Vì sao:** chạy lại `scripts/install-kit.sh` trên repo mà lần cài đầu đã tạo `CLAUDE.md` thì sinh thêm `.claude/rules/agent-team.md`, nên quy ước đội nằm ở hai nơi. Điều này trái với dòng "Chạy lại nhiều lần vẫn cho cùng kết quả" ở đầu installer. Lỗi do PR #17 tìm ra và reviewer của nó đã tái hiện độc lập. Ca A của `scripts/test-install.sh` không có bước cài lại, nên test không bắt được.
-- **Xong khi:**
-  - ca A có bước cài lại, đỏ trước rồi xanh sau khi sửa installer;
-  - hành trình reinstall trong `.claude/skills/verify-kit/features/install-kit.md` (đang ghi FAIL có chủ ý) chuyển sang xanh;
-  - `KIT_SELFTEST=1 ./scripts/check.sh` exit 0.
 
 ### 4.2 Cài lại kit trên macOS dừng khi phần riêng có byte không phải UTF-8 (ca Q của PR #22)
 - **Vì sao:** reviewer của PR #22 suy ra installer dừng trên macOS trong locale UTF-8 khi `.claude/rules/agent-team.md` có byte Latin-1. Ca Q đỏ trên macos-latest (run 39454475168, 1/98). Bản sửa `LC_ALL=C tr` (3749c74) không làm ca này xanh, nên nguyên nhân không chỉ ở `tr`; nghi awk BWK hay grep của macOS. Ca test 6a08ee9 và bản sửa 3749c74 đã được revert khỏi PR #22.
@@ -112,3 +104,30 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
+- Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của nhánh `ccr-651f0a3f-wykij0` ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
+  - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
+  - `git add --chmod=+x` ở cuối stage cả nội dung các script `.sh`, nên `git diff` không hiện thay đổi của chúng. Có thể chỉ đặt bit chạy (`git update-index --chmod=+x`) cho file đã được theo dõi.
+  - Dòng sửa tay trong manifest kiểu `../x`, tên thư mục hay `-rf` bị báo "kit đã bỏ" mãi, vì installer kiểm bằng `-e` và không lọc `..`, `/`, `-`.
+  - Cảnh báo "CLAUDE.md còn quy ước đội chép từ bản kit cũ" báo nhầm khi CLAUDE.md riêng có câu `/team-lead <task>` và về sau gardener hay `/correct` tạo bảng `Rule ↔ Thứ thực thi` trong đó.
+  - CLAUDE.md là symlink gãy thì installer ✘ exit 1, nhưng lúc đó đã chép file kit và gộp settings. Nó không dừng trước khi đụng repo như ca C/E của test-install.
+  - Installer không cảnh báo khi `kit-commit` trong manifest không phải tổ tiên của HEAD của kit, tức kit đang ở bản cũ hơn bản đã cài. File trùng bản mới hơn (có trong lịch sử kit) sẽ bị đưa về bản cũ.
+
+### 4.6 `kit_had` của installer chưa thấy đủ các bản trong lịch sử kit
+- **Vì sao:** cài lại thì installer tự cập nhật file kit trùng một bản đã commit trong lịch sử kit (hàm `kit_had`, dùng `git log --raw -m`). Có hai chỗ hở, cả hai chỉ làm installer báo ✘ thừa và dừng, không ghi đè gì:
+  - `-m` phụ thuộc config `log.diffMerges` của người dùng. Với `off`, merge bị bỏ qua. Với `remerge`, output có thêm blob giả (bản gộp lại có conflict marker), gần như không thể trùng.
+  - Lọc theo đường dẫn thì `git log` cắt bớt lịch sử: ở merge mà file trùng một parent, git chỉ đi theo parent đó, nên bản trên nhánh bị bỏ không được nhận.
+  Reviewer của 12bf299 đã tái hiện chỗ đầu. Chỗ sau do implementer chỉ ra.
+- **Xong khi:** `kit_had` gọi `git -c log.diffMerges=separate -C "$kit" log --full-history ...`; có ca test-install cho kit có `log.diffMerges=off` và cho lịch sử bị cắt bớt, đỏ trước rồi xanh.
+
+### 4.7 Cài lại trên Windows ghi `settings.json` từ CRLF sang LF
+- **Vì sao:** kit clone với `core.autocrlf=true` (mặc định của Git for Windows) thì `.claude/settings.json` của kit là CRLF. Lần cài đầu chép nguyên văn (CRLF), lần cài lại gộp bằng Python và ghi LF, nên `git diff HEAD` hiện cả file (66 dòng) dù nội dung không đổi. Lỗi có từ trước nhánh `ccr-651f0a3f-wykij0`; verifier của nhánh đó thấy khi mô phỏng autocrlf trên Linux.
+- **Xong khi:** có ca test-install với kit `autocrlf=true`: cài, commit, cài lại, `git status --porcelain` rỗng.
+
+### 4.8 Lệnh PowerShell của đoạn "Cập nhật kit" chưa chạy tay trên Windows
+- **Đã có:** CI của PR #25 xanh trên cả 3 OS ở 9ee8be3 (run 39576148967): test-install (ca AE..AN) chạy trên macOS `/bin/bash` 3.2 và Git Bash Windows với `core.autocrlf=true`. Lần chạy Windows đầu tiên (f737e75) đỏ 7 assert. Lỗi nằm ở test fixture: grep và gawk của Git for Windows bỏ `\r`, và kit checkout CRLF. 9ee8be3 đã sửa.
+- **Vì sao còn:** lệnh PowerShell ở đoạn "Cập nhật kit" của docs/04 mục 12 (`git diff --no-index C:\tools\Agents-Team-coding\<file> <file>`, `git restore --source=HEAD --staged --worktree -- <file>`) chưa chạy trên PowerShell 5.1; CI chỉ chạy phần bash.
+- **Xong khi:** một lần làm tay đoạn "Cập nhật kit" trên `C:\vnstock-trial`, kết quả ghi vào đây.
+
+### 4.9 Chưa có cách ghim một file kit ở bản cũ
+- **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
+- **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.

@@ -154,20 +154,31 @@ Kết quả mong đợi:
 ✔ đã chép ... file của kit
 ✔ gộp permissions + hooks vào .claude/settings.json
 ✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md
+✔ .claude/agent-team-kit.txt: kit 1a2b3c4
 ✔ .gitattributes: giữ LF cho *.sh (Windows)
-✔ .gitignore: thêm ngoại lệ cho .claude/agents/architect.md .claude/hooks/stop-gate.sh
+✔ .gitignore: thêm ngoại lệ cho .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/rules/agent-team.md .claude/agent-team-kit.txt
 ```
 
 Nếu installer báo trùng file, nó dừng mà không chép gì. Đọc tên file trong thông báo rồi quyết định. Chỉ dùng `--force` khi bạn chắc chắn muốn ghi đè.
 
-Cập nhật kit về sau: `git pull` trong thư mục kit, rồi chạy lại installer với `--force`.
+Cập nhật kit về sau: `git pull` trong thư mục kit, rồi chạy lại installer **không** có `--force`.
 
 ```bash
-git -C /c/tools/Agents-Team-coding pull
-/c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force
+git -C /c/tools/Agents-Team-coding pull     # báo lỗi thì dừng, không cài
+/c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
 ```
 
-File `.claude/rules/agent-team.md` chỉ bị thay phần của kit, từ đầu file tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng của dự án (ví dụ bộ check nhanh) thì viết dưới dòng đó, installer giữ nguyên. Bản cài cũ chưa có dòng này thì installer giữ các mục `#`/`##` không có trong template, phần còn lại bị thay. Xem `git diff` trước khi commit.
+Installer tự cập nhật các file kit mà dự án chưa sửa (file trong repo trùng một bản đã commit trong lịch sử kit) và báo `✔ cập nhật N file kit mà dự án chưa sửa`. File dự án đã sửa (ví dụ do `/agent-audit`) thì nó dừng với dòng `✘ <file> đã tồn tại và khác bản của kit` và chưa đụng gì: làm như bước 3 ở [mục 12](#12-việc-hằng-ngày-trong-đợt-thử). Cài xong thì xem `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`. Chạy check rồi mới commit.
+
+Commit kit đã cài nằm ở dòng `kit-commit:` của `.claude/agent-team-kit.txt`, installer ghi lại sau mỗi lần cài. Muốn biết kit có gì mới từ bản đó thì sau `git pull`, trước khi chạy lại installer, chạy lệnh ở dòng comment thứ hai của file, thay `<kit-commit>` bằng commit đó (bỏ hậu tố `-dirty` nếu có):
+
+```bash
+git -C /c/tools/Agents-Team-coding log --oneline <kit-commit>..HEAD -- .claude scripts templates
+```
+
+Kit bỏ hoặc đổi tên một file thì bản cũ vẫn nằm lại trong repo. Installer không tự xoá mà báo `⚠ kit đã bỏ N file mà repo này vẫn còn` kèm tên từng file, và báo lại ở mọi lần cài cho tới khi file đó không còn. Dự án không dùng file nào thì tự `git rm` file đó.
+
+File `.claude/rules/agent-team.md` chỉ bị thay phần của kit, từ đầu file tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng của dự án (ví dụ bộ check nhanh) thì viết dưới dòng đó, installer giữ nguyên. Bản cài cũ chưa có dòng này thì installer giữ các mục `#`/`##` không có trong template, phần còn lại bị thay. Xem `git diff HEAD` trước khi commit.
 
 ## 5. Chạy check
 
@@ -327,12 +338,54 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
 
 | Lúc | Việc | Lệnh |
 |---|---|---|
-| Đầu buổi | Lấy bản sửa mới nhất của kit | `cd C:\vnstock-trial; git pull`. Đã cài plugin ([docs/05](05-cai-cho-moi-du-an.md)) thì thêm `claude plugin marketplace update agents-team-coding; claude plugin update agent-team@agents-team-coding` |
+| Đầu buổi | Lấy việc máy kia đã push lên `trial/agent-team`. Lệnh này không lấy bản kit mới | `cd C:\vnstock-trial; git pull` |
+| Lần đầu trên máy, chưa có `C:\tools\Agents-Team-coding` | Clone kit một lần như mục 2. Đường tắt và luồng desktop không clone kit | `git clone -b claude/sharp-knuth-lpdhqz https://github.com/pichu124/Agents-Team-coding.git C:\tools\Agents-Team-coding` |
+| Đầu buổi | Lấy bản kit mới rồi cài lại vào `C:\vnstock-trial`, không dùng `--force`. Luôn cài lại, kể cả khi pull in `Already up to date.`: hôm trước pull mà quên cài thì hôm nay vẫn cài bù | Bốn bước ở đoạn "Cập nhật kit" ngay dưới bảng |
+| Đầu buổi, nếu đã cài plugin ([docs/05](05-cai-cho-moi-du-an.md)) | Cập nhật plugin | Đã bật auto-update thì không cần làm gì. Chưa bật thì `claude plugin marketplace update agents-team-coding; claude plugin update agent-team@agents-team-coding` |
 | Trong buổi | Giao việc không tầm thường cho đội | `/team-lead <việc>` |
 | Cuối buổi | Dò sự cố của ngày, mọi dự án trên máy | `& $bash scripts/audit-agent.sh --all --since 1` |
 | Có dòng ở A, B, H hoặc F | Để agent tự sửa, hoặc gửi người hỗ trợ | `/agent-audit 1`, hoặc dán báo cáo |
 | Chỉ có C, D, E | Xem lướt | Báo khi C lặp với lệnh vô hại, hoặc E có lần chặn hay trung vị trên 5 phút |
 | Mục I có lớp lỗi lặp từ 2 lần | Đọc các dòng, mã hoá bài học vào cấu trúc | `/correct` |
 | Cuối tuần | Xem xu hướng ở mục J: số lần sửa trên 10 lượt có giảm không | `& $bash scripts/audit-agent.sh --all --since 28` |
+
+**Cập nhật kit.** Làm trong `C:\vnstock-trial`. Không có `--force`, installer tự cập nhật các file kit mà dự án chưa sửa (file trùng một bản kit đã commit), và dừng ở file dự án đã sửa. Đừng chạy `--force` ngay từ đầu: nó ghi đè cả bản dự án tự sửa trong file của kit (ví dụ `/agent-audit` vá guard ngay trong dự án) mà vẫn exit 0.
+
+0. Repo phải sạch: lệnh dưới không in gì. Có việc dở thì commit hoặc cất (`git stash`) trước, để bước commit cuối không gom cả việc dở.
+   ```powershell
+   git status --short
+   ```
+1. Lấy kit mới. `git pull` báo lỗi (mất mạng, xung đột) thì dừng, không cài: cài lúc đó có thể đè bằng bản kit cũ hơn bản máy kia đã commit.
+   ```powershell
+   git -C C:\tools\Agents-Team-coding pull
+   ```
+2. Cài lại, không có `--force`.
+   ```powershell
+   & $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
+   ```
+   Exit 0 (không có dòng `✘ dừng: ...`): installer đã cập nhật các file kit mà dự án chưa sửa. Nó in tên từng file đó, mỗi file một dòng ngay dưới dòng `✔ cập nhật N file kit mà dự án chưa sửa`. Dự án cố ý giữ một bản kit cũ thì file đó cũng bị cập nhật, vì nó trùng một bản của kit: muốn giữ thì thêm một dòng comment riêng vào file để nó khác mọi bản kit, khi đó installer dừng ở bước 3. Xem thay đổi, chạy check, rồi commit. Dùng `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`, nên `git diff` không hiện chúng. Dòng `kit-commit:` của `.claude/agent-team-kit.txt` trong diff cho thấy commit kit cũ và mới. `git status --short` không in gì thì kit không đổi, hết việc.
+   ```powershell
+   git status --short
+   git diff HEAD
+   & $bash scripts/check.sh
+   git add -A
+   git commit -m "chore: cập nhật bộ agent team"
+   ```
+3. Installer dừng với các dòng `✘ <file> đã tồn tại và khác bản của kit`: dự án đã sửa các file đó (hoặc có file riêng trùng tên), và installer chưa đụng file nào. Xem file trong dự án khác bản kit mới ở đâu, mỗi file một lệnh. Đường dẫn thứ hai tính từ `C:\vnstock-trial`. Dòng `-` là của kit, dòng `+` là của dự án.
+   ```powershell
+   git diff --no-index C:\tools\Agents-Team-coding\<file> <file>
+   ```
+   Rồi chọn một trong ba cách:
+   - (a) Bản sửa nên có ở mọi dự án: đưa nó về repo kit trước, rồi làm lại từ bước 1. Kit có đúng bản đó (chỉ được khác dòng kết thúc) thì file trong dự án trùng một bản của kit và được cập nhật. Vẫn ✘ thì kit đã có bản sửa ở dạng khác: chọn (b).
+   - (b) Nhận bản của kit, bỏ bản sửa: chạy lại với `--force`. Installer in `⚠ ghi đè <file>` cho từng file nó ghi đè.
+     ```powershell
+     & $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force
+     ```
+   - (c) Lần này giữ bản của dự án: chạy lệnh `--force` ở (b), rồi lấy lại bản của dự án cho từng file đó. Các lần cài sau file đó vẫn hiện ✘ cho tới khi làm (a) hoặc (b).
+     ```powershell
+     git restore --source=HEAD --staged --worktree -- <file>
+     ```
+
+   Sau đó xem thay đổi, chạy check, rồi commit như bước 2.
 
 Ghi một dòng mỗi ngày (máy, số việc đã giao, sự cố nếu có) để chấm điểm ở mục 8.

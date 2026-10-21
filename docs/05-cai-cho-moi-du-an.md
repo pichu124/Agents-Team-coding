@@ -43,14 +43,24 @@ Bước nào sai thì chụp màn hình gửi cho người hỗ trợ, kèm outp
 
 ## Cập nhật
 
-Plugin không ghim phiên bản, nên mỗi commit mới trên GitHub là một bản cập nhật. Claude Code không tự cập nhật plugin của bên thứ ba, nên khi có bản mới thì chạy trên từng máy:
+Plugin không ghim phiên bản, nên mỗi commit mới trên GitHub là một bản cập nhật.
+
+**Cách nên dùng: bật auto-update**, mỗi máy một lần. Với marketplace của bên thứ ba như `agents-team-coding`, auto-update mặc định tắt, nhưng bạn tự bật được:
+
+1. Mở `claude` trong PowerShell, gõ `/plugin`.
+2. Vào **Marketplaces**, chọn `agents-team-coding`.
+3. Chọn **Enable auto-update**.
+
+Bật rồi thì ở mỗi phiên, trong vòng 10 phút sau tin nhắn đầu tiên, Claude Code tự làm mới marketplace và cập nhật plugin đã cài. Phiên đang mở vẫn chạy bản cũ và báo `Plugin updated: ... · Run /reload-plugins to apply`. Gõ `/reload-plugins` để dùng bản mới ngay, hoặc để lần mở phiên sau tự nạp. Chi tiết ở [tài liệu chính thức](https://code.claude.com/docs/en/plugins/host-marketplace#turn-on-auto-update).
+
+**Cách còn lại: cập nhật tay.** Chưa bật auto-update thì khi có bản mới, chạy trên từng máy:
 ```powershell
 claude plugin marketplace update agents-team-coding
 claude plugin update agent-team@agents-team-coding
 ```
 Rồi mở lại phiên Claude, hoặc gõ `/reload-plugins` trong phiên đang mở.
 
-Bản kit chép trong `C:\vnstock-trial` vẫn cập nhật như cũ bằng `git pull`, vì repo đó tự cài kit.
+Cả hai cách chỉ cập nhật plugin. Repo tự cài kit như `C:\vnstock-trial` giữ bản kit chép riêng, và `git pull` trong repo đó không lấy được bản kit mới: nó chỉ kéo về việc đã push lên nhánh của dự án. Muốn lấy bản kit mới cho repo đó thì `git pull` trong thư mục kit rồi chạy lại `install-kit.sh`, không có `--force`, theo các bước "Cập nhật kit" ở mục 12 của [docs/04](04-thu-nghiem-vnstock-dashboard.md). Installer tự cập nhật file kit mà dự án chưa sửa, và dừng ở file dự án đã sửa. `--force` ghi đè cả bản sửa đó.
 
 ## Tắt hoặc gỡ
 

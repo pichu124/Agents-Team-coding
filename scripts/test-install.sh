@@ -37,6 +37,9 @@ new_repo() {
   git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m init
 }
 install() { "$kit/scripts/install-kit.sh" "$@" >/dev/null 2>&1; }
+run_install() { "$kit/scripts/install-kit.sh" "$@" > "$tmp/out" 2> "$tmp/err"; } # giữ stdout, stderr của lần cài
+claude_warned() { grep -q '^⚠.*CLAUDE\.md' "$tmp/err"; }
+no_claude_warning() { ! grep -q '^⚠.*CLAUDE\.md' "$tmp/out" "$tmp/err"; }
 hook_groups() { # hook_groups <settings.json> <event>
   "$py" -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["hooks"].get(sys.argv[2], [])))' "$1" "$2" | tr -d '\r'
 }
@@ -76,8 +79,9 @@ printf '.claude/*\n!.claude/settings.json\n!.claude/skills/\n!.claude/skills/**\
 echo "[gãy](khong-ton-tai.md)" > "$b/docs/note.md"
 git -C "$b" -c core.autocrlf=false add -A
 git -C "$b" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
-install "$b"
+run_install "$b"
 assert "B: install phải exit 0" [ $? -eq 0 ]
+assert "B: CLAUDE.md riêng không chép quy ước đội thì không được cảnh báo về CLAUDE.md" no_claude_warning
 assert "B: không được sửa CLAUDE.md có sẵn" [ "$(cat "$b/CLAUDE.md")" = "# CLAUDE.md của dự án" ]
 assert "B: thiếu .claude/rules/agent-team.md" [ -f "$b/.claude/rules/agent-team.md" ]
 assert "B: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" \
@@ -522,26 +526,477 @@ out="$(cd "$vr" && ./scripts/validate-kit.sh 2>&1)"
 assert "Q: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
 case "$out" in *"4 skills"*) ok ;; *) bad "Q: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
 
-# R. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
-#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
-cr="$tmp/crlf checkout"
+# R. Repo chưa có CLAUDE.md: tạo từ khung của dự án, không chép CLAUDE.md của repo kit.
+#    Quy ước đội chỉ nằm ở .claude/rules/agent-team.md. Cài lại không đổi CLAUDE.md.
+proj_tpl="$kit/templates/project-CLAUDE.md"
+lacks_team_rules() { ! grep -qF '/team-lead <task>' "$1"; }
+noc="$tmp/no claude"
+new_repo "$noc"
+run_install "$noc"
+assert "R: install phải exit 0" [ $? -eq 0 ]
+assert "R: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$noc/CLAUDE.md"
+assert "R: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$noc/CLAUDE.md"
+noc_lf="$tmp/noc-CLAUDE-lf.md" # bỏ \r: kit checkout CRLF (Windows) thì khung CLAUDE.md cũng CRLF
+tr -d '\r' < "$noc/CLAUDE.md" > "$noc_lf"
+# Agent, skill và hook của kit trỏ tới các mục này "trong CLAUDE.md".
+assert "R: CLAUDE.md mới phải có quy ước commit" grep -qF 'Conventional Commits' "$noc/CLAUDE.md"
+assert "R: CLAUDE.md mới phải có mục Quyền tự chủ" grep -qx '## Quyền tự chủ' "$noc_lf"
+assert "R: mục cuối của CLAUDE.md mới phải là bảng Rule ↔ Thứ thực thi → $(grep '^## ' "$noc_lf" | tail -n 1)" \
+  [ "$(grep '^## ' "$noc_lf" | tail -n 1)" = '## Rule ↔ Thứ thực thi' ]
+assert "R: bảng Rule ↔ Thứ thực thi của dự án phải có header, chưa có dòng nào → $(tail -n 2 "$noc_lf")" \
+  [ "$(tail -n 2 "$noc_lf")" = '| Rule | Thực thi bởi |
+|---|---|' ]
+assert "R: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: không được cảnh báo về CLAUDE.md" no_claude_warning
+if grep -q 'CLAUDE.md đã có' "$tmp/out"; then bad "R: vừa tạo CLAUDE.md thì không được báo CLAUDE.md đã có"; else ok; fi
+run_install "$noc" --force
+assert "R: cài lại với --force phải exit 0" [ $? -eq 0 ]
+assert "R: cài lại với --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: cài lại với --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: cài lại với --force không được cảnh báo về CLAUDE.md" no_claude_warning
+run_install "$noc"
+assert "R: cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "R: cài lại không --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: cài lại không --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: cài lại không --force không được cảnh báo về CLAUDE.md" no_claude_warning
+
+# S. Bản cài cũ: CLAUDE.md là bản chép từ CLAUDE.md của kit, chưa có .claude/rules/agent-team.md.
+#    Cài lại: tạo rules, không sửa CLAUDE.md, cảnh báo quy ước đội nằm hai nơi ở mọi lần chạy.
+oldc="$tmp/old claude"
+new_repo "$oldc"
+install "$oldc"
+rm -f "$oldc/.claude/rules/agent-team.md"
+cp "$kit/CLAUDE.md" "$oldc/CLAUDE.md"
+run_install "$oldc" --force
+assert "S: cài lại lên bản cũ phải exit 0" [ $? -eq 0 ]
+assert "S: không được sửa CLAUDE.md chép từ kit cũ" cmp -s "$kit/CLAUDE.md" "$oldc/CLAUDE.md"
+assert "S: phải tạo .claude/rules/agent-team.md đúng bằng template" cmp -s "$tpl" "$oldc/.claude/rules/agent-team.md"
+assert "S: phải cảnh báo ⚠ (stderr) CLAUDE.md còn quy ước đội của kit cũ" claude_warned
+run_install "$oldc"
+assert "S: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "S: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cảnh báo" claude_warned
+
+# T. Cài mới ghi .claude/agent-team-kit.txt: commit kit đã cài và đúng danh sách file kit đã chép.
+man=.claude/agent-team-kit.txt
+kit_sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null || echo unknown)"
+section() { # section <manifest> <kit-files|kit-dropped>: in các dòng của mục đó
+  awk -v s="$2:" '/^kit-(commit|files|dropped):/ { on = ($0 == s); next } on' "$1"
+}
+no_dropped_warning() { ! grep -q 'kit đã bỏ' "$tmp/out" "$tmp/err"; }
+tm="$tmp/manifest"
+new_repo "$tm"
+run_install "$tm"
+assert "T: install phải exit 0" [ $? -eq 0 ]
+assert "T: phải tạo $man" [ -f "$tm/$man" ]
+assert "T: hai dòng đầu phải là comment, dòng 2 là lệnh xem kit có gì mới → $(head -n 2 "$tm/$man")" \
+  [ "$(head -n 2 "$tm/$man")" = "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay.
+# Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates" ]
+assert "T: phải có các mục kit-commit, kit-files, kit-dropped theo thứ tự → $(grep '^kit-' "$tm/$man")" \
+  [ "$(grep -o '^kit-[a-z]*:' "$tm/$man" | tr '\n' ' ')" = "kit-commit: kit-files: kit-dropped: " ]
+assert "T: kit-commit phải là HEAD của kit $kit_sha (kit đang sửa thì kèm -dirty) → $(grep '^kit-commit' "$tm/$man")" \
+  grep -qE "^kit-commit: $kit_sha(-dirty)?\$" "$tm/$man"
+if grep -q $'\r' "$tm/$man"; then bad "T: $man phải là LF"; else ok; fi
+copied="$(sed -n 's/^✔ đã chép \([0-9]*\) file của kit$/\1/p' "$tmp/out")"
+listed="$(section "$tm/$man" kit-files)"
+listed_n="$(printf '%s\n' "$listed" | grep -c .)"
+assert "T: kit-files phải có đúng $copied file đã chép → $listed_n" [ "$listed_n" = "$copied" ]
+for p in .claude/agents/architect.md scripts/check.sh; do
+  if grep -qxF "$p" <<<"$listed"; then ok; else bad "T: kit-files thiếu $p"; fi
+done
+mismatch=""
+while IFS= read -r p; do
+  [ -f "$tm/$p" ] && cmp -s "$kit/$p" "$tm/$p" || mismatch="$mismatch $p"
+done <<<"$listed"
+assert "T: mỗi dòng trong kit-files phải là file đã cài, giống hệt bản của kit → khác:$mismatch" [ -z "$mismatch" ]
+assert "T: lần cài đầu kit-dropped phải rỗng → $(section "$tm/$man" kit-dropped)" [ -z "$(section "$tm/$man" kit-dropped)" ]
+assert "T: lần cài đầu không được báo file kit đã bỏ" no_dropped_warning
+assert "T: phải báo ✔ commit kit đã ghi, dạng 7 ký tự → $(cat "$tmp/out")" \
+  grep -qxE "✔ $man: kit ${kit_sha:0:7}(-dirty)?" "$tmp/out"
+
+# U. Chạy lại cùng commit kit (có và không --force): manifest y hệt từng byte, không báo commit trước.
+cp "$tm/$man" "$tmp/man-T"
+run_install "$tm"
+assert "U: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "U: chạy lại phải cho $man y hệt" cmp -s "$tmp/man-T" "$tm/$man"
+if grep -q 'trước:' "$tmp/out"; then bad "U: cùng commit kit thì không được báo commit trước"; else ok; fi
+run_install "$tm" --force
+assert "U: chạy lại với --force phải exit 0" [ $? -eq 0 ]
+assert "U: chạy lại với --force phải cho $man y hệt" cmp -s "$tmp/man-T" "$tm/$man"
+
+# V. Lần cài trước (commit khác) có old.md mà kit đã bỏ, repo vẫn còn, và gone.md đã bị xoá khỏi repo.
+#    Dừng vì trùng file thì giữ nguyên manifest cũ. Cài lại: báo old.md, không xoá, ghi vào kit-dropped.
+assert "V: dừng vì trùng file (ca C) thì không được tạo $man" [ ! -e "$c/$man" ]
+assert "V: dừng vì settings.json hỏng (ca E) thì không được tạo $man" [ ! -e "$e/$man" ]
+old_p=.claude/skills/team-lead/playbooks/old.md
+gone_p=.claude/agents/gone.md
+old_sha=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
+mkdir -p "$tm/$(dirname "$old_p")"
+echo "playbook mà kit đã bỏ" > "$tm/$old_p"
+awk -v a="$old_p" -v b="$gone_p" -v s="$old_sha" '
+  /^kit-commit:/ { print "kit-commit: " s; next }
+  { print }
+  $0 == "kit-files:" { print a; print b }' "$tmp/man-T" > "$tm/$man"
+cp "$tm/$man" "$tmp/man-V"
+echo "sửa riêng" >> "$tm/.claude/agents/architect.md"
+run_install "$tm"
+assert "V: trùng file phải exit khác 0" [ $? -ne 0 ]
+assert "V: dừng vì trùng file thì không được ghi lại $man" cmp -s "$tmp/man-V" "$tm/$man"
+cp "$kit/.claude/agents/architect.md" "$tm/.claude/agents/architect.md"
+run_install "$tm"
+assert "V: cài lại phải exit 0" [ $? -eq 0 ]
+assert "V: phải cảnh báo ⚠ (stderr) kit đã bỏ 1 file → $(cat "$tmp/err")" grep -q '^⚠ kit đã bỏ 1 file' "$tmp/err"
+assert "V: cảnh báo phải nêu $old_p trên một dòng thụt lề" grep -qxF "  $old_p" "$tmp/err"
+if grep -qF gone.md "$tmp/err"; then bad "V: file đã xoá khỏi repo thì không được báo"; else ok; fi
+assert "V: không được xoá file kit đã bỏ" [ -f "$tm/$old_p" ]
+assert "V: kit-files phải đúng danh sách của kit mới" [ "$(section "$tm/$man" kit-files)" = "$listed" ]
+assert "V: kit-dropped phải đúng là $old_p → $(section "$tm/$man" kit-dropped)" [ "$(section "$tm/$man" kit-dropped)" = "$old_p" ]
+if grep -qF gone.md "$tm/$man"; then bad "V: manifest mới không được ghi lại file đã xoá"; else ok; fi
+assert "V: phải báo commit trước → $(grep "^✔ $man" "$tmp/out")" \
+  grep -qxE "✔ $man: kit ${kit_sha:0:7}(-dirty)? \(trước: ${old_sha:0:7}\)" "$tmp/out"
+
+# W. Chạy lại: vẫn báo old.md (đọc từ kit-dropped) tới khi người dùng xoá. Manifest CRLF (checkout trên
+#    Windows) có old.md ở cả hai mục: báo đúng một lần, không có \r trong tên, file ghi lại là LF.
+cp "$tm/$man" "$tmp/man-V2"
+run_install "$tm"
+assert "W: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "W: chạy lại vẫn phải báo $old_p" grep -qxF "  $old_p" "$tmp/err"
+assert "W: chạy lại phải cho $man y hệt" cmp -s "$tmp/man-V2" "$tm/$man"
+awk -v a="$old_p" '{ print } $0 == "kit-files:" { print a }' "$tmp/man-V2" | to_crlf > "$tm/$man"
+run_install "$tm" --force
+assert "W: manifest CRLF: cài lại phải exit 0" [ $? -eq 0 ]
+assert "W: manifest CRLF: phải báo $old_p đúng một lần → $(cat "$tmp/err")" [ "$(grep -cxF "  $old_p" "$tmp/err")" = 1 ]
+if grep -q $'\r' "$tmp/err"; then bad "W: manifest CRLF: tên file báo ra không được có \\r"; else ok; fi
+if grep -q 'trước:' "$tmp/out"; then bad "W: manifest CRLF cùng commit kit thì không được báo commit trước"; else ok; fi
+assert "W: manifest CRLF: file ghi lại phải đúng bản LF như lần trước" cmp -s "$tmp/man-V2" "$tm/$man"
+
+# X. Người dùng xoá file kit đã bỏ: cài lại thì không báo nữa, manifest về như lần cài đầu (kit-dropped rỗng).
+rm "$tm/$old_p"
+run_install "$tm"
+assert "X: cài lại phải exit 0" [ $? -eq 0 ]
+assert "X: đã xoá file kit đã bỏ thì không được báo" no_dropped_warning
+assert "X: manifest phải về như lần cài đầu" cmp -s "$tmp/man-T" "$tm/$man"
+
+# Y. Repo ignore .claude/*: manifest phải được mở ngoại lệ (là file, không phải thư mục), cài lại không thêm trùng.
+ig="$tmp/ignore claude"
+new_repo "$ig"
+printf '.claude/*\n' > "$ig/.gitignore"
+install "$ig"
+assert "Y: install phải exit 0" [ $? -eq 0 ]
+if git -C "$ig" check-ignore -q "$man"; then bad "Y: $man vẫn bị .gitignore bỏ qua"; else ok; fi
+install "$ig"
+assert "Y: cài lại phải exit 0" [ $? -eq 0 ]
+assert "Y: cài lại không được thêm trùng ngoại lệ cho $man" [ "$(grep -cxF "!$man" "$ig/.gitignore")" = 1 ]
+
+# Z. Kit không phải git repo (tải zip): kit-commit: unknown. Kit là git repo: sạch thì đúng HEAD; sửa file đã
+#    theo dõi thì thêm -dirty; file chưa theo dõi không tính.
+kit_copy() { # kit_copy <thư mục>: chép phần installer cần của kit (bản đang sửa, không phải bản đã commit)
+  mkdir -p "$1/.claude"
+  cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$1/.claude/"
+  cp -R "$kit/scripts" "$kit/templates" "$1/"
+}
+zk="$tmp/zip kit"
+kit_copy "$zk"
+zt="$tmp/from zip"
+new_repo "$zt"
+"$zk/scripts/install-kit.sh" "$zt" >/dev/null 2>&1
+assert "Z: cài từ kit không phải git repo phải exit 0" [ $? -eq 0 ]
+assert "Z: kit không phải git repo thì phải ghi kit-commit: unknown → $(grep '^kit-commit' "$zt/$man")" \
+  grep -qx 'kit-commit: unknown' "$zt/$man"
+gk="$tmp/git kit"
+new_repo "$gk"
+kit_copy "$gk"
+echo "ghi chú" > "$gk/NOTES.md"
+git -C "$gk" -c core.autocrlf=false add -A
+git -C "$gk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+gk_sha="$(git -C "$gk" rev-parse HEAD)"
+gt="$tmp/from git kit"
+new_repo "$gt"
+echo "chưa theo dõi" > "$gk/untracked.txt"
+"$gk/scripts/install-kit.sh" "$gt" >/dev/null 2>&1
+assert "Z: kit sạch (chỉ có file chưa theo dõi) thì kit-commit phải đúng HEAD, không -dirty → $(grep '^kit-commit' "$gt/$man")" \
+  grep -qx "kit-commit: $gk_sha" "$gt/$man"
+echo "sửa" >> "$gk/NOTES.md"
+"$gk/scripts/install-kit.sh" "$gt" > "$tmp/out" 2>/dev/null
+assert "Z: kit có file đã theo dõi bị sửa thì kit-commit phải kèm -dirty → $(grep '^kit-commit' "$gt/$man")" \
+  grep -qx "kit-commit: $gk_sha-dirty" "$gt/$man"
+assert "Z: phải báo commit trước khi trạng thái kit đổi → $(grep "^✔ $man" "$tmp/out")" \
+  grep -qxF "✔ $man: kit ${gk_sha:0:7}-dirty (trước: ${gk_sha:0:7})" "$tmp/out"
+
+# AA. CLAUDE.md riêng có nhắc /team-lead <task> nhưng không có bảng Rule ↔ Thứ thực thi: không phải bản chép
+#     CLAUDE.md của kit cũ (mọi bản đó có cả hai chuỗi), nên không cảnh báo.
+own_tl="$tmp/own team-lead"
+new_repo "$own_tl"
+# shellcheck disable=SC2016  # dấu ` là chữ markdown
+echo 'Dùng `/team-lead <task>` cho task lớn.' > "$own_tl/CLAUDE.md"
+cp "$own_tl/CLAUDE.md" "$tmp/own-tl-claude.orig"
+run_install "$own_tl"
+assert "AA: install phải exit 0" [ $? -eq 0 ]
+assert "AA: CLAUDE.md riêng chỉ nhắc /team-lead <task> thì không được cảnh báo về CLAUDE.md → $(cat "$tmp/err")" no_claude_warning
+assert "AA: không được sửa CLAUDE.md có sẵn" cmp -s "$tmp/own-tl-claude.orig" "$own_tl/CLAUDE.md"
+
+# AB. CLAUDE.md là symlink gãy: coi như chưa có, cp không ghi qua được thì báo ✘ và exit 1, không báo đã tạo.
+#     Đích nằm trong thư mục không có để cp của GNU lẫn BSD đều lỗi.
+dang="$tmp/dangling claude"
+new_repo "$dang"
+if ln -s khong-co/khong-co.md "$dang/CLAUDE.md" 2>/dev/null && [ -L "$dang/CLAUDE.md" ]; then
+  run_install "$dang"
+  assert "AB: không tạo được CLAUDE.md thì phải exit khác 0" [ $? -ne 0 ]
+  if grep -qF '✔ tạo CLAUDE.md' "$tmp/out"; then bad "AB: cp lỗi thì không được báo ✔ tạo CLAUDE.md"; else ok; fi
+  assert "AB: phải báo ✘ (stderr) không tạo được CLAUDE.md → $(cat "$tmp/err")" grep -q '^✘.*CLAUDE\.md' "$tmp/err"
+else
+  printf '⚠ bỏ qua ca AB: không tạo được symlink ở máy này\n'
+fi
+
+# AC. Kit giải nén vào thư mục con của một git repo khác (vd home là repo dotfiles): kit không phải gốc repo
+#     nên kit-commit: unknown, không lấy commit hay trạng thái -dirty của repo bên ngoài.
+outer="$tmp/dotfiles"
+new_repo "$outer"
+echo "dotfiles" > "$outer/README"
+git -C "$outer" add README
+git -C "$outer" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m dotfiles
+echo "sửa" >> "$outer/README"
+kit_copy "$outer/tools/kit"
+nk="$tmp/from nested kit"
+new_repo "$nk"
+"$outer/tools/kit/scripts/install-kit.sh" "$nk" >/dev/null 2>&1
+assert "AC: cài từ kit trong repo khác phải exit 0" [ $? -eq 0 ]
+assert "AC: kit không phải gốc repo thì phải ghi kit-commit: unknown → $(grep '^kit-commit' "$nk/$man")" \
+  grep -qx 'kit-commit: unknown' "$nk/$man"
+
+# AD. File kit bị sửa riêng trong repo đã cài. Có --force thì ghi đè là việc sẽ làm, không phải lỗi:
+#     báo ⚠ ghi đè (stderr), không có dòng ✘ nào. Không --force thì vẫn dừng với dòng ✘ như ca C.
+fo="$tmp/force overwrite"
+fo_p=.claude/agents/architect.md
+new_repo "$fo"
+install "$fo"
+echo "sửa riêng" >> "$fo/$fo_p"
+run_install "$fo" --force
+assert "AD: cài lại với --force phải exit 0" [ $? -eq 0 ]
+assert "AD: --force phải báo ⚠ ghi đè $fo_p (stderr) → $(cat "$tmp/err")" \
+  grep -qxF "⚠ ghi đè $fo_p: bản trong repo khác bản của kit" "$tmp/err"
+if grep -q '^✘' "$tmp/err"; then bad "AD: --force không được báo ✘ cho file sẽ ghi đè → $(cat "$tmp/err")"; else ok; fi
+assert "AD: --force phải ghi đè bằng bản của kit" cmp -s "$kit/$fo_p" "$fo/$fo_p"
+echo "sửa riêng" >> "$fo/$fo_p"
+run_install "$fo"
+assert "AD: không --force thì file trùng phải exit 1" [ $? -eq 1 ]
+assert "AD: không --force phải báo ✘ $fo_p (stderr) → $(cat "$tmp/err")" \
+  grep -qxF "✘ $fo_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AD: không --force phải báo ✘ dừng → $(cat "$tmp/err")" grep -q '^✘ dừng: 1 file trùng' "$tmp/err"
+if grep -qF '⚠ ghi đè' "$tmp/err"; then bad "AD: không --force thì không được báo ⚠ ghi đè"; else ok; fi
+assert "AD: không --force thì không được ghi đè bản sửa riêng" [ "$(tail -n 1 "$fo/$fo_p")" = "sửa riêng" ]
+
+# AE..AL. Cập nhật kit (git pull rồi cài lại, không --force). File trong repo trùng một bản đã commit
+#   trong lịch sử kit là file dự án chưa sửa: chép bản mới, không tính là trùng, không cần manifest.
+#   Không trùng bản nào (dự án đã sửa, đã commit hay chưa) thì dừng như ca C. Kit không phải git repo: như ca C.
+commit_all() { # commit_all <repo> <message>
+  git -C "$1" -c core.autocrlf=false add -A
+  git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "$2"
+}
+has_cr() { [ "$(($(tr -cd '\r' < "$1" | wc -c)))" -gt 0 ]; } # có \r; không dùng grep: grep của Git for Windows bỏ \r
+to_lf_file() { tr -d '\r' < "$1" > "$tmp/to-lf" && cat "$tmp/to-lf" > "$1"; } # kit_copy trên Windows chép bản CRLF
+run_kit() { local k="$1"; shift; "$k/scripts/install-kit.sh" "$@" > "$tmp/out" 2> "$tmp/err"; } # run_kit <kit> <repo> [--force]
+no_conflict_line() { ! grep -q '^✘' "$tmp/err"; }
+arch_p=.claude/agents/architect.md
+guard_p=.claude/hooks/guard-irreversible.sh
+uk="$tmp/update kit"
+new_repo "$uk"
+kit_copy "$uk"
+commit_all "$uk" "kit A"
+ua="$tmp/update clean"
+ub="$tmp/update no manifest"
+for t in "$ua" "$ub"; do
+  new_repo "$t"
+  "$uk/scripts/install-kit.sh" "$t" >/dev/null 2>&1
+  commit_all "$t" "cài kit A"
+done
+echo "Dòng mới của kit (B)." >> "$uk/$arch_p"
+commit_all "$uk" "kit B"
+
+# AE. Kit đổi một file, dự án chưa sửa nó: cài lại không --force thì cập nhật.
+run_kit "$uk" "$ua"
+assert "AE: kit đổi file mà dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AE: $arch_p phải là bản mới của kit" cmp -s "$uk/$arch_p" "$ua/$arch_p"
+assert "AE: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AE: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+assert "AE: dòng ngay sau ✔ cập nhật phải là tên file, thụt hai dấu cách → $(cat "$tmp/out")" \
+  [ "$(grep -xF -A1 '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out" | tail -n 1)" = "  $arch_p" ]
+
+# AF. Bản cài cũ chưa có manifest: phân loại không cần kit-commit.
+rm "$ub/$man"
+run_kit "$uk" "$ub"
+assert "AF: bản cài không có $man vẫn phải cập nhật, exit 0" [ $? -eq 0 ]
+assert "AF: $arch_p phải là bản mới của kit" cmp -s "$uk/$arch_p" "$ub/$arch_p"
+assert "AF: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AF: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AG. Dự án vá guard (đã commit), kit cũng đổi guard và architect.md: dừng, không chép gì, bản vá còn nguyên.
+ug="$tmp/update patched"
+uh="$tmp/update uncommitted"
+for t in "$ug" "$uh"; do
+  new_repo "$t"
+  "$uk/scripts/install-kit.sh" "$t" >/dev/null 2>&1
+  commit_all "$t" "cài kit B"
+  echo "# bản vá của dự án" >> "$t/$guard_p"
+done
+commit_all "$ug" "vá guard"
+cp "$uk/$arch_p" "$tmp/arch-B"
+echo "# kit đổi guard (C)" >> "$uk/$guard_p"
+echo "Dòng mới của kit (C)." >> "$uk/$arch_p"
+commit_all "$uk" "kit C"
+run_kit "$uk" "$ug"
+assert "AG: dự án đã sửa file mà kit cũng đổi thì không --force phải exit 1" [ $? -eq 1 ]
+assert "AG: phải báo ✘ $guard_p → $(cat "$tmp/err")" grep -qxF "✘ $guard_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AG: chỉ guard là trùng (architect.md là bản kit cũ) → $(cat "$tmp/err")" grep -q '^✘ dừng: 1 file trùng' "$tmp/err"
+assert "AG: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/arch-B" "$ug/$arch_p"
+assert "AG: bản vá guard phải còn nguyên" [ "$(tail -n 1 "$ug/$guard_p")" = "# bản vá của dự án" ]
+run_kit "$uk" "$ug" --force
+assert "AG: --force phải exit 0" [ $? -eq 0 ]
+assert "AG: --force chỉ báo ⚠ ghi đè guard, không báo file dự án chưa sửa → $(cat "$tmp/err")" \
+  [ "$(grep '^⚠ ghi đè' "$tmp/err")" = "⚠ ghi đè $guard_p: bản trong repo khác bản của kit" ]
+assert "AG: --force phải cập nhật $arch_p" cmp -s "$uk/$arch_p" "$ug/$arch_p"
+assert "AG: --force phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AH. Bản vá guard chưa commit: vẫn là dự án đã sửa.
+run_kit "$uk" "$uh"
+assert "AH: bản sửa chưa commit thì không --force phải exit 1" [ $? -eq 1 ]
+assert "AH: phải báo ✘ $guard_p → $(cat "$tmp/err")" grep -qxF "✘ $guard_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AH: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/arch-B" "$uh/$arch_p"
+assert "AH: bản vá chưa commit phải còn nguyên" [ "$(tail -n 1 "$uh/$guard_p")" = "# bản vá của dự án" ]
+
+# AI. Kit không phải git repo (bản chép không có .git): không có lịch sử để đối chiếu, file khác thì ✘ như ca C.
+uz="$tmp/update zip kit"
+cp -R "$uk" "$uz"
+rm -rf "$uz/.git"
+cp "$ub/$arch_p" "$tmp/ub-arch"
+run_kit "$uz" "$ub"
+assert "AI: kit không phải git repo, file khác thì phải exit 1" [ $? -eq 1 ]
+assert "AI: phải báo ✘ $arch_p → $(cat "$tmp/err")" grep -qxF "✘ $arch_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AI: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/ub-arch" "$ub/$arch_p"
+
+# AJ. Kit clone với core.autocrlf=true (mặc định Git for Windows): .md trong thư mục làm việc của kit là CRLF,
+#     blob đã commit là LF. File chỉ khác bản kit đã commit ở dòng kết thúc là dự án chưa sửa: cập nhật.
+ck="$tmp/crlf kit upstream"
+new_repo "$ck"
+kit_copy "$ck"
+cp "$kit/.gitattributes" "$ck/"
+to_lf_file "$ck/$arch_p" # blob LF như trên Linux; kit checkout CRLF (Windows) thì blob sẽ CRLF và AK không còn là ca băm lỗi
+commit_all "$ck" "kit A"
+cw="$tmp/crlf kit"
+git -c core.autocrlf=true clone -q "$ck" "$cw"
+git -C "$cw" config core.autocrlf true
+ct="$tmp/crlf target"
+new_repo "$ct"
+"$cw/scripts/install-kit.sh" "$ct" >/dev/null 2>&1
+commit_all "$ct" "cài kit A"
+assert "AJ: điều kiện của ca: $arch_p trong repo phải có CRLF (\r)" has_cr "$ct/$arch_p"
+echo "Dòng mới của kit (B)." >> "$ck/$arch_p"
+commit_all "$ck" "kit B"
+git -C "$cw" pull -q --ff-only
+run_kit "$cw" "$ct"
+assert "AJ: kit autocrlf=true, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AJ: $arch_p phải là bản mới của kit" cmp -s "$cw/$arch_p" "$ct/$arch_p"
+assert "AJ: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AJ: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AK. Git lỗi khi băm file của dự án (clean filter bắt buộc của kit lỗi): coi như không trùng bản nào, ✘ như ca C.
+cp "$ct/$arch_p" "$tmp/ct-arch"
+echo "Dòng mới của kit (C)." >> "$ck/$arch_p"
+commit_all "$ck" "kit C"
+git -C "$cw" pull -q --ff-only
+echo '*.md filter=boom' > "$cw/.git/info/attributes"
+git -C "$cw" config filter.boom.clean false
+git -C "$cw" config filter.boom.required true
+run_kit "$cw" "$ct"
+assert "AK: băm lỗi thì phải exit 1" [ $? -eq 1 ]
+assert "AK: phải báo ✘ $arch_p → $(cat "$tmp/err")" grep -qxF "✘ $arch_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AK: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/ct-arch" "$ct/$arch_p"
+
+# AL. Lịch sử kit có blob CRLF (commit với core.autocrlf=false) mà git của kit là core.autocrlf=true: filter eol đổi
+#     CRLF sang LF, nhưng file trùng từng byte với một bản đã commit vẫn là dự án chưa sửa.
+cr="$tmp/crlf blob kit"
 new_repo "$cr"
-install "$cr"
-for f in "$cr"/.claude/agents/*.md "$cr"/.claude/skills/*/SKILL.md; do
+kit_copy "$cr"
+cp "$kit/.gitattributes" "$cr/"
+to_crlf < "$kit/$arch_p" > "$cr/$arch_p"
+commit_all "$cr" "kit A"
+git -C "$cr" config core.autocrlf true
+crt="$tmp/crlf blob target"
+new_repo "$crt"
+"$cr/scripts/install-kit.sh" "$crt" >/dev/null 2>&1
+commit_all "$crt" "cài kit A"
+assert "AL: điều kiện của ca: $arch_p trong repo phải có CRLF (\r)" has_cr "$crt/$arch_p"
+printf 'Dòng mới của kit (B).\r\n' >> "$cr/$arch_p"
+commit_all "$cr" "kit B"
+run_kit "$cr" "$crt"
+assert "AL: blob CRLF trong lịch sử, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AL: $arch_p phải là bản mới của kit" cmp -s "$cr/$arch_p" "$crt/$arch_p"
+assert "AL: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AL: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AM. Bản chỉ merge commit mới có (người dùng commit bản vá vào clone kit rồi git pull): nhánh X nối dòng cuối,
+#     main chèn dòng đầu, merge tự gộp ra bản D mà không commit thường nào có. Dự án cài ở D, chưa sửa; kit merge
+#     thêm nhánh Y. Cài lại không --force thì cập nhật.
+mk="$tmp/merge kit"
+new_repo "$mk"
+git -C "$mk" config core.autocrlf false # runner Windows đặt autocrlf=true ở system: checkout nhánh sẽ đổi dòng kết thúc
+kit_copy "$mk"
+to_lf_file "$mk/$arch_p"
+commit_all "$mk" "kit A"
+mk_main="$(git -C "$mk" symbolic-ref --short HEAD)"
+merge_into() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false merge -q --no-ff --no-edit "$2" >/dev/null; } # merge_into <repo> <nhánh>
+git -C "$mk" checkout -q -b X
+echo "Dòng cuối của nhánh X." >> "$mk/$arch_p"
+commit_all "$mk" "X"
+git -C "$mk" checkout -q "$mk_main"
+{ echo "Dòng đầu của kit (C)."; cat "$mk/$arch_p"; } > "$tmp/arch-C"
+cp "$tmp/arch-C" "$mk/$arch_p"
+commit_all "$mk" "C"
+git -C "$mk" branch Y
+merge_into "$mk" X
+assert "AM: điều kiện của ca: merge X phải tự gộp được" [ $? -eq 0 ]
+mk_d="$(git -C "$mk" rev-parse "HEAD:$arch_p")"
+case "$(git -C "$mk" log --no-merges --format= --raw --no-abbrev -- "$arch_p")" in
+  *" $mk_d "*) bad "AM: điều kiện của ca: bản D không được có ở commit thường nào" ;;
+  *) ok ;;
+esac
+mt="$tmp/merge target"
+new_repo "$mt"
+"$mk/scripts/install-kit.sh" "$mt" >/dev/null 2>&1
+commit_all "$mt" "cài kit D"
+git -C "$mk" checkout -q Y
+awk 'NR == 3 { $0 = $0 " (Y)" } { print }' "$mk/$arch_p" > "$tmp/arch-Y"
+cp "$tmp/arch-Y" "$mk/$arch_p"
+commit_all "$mk" "Y"
+git -C "$mk" checkout -q "$mk_main"
+merge_into "$mk" Y
+assert "AM: điều kiện của ca: merge Y phải tự gộp được" [ $? -eq 0 ]
+run_kit "$mk" "$mt"
+assert "AM: bản chỉ merge commit có, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AM: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$mt/$arch_p"
+assert "AM: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AM: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AN. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
+#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
+crc="$tmp/crlf checkout"
+new_repo "$crc"
+install "$crc"
+for f in "$crc"/.claude/agents/*.md "$crc"/.claude/skills/*/SKILL.md; do
   to_crlf < "$f" > "$tmp/crlf.md" && cat "$tmp/crlf.md" > "$f"
 done
-out="$(cd "$cr" && ./scripts/validate-kit.sh 2>&1)"
-assert "R: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
+out="$(cd "$crc" && ./scripts/validate-kit.sh 2>&1)"
+assert "AN: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
 # to_crlf sau awk: gawk của Git for Windows bỏ \r khi đọc, file sẽ thành LF.
-awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$cr/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
-cat "$tmp/crlf.md" > "$cr/.claude/agents/verifier.md"
-out="$(cd "$cr" && ./scripts/validate-kit.sh 2>&1)"
-assert "R: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
+awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$crc/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
+cat "$tmp/crlf.md" > "$crc/.claude/agents/verifier.md"
+out="$(cd "$crc" && ./scripts/validate-kit.sh 2>&1)"
+assert "AN: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
 case "$out" in
   *"verifier.md: name phải là 'verifier'"*) ok ;;
-  *) bad "R: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
+  *) bad "AN: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
 esac
-assert "R: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
+assert "AN: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
