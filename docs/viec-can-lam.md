@@ -1,24 +1,23 @@
 # Việc cần làm
 
-Ảnh chụp ngày 20/10/2026, lúc gom mọi nhánh về nhánh mặc định `claude/sharp-knuth-lpdhqz` (đầu nhánh lúc ghi: `0b75004`, sau PR #21). Mỗi việc ghi: vì sao cần làm, khi nào thì xong, ai đang làm. Làm xong việc nào thì xoá dòng đó khỏi file này, ngay trong PR của việc đó.
+Ảnh chụp ngày 21/10/2026, sau khi gom mọi nhánh về nhánh mặc định `claude/sharp-knuth-lpdhqz` (đầu nhánh lúc ghi: `083c8e9`, sau PR #26). Mỗi việc ghi: vì sao cần làm, khi nào thì xong, ai đang làm. Làm xong việc nào thì xoá dòng đó khỏi file này, ngay trong PR của việc đó.
 
 Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, viết test đỏ trước, `KIT_SELFTEST=1 ./scripts/check.sh` phải exit 0, rồi verifier và reviewer mới cho qua. Không nới guard, Stop gate hay `scripts/guard-ask-floor`; không sửa hay nới assert cũ. Nhãn của `suspicious_labels` bản mới phải ⊇ bản trước, với `AUDIT_BASE_REF` đặt về commit trước khi sửa. Muốn đổi cách đọc lệnh thì thêm một cách đọc rồi hợp nhãn. Oracle bash chỉ có một bước, là bước đã có trên nhánh mặc định: không hạ `ORACLE_FLOOR`, `KNOWN_GAPS` chỉ được giảm. Thử hành vi bash thật thì thay `rm` và `git` bằng `echo` ngay trong văn bản lệnh, chạy trong thư mục tạm không phải repo git, HOME trỏ tới thư mục không tồn tại, và không đặt `rm` giả trên PATH.
 
-## 1. Gom nhánh về nhánh mặc định (20/10)
+## 1. Gom nhánh về nhánh mặc định (xong 21/10)
 
-Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR mục 2.7, rồi nhánh tích hợp audit; PR #22 khác vùng code, gộp lúc nào CI xanh cũng được. Chạy lần lượt từng session: ngày 20/10 năm session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả năm cùng dừng giữa chừng.
+Đã gộp hết: PR #8, #22, #24, #25, #26. Nhánh của các PR đó xoá được, session của PR #8, #22, #24, #26 đã archive. Còn hai nhánh, giữ lại vì là nơi duy nhất còn commit gốc của việc dở. Xoá khi việc ở mục tương ứng xong, hoặc sau khi đánh tag `archive/<tên nhánh>` cho đầu nhánh.
 
-| Nhánh | Phần đã xong đi đâu | Session |
+| Nhánh | Giữ commit gì | Xoá khi |
 |---|---|---|
-| `claude/youthful-fermi-1ydqg6` | PR mới của mục 2.7 (1d75753 gộp tổ hợp đọc, 8645ba3 xoá 2.7) | Đang chạy; archive khi PR merge |
-| `claude/nice-hamilton-vdgw4v` | **Nhánh tích hợp audit duy nhất**: merge nhánh mặc định, giữ mọi cách đọc của PR #18 và PR #5, thêm cách đọc `strict`; cherry-pick 357c9ce, 1792c19 của blissful-dirac; revert WIP 1a1a9a0; verifier và reviewer mới cho cả 9 commit chưa qua review vòng 2 (eb9f3b8..847928b) | Đang chạy; archive khi PR merge |
-| `claude/blissful-dirac-i6vpym` | 357c9ce (port 749e0c6) và 1792c19 (port oracle 751a129) đi qua nhánh tích hợp; phần dở ghi ở 2.3 | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
-| `claude/vibrant-pascal-b81ljt` | nice-hamilton đã nhận hết (d7ce707: 103 ca MISSED, fuzz_b/fuzz_c; bảng commit ở PR của nhánh tích hợp); phần dở ở 2.2 (P2, P3) | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
-| `claude/practical-hawking-le9toi` (PR #8) | Merge chính PR #8, sau khi verifier và reviewer mới cho qua a744f97. Phần riêng của nó: cách đọc `pipe_scope` (bắt `D=/tmp/x/; true && D=/srv/; true \| D=/tmp/x/; rm -rf ${D}src`, bash xoá /srv/src, nhánh mặc định trả `[]`); oracle thứ hai bổ sung cho oracle chung (xem 2.1); MUST_FLAG 18 lệnh phải báo và 5 lệnh vô hại. 4 ca sửa cũ của nó (0c347b2, a43055e, 3543fb4, 6b50142) nhánh mặc định đã báo nhờ PR #18 | Đang chạy; archive khi PR #8 merge |
+| `claude/vibrant-pascal-b81ljt` | 970114a (bộ nhận `heredocs_word`, mốc so nhãn của P2) | P2 ở 2.2 xong |
+| `claude/blissful-dirac-i6vpym` | 55a62d6, 73226cf, 5b32600, 98b74d0, 876ad37, 78e474a, WIP e69f5dd | các ý ở 2.3 xong |
+
+Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả nhóm cùng dừng giữa chừng.
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
-### 2.1 Gộp hai oracle bash thành một bước (sau khi PR #8 merge)
+### 2.1 Gộp hai oracle bash thành một bước
 - **Vì sao:** sau PR #8, test-audit có hai bước oracle: bước chung (blissful-dirac: ORACLE_FLOOR, KNOWN_GAPS) và bước của PR #8 (thư mục `$tmp/oracle-pr8`, KNOWN_MISSES chỉ được giảm, nhận bằng hằng MARK). Hai bước bổ sung cho nhau, không trùng: ngữ pháp của PR #8 sinh đúng các cấu trúc mà KNOWN_GAPS của bước chung loại ra (thân `bash -c` có biến hay lồng nhau, nháy lẻ trong comment hay thân heredoc, heredoc chưa đóng hay thân rỗng, gán trong khâu ống hay sau `&&`/`||`, `\` cuối dòng, `builtin cd`, cd lỗi). Số ca sót trên từng bản audit-agent.py (oracle PR #8 / oracle chung): 27727f5 69/25, 0667d98 6/13, 9bd03a3 0/10, 53f3ff2 0/0. Cộng lại hai bước mất khoảng 40–50 giây trên CI.
 - **Cần biết khi gộp:**
   - Cách chặn rm khác nhau. Bước chung đặt `fakerm` trên một PATH chỉ có bash và cat; PR #8 thay chữ `rm` trong văn bản lệnh bằng đường dẫn tuyệt đối tới stub. `bash -l` có thể đặt lại PATH, nên mảnh `bash -lc` của PR #8 chỉ an toàn với cách thay trong văn bản: gộp thì dùng cách đó, hoặc bỏ `-l`.
@@ -27,7 +26,7 @@ Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR
   - KNOWN_MISSES chứa lệnh đã sinh mà vẫn sót; KNOWN_GAPS chứa cấu trúc không sinh. Gộp thì giữ một luật chỉ được giảm, đổi MARK cho khớp.
 - **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
 
-### 2.2 Việc dở của nice-hamilton (sau khi nhánh tích hợp merge)
+### 2.2 Việc dở của nice-hamilton
 - **P2: nhận heredoc như bash**, 40 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–54, 61–70, 72, 83–87, 91–102). Ca 55 của P2 (`<<E\X`) đã nghi.
   - Vì sao: nhận heredoc hiện là heuristic. Cần cách đọc "tên là cả từ shell": bỏ nháy tên, `$"…"`, `\`⏎ trong tên, giải `$'…'`, `\r`, tên mở bằng chữ số; `<<` trong `$((`/`((`/`$[` là dịch bit; `<<` trong nháy, comment hay sau `\`; `<<\EOF`; `$(…)` và backtick trong thân dữ liệu không nháy (phải tuyến tính).
   - Thiết kế đề xuất: thêm cách đọc `segments(..., exact=True, strict=True, bash=True)` với bộ nhận `heredocs_word` port từ vibrant-pascal 970114a (audit-agent.py khoảng dòng 234–270), hợp nhãn, bỏ qua khi lệnh không có `<<`.
@@ -96,10 +95,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 
 ## 3. PR đang mở (ảnh chụp)
 
-| PR | Nội dung | Trạng thái |
-|---|---|---|
-| #8 | fix(audit): oracle bash cho mục A, cách đọc `pipe_scope` (`claude/practical-hawking-le9toi`) | Nháp, đầu a744f97 đã merge 53f3ff2, check cục bộ xanh. Chờ verifier và reviewer mới, cập nhật mô tả, rồi merge (mục 1) |
-| #25 | fix(install): quy ước đội luôn ở `.claude/rules`, manifest `.claude/agent-team-kit.txt`, cài lại tự cập nhật file kit mà dự án chưa sửa (nhận theo lịch sử git của kit); docs cập nhật kit và auto-update plugin | Nháp, mở ngày 21/10. Đã qua verifier và reviewer mới; CI xanh trên Linux, macOS và Windows (9ee8be3). Chờ người review. Việc còn lại: 4.6–4.9 |
+Không còn PR nào mở (21/10, sau PR #26).
 
 ## 4. Kit, ngoài audit
 
@@ -109,7 +105,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 - **Xong khi:** ca Q (lấy lại từ 6a08ee9) xanh trên macos-latest.
 
 ### 4.3 Guard chậm quá timeout với lệnh có rất nhiều cd
-- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ".
+- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows).
 - **Xong khi:** có ca test-hooks dùng `hook_limit`, xanh trên 3 OS.
 
 ### 4.4 Lớp lỗi "guard cho qua khi I/O của shell hỏng" đã lọt hai lần
@@ -119,6 +115,8 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
+- `scripts/guard-ask-floor` còn 166, trong khi test-hooks đếm 177 ca phải hỏi trên Linux và macOS, 172 trên Windows (bỏ 5 ca symlink). Nâng sàn lên 172.
+- Guard hỏi thừa khi chuỗi `git push --force` hay `rm -rf /` chỉ là dữ liệu trong thân heredoc ghi ra file (`cat > gen.py <<'E'` ⏎ … ⏎ `E`), như lệnh so nhãn của verifier nhánh tích hợp audit ngày 21/10: session đứng 2,5 giờ chờ người duyệt. Không nới guard; cách tránh là ghi script bằng tool Write rồi mới chạy.
 - Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của nhánh `ccr-651f0a3f-wykij0` ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
   - `git add --chmod=+x` ở cuối stage cả nội dung các script `.sh`, nên `git diff` không hiện thay đổi của chúng. Có thể chỉ đặt bit chạy (`git update-index --chmod=+x`) cho file đã được theo dõi.
@@ -146,3 +144,10 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 ### 4.9 Chưa có cách ghim một file kit ở bản cũ
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
 - **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.
+
+### 4.10 Guard cho qua push lên main khi đường có nhiều dấu cách hay nháy giữa từ
+- **Vì sao:** guard không hỏi, còn bash thật push từ repo ở nhánh main. Lỗi có ở mọi bản, kể cả trước PR #22 (reviewer PR #22 tìm ra; tái hiện lại trên 083c8e9). Nên làm trước các việc khác của mục 4, vì đây là guard bỏ sót, không phải hỏi thừa.
+  - `git --git-dir="<repo main>/sp ace plain/x/.git" push`: regex `G` (`-[^[:space:]]+` cộng một đối số) không vượt được giá trị trong nháy có từ hai dấu cách trở lên, nên lệnh không vào cổng push. Một dấu cách thì vẫn hỏi. Đường Windows kiểu `C:\Users\John Smith\My Documents` có thể dính.
+  - `cd "<repo main>/link/"'..' && git push`, `cd "<repo main>/link"/'..' && git push`, `cd "<repo main>/link/".. && git push`, với `link` là symlink từ repo main vào thư mục con của một repo nhánh khác: bash đi đường logic về repo main; guard không nhận `..` có nháy giữa từ nên không đọc theo đường logic. Không nháy (`cd "<repo main>/link/.." && git push`) thì hỏi.
+- **Tái hiện:** dựng ba repo (main, nhánh khác có `sub/`, cwd ở nhánh thứ ba) và symlink như trên; chạy guard với JSON PreToolUse, so với bash thật chạy cùng lệnh sau khi đổi `git push` thành `git rev-parse --abbrev-ref HEAD`.
+- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, xanh trên 3 OS; `scripts/guard-ask-floor` nâng theo.
