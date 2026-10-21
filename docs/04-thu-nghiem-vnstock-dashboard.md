@@ -337,8 +337,8 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
 | Lúc | Việc | Lệnh |
 |---|---|---|
 | Đầu buổi | Lấy việc máy kia đã push lên `trial/agent-team`. Lệnh này không lấy bản kit mới | `cd C:\vnstock-trial; git pull` |
-| Đầu buổi | Lấy bản kit mới về thư mục kit | `git -C C:\tools\Agents-Team-coding pull`. In `Already up to date.` thì bỏ qua hàng dưới |
-| Kit có commit mới | Cài lại kit vào `C:\vnstock-trial` như mục 4 | `& $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force`, xem `git status --short` và `git diff`, chạy `& $bash scripts/check.sh`, rồi `git add -A; git commit -m "chore: cập nhật bộ agent team"` |
+| Lần đầu trên máy, chưa có `C:\tools\Agents-Team-coding` | Clone kit một lần như mục 2. Đường tắt và luồng desktop không clone kit | `git clone -b claude/sharp-knuth-lpdhqz https://github.com/pichu124/Agents-Team-coding.git C:\tools\Agents-Team-coding` |
+| Đầu buổi | Lấy bản kit mới rồi cài lại vào `C:\vnstock-trial` như mục 4. Luôn cài lại, kể cả khi pull in `Already up to date.`: hôm trước pull mà quên cài thì hôm nay vẫn cài bù | `git -C C:\tools\Agents-Team-coding pull; & $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force`, rồi `git status --short`. Kit không có gì mới so với bản đã commit trong repo thì lệnh này không in gì. Có thay đổi thì xem `git diff` (dòng `kit-commit:` của `.claude/agent-team-kit.txt` cho thấy commit kit cũ và mới), chạy `& $bash scripts/check.sh`, rồi `git add -A; git commit -m "chore: cập nhật bộ agent team"` |
 | Đầu buổi, nếu đã cài plugin ([docs/05](05-cai-cho-moi-du-an.md)) | Cập nhật plugin | Đã bật auto-update thì không cần làm gì. Chưa bật thì `claude plugin marketplace update agents-team-coding; claude plugin update agent-team@agents-team-coding` |
 | Trong buổi | Giao việc không tầm thường cho đội | `/team-lead <việc>` |
 | Cuối buổi | Dò sự cố của ngày, mọi dự án trên máy | `& $bash scripts/audit-agent.sh --all --since 1` |
