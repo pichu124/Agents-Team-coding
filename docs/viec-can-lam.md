@@ -95,7 +95,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 
 ## 3. PR đang mở (ảnh chụp)
 
-Không còn PR nào mở (21/10, sau PR #26).
+Không còn PR nào mở (21/10, sau PR #27).
 
 ## 4. Kit, ngoài audit
 
@@ -117,7 +117,7 @@ Không còn PR nào mở (21/10, sau PR #26).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
 - `scripts/guard-ask-floor` còn 166, trong khi test-hooks đếm 177 ca phải hỏi trên Linux và macOS, 172 trên Windows (bỏ 5 ca symlink). Nâng sàn lên 172.
 - Guard hỏi thừa khi chuỗi `git push --force` hay `rm -rf /` chỉ là dữ liệu trong thân heredoc ghi ra file (`cat > gen.py <<'E'` ⏎ … ⏎ `E`), như lệnh so nhãn của verifier nhánh tích hợp audit ngày 21/10: session đứng 2,5 giờ chờ người duyệt. Không nới guard; cách tránh là ghi script bằng tool Write rồi mới chạy.
-- Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của nhánh `ccr-651f0a3f-wykij0` ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
+- Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của PR #25 ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
   - `git add --chmod=+x` ở cuối stage cả nội dung các script `.sh`, nên `git diff` không hiện thay đổi của chúng. Có thể chỉ đặt bit chạy (`git update-index --chmod=+x`) cho file đã được theo dõi.
   - Dòng sửa tay trong manifest kiểu `../x`, tên thư mục hay `-rf` bị báo "kit đã bỏ" mãi, vì installer kiểm bằng `-e` và không lọc `..`, `/`, `-`.
@@ -129,15 +129,15 @@ Không còn PR nào mở (21/10, sau PR #26).
 - **Vì sao:** cài lại thì installer tự cập nhật file kit trùng một bản đã commit trong lịch sử kit (hàm `kit_had`, dùng `git log --raw -m`). Có hai chỗ hở, cả hai chỉ làm installer báo ✘ thừa và dừng, không ghi đè gì:
   - `-m` phụ thuộc config `log.diffMerges` của người dùng. Với `off`, merge bị bỏ qua. Với `remerge`, output có thêm blob giả (bản gộp lại có conflict marker), gần như không thể trùng.
   - Lọc theo đường dẫn thì `git log` cắt bớt lịch sử: ở merge mà file trùng một parent, git chỉ đi theo parent đó, nên bản trên nhánh bị bỏ không được nhận.
-  Reviewer của 12bf299 đã tái hiện chỗ đầu. Chỗ sau do implementer chỉ ra.
+  Reviewer của PR #25 (commit 12bf299) đã tái hiện chỗ đầu. Chỗ sau do implementer chỉ ra.
 - **Xong khi:** `kit_had` gọi `git -c log.diffMerges=separate -C "$kit" log --full-history ...`; có ca test-install cho kit có `log.diffMerges=off` và cho lịch sử bị cắt bớt, đỏ trước rồi xanh.
 
 ### 4.7 Cài lại trên Windows ghi `settings.json` từ CRLF sang LF
-- **Vì sao:** kit clone với `core.autocrlf=true` (mặc định của Git for Windows) thì `.claude/settings.json` của kit là CRLF. Lần cài đầu chép nguyên văn (CRLF), lần cài lại gộp bằng Python và ghi LF, nên `git diff HEAD` hiện cả file (66 dòng) dù nội dung không đổi. Lỗi có từ trước nhánh `ccr-651f0a3f-wykij0`; verifier của nhánh đó thấy khi mô phỏng autocrlf trên Linux.
+- **Vì sao:** kit clone với `core.autocrlf=true` (mặc định của Git for Windows) thì `.claude/settings.json` của kit là CRLF. Lần cài đầu chép nguyên văn (CRLF), lần cài lại gộp bằng Python và ghi LF, nên `git diff HEAD` hiện cả file (66 dòng) dù nội dung không đổi. Lỗi có từ trước PR #25; verifier của PR đó thấy khi mô phỏng autocrlf trên Linux.
 - **Xong khi:** có ca test-install với kit `autocrlf=true`: cài, commit, cài lại, `git status --porcelain` rỗng.
 
 ### 4.8 Lệnh PowerShell của đoạn "Cập nhật kit" chưa chạy tay trên Windows
-- **Đã có:** CI của PR #25 xanh trên cả 3 OS ở 9ee8be3 (run 39576148967): test-install (ca AE..AN) chạy trên macOS `/bin/bash` 3.2 và Git Bash Windows với `core.autocrlf=true`. Lần chạy Windows đầu tiên (f737e75) đỏ 7 assert. Lỗi nằm ở test fixture: grep và gawk của Git for Windows bỏ `\r`, và kit checkout CRLF. 9ee8be3 đã sửa.
+- **Đã có:** CI của PR #25 (merge thành ced0c81) xanh trên cả 3 OS ở 9ee8be3 (run 39576148967): test-install (ca AE..AN) chạy trên macOS `/bin/bash` 3.2 và Git Bash Windows với `core.autocrlf=true`. Lần chạy Windows đầu tiên (f737e75) đỏ 7 assert. Lỗi nằm ở test fixture: grep và gawk của Git for Windows bỏ `\r`, và kit checkout CRLF. 9ee8be3 đã sửa.
 - **Vì sao còn:** lệnh PowerShell ở đoạn "Cập nhật kit" của docs/04 mục 12 (`git diff --no-index C:\tools\Agents-Team-coding\<file> <file>`, `git restore --source=HEAD --staged --worktree -- <file>`) chưa chạy trên PowerShell 5.1; CI chỉ chạy phần bash.
 - **Xong khi:** một lần làm tay đoạn "Cập nhật kit" trên `C:\vnstock-trial`, kết quả ghi vào đây.
 
