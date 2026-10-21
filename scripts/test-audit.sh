@@ -1205,6 +1205,43 @@ for cmd in ("bash" + " --x-bash" * 5000, "x-bash -o x-bash" * 3000, "bash" + " -
     if t > 3:
         slow.append((cmd[:16], round(t, 1)))
 check(not slow, f"suspicious_labels quá 3 giây trên chuỗi cờ có shell sau `-` (đầu lệnh, giây): {slow}")
+# Ca oracle bash tìm ra (KNOWN_MISSES của 9a32fb3). Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng stub),
+# thư mục /tmp/w có, /tmp/nope không có. Các ca gần đó mà bash chỉ xoá trong thư mục tạm không được thành nghi.
+MUST_FLAG = [
+    # biến chưa gán ở đầu đích: bash thay bằng rỗng, đích thành tuyệt đối
+    "cd /tmp/w && rm -rf $D/a",                                  # xoá /a
+    "echo 'a b' && cd /tmp/w && sh -c 'rm -rf $D/a' # don't",     # xoá /a
+    "cd /tmp && rm -rf $D/a",                                     # docs/viec-can-lam.md 2.2 ý 6: xoá /a
+    # phép gán hay cd trong một khâu của ống chạy ở shell con, không tới khâu sau hay lệnh sau ống
+    "unset D && D=/tmp/w/ | rm -rf ${D}src",                      # xoá src của dự án
+    "D=/tmp/w/ | true; rm -rf ${D}src",                           # xoá src của dự án
+    "rm -rf /tmp/w/x | cd /tmp/w && rm -rf src",                  # xoá src của dự án
+    "export D=/tmp/w | rm -rf ${D}src",                           # docs/viec-can-lam.md 2.2 ý 6: xoá src của dự án
+    # cách đọc chặt bỏ cả phép gán sau `&&`, cách đọc lỏng nhận phép gán trong ống: chỉ exact thấy D=/srv/ (53f3ff2 trả [])
+    "D=/tmp/x/; true && D=/srv/; true | D=/tmp/x/; rm -rf ${D}src",  # xoá /srv/src
+    # khâu ống đóng nhóm `( … )`: env trở về như lúc mở nhóm, không về env trong nhóm (chỉ exact thấy thân `bash \⏎<<EOF`)
+    "D=/srv/; (true; D=/tmp/x/; true | true)\nbash \\\n<<EOF\nrm -rf ${D}src\nEOF",  # xoá /srv/src
+    # đoạn sau `||` ở cách đọc chặt không gán gì: biến giữ giá trị cũ, không thành chưa biết
+    "C=rm; true || C=echo\nbash \\\n<<EOF\n$C -rf /\nEOF",              # chạy rm -rf /
+    # thân heredoc rỗng: dòng EOF ngay sau dòng mở là dấu đóng, lệnh sau nó là lệnh
+    ": <<'EOF'\nEOF\nbash <<EOF\nrm -rf src # don't",             # xoá src của dự án
+    "cat <<'EOF'\nEOF\nbash -c 'cd /tmp/w && rm -rf src'; bash -c \"rm -rf $D/a\"",  # xoá /a
+    "cat <<'EOF'\nEOF\nrm -rf src", "cat <<-EOF\n\tEOF\nrm -rf src",  # xoá src của dự án
+    # lệnh ngay sau || có thể không chạy: thư mục cd và biến gán ở đó không chắc có
+    "cd / || cd /tmp/nope && rm -rf /tmp/w\\\n  src",             # cd / thành công, bỏ qua cd sau ||: xoá /src
+    "true || cd /tmp/w && rm -rf src",                            # xoá src của dự án
+    "true || D=/tmp/w/ && rm -rf ${D}src",                        # gán sau || không chạy: xoá src của dự án
+    "D=/tmp/w || cd /tmp/w && rm -rf src",                        # docs/viec-can-lam.md 2.2 ý 6: xoá src của dự án
+]
+for cmd in MUST_FLAG:
+    check(a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash xoá đích ngoài thư mục tạm, mục A phải báo: {cmd!r}")
+for cmd in (
+    "D=src; cd /tmp/w && rm -rf $D",
+    "D=/tmp/w/; echo x | cat; rm -rf ${D}src", "cd /tmp/w && rm -rf src | cat",
+    "cat <<'EOF'\nEOF\nrm -rf node_modules",
+    "cd /tmp/w && rm -rf src || true",
+):
+    check(not a.suspicious_labels(cmd, a.SUSPICIOUS), f"bash chỉ xoá trong thư mục tạm, không được thành nghi: {cmd!r}")
 # `\` cuối mỗi dòng thân kéo dòng kế vào lệnh: kéo từng dòng không được tốn thời gian bậc hai theo số dòng. Bản bậc hai
 # (trước b7ccd40) mất ~45 s với 40000 dòng, bản tuyến tính ~0,5 s (12 cách đọc; 20/10/2026: nhỏ nhất 0,51 s, trung vị 0,53 s
 # qua 9 lần đo). Ngưỡng 5 s cách cả hai khoảng 9 lần, để máy CI chậm hơn không đỏ giả. Bash nối cả 40002 dòng thành lệnh
@@ -1569,6 +1606,221 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
 PYEOF
 fi
 
+# Oracle bash: đối chiếu mục A với chính bash. Lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã cần
+# hơn 10 commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…), và phép so nhãn ở trên không thấy
+# lỗi mà bản trước và bản này cùng có. Bước này chạy một bộ lệnh fuzz cố định bằng bash thật, `rm` thay bằng stub chỉ ghi
+# thư mục và đích, rồi đỏ khi bash xoá đích nằm ngoài thư mục tạm mà suspicious_labels trả []. An toàn: stub là đường dẫn
+# tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh có git, push, reset, clean,
+# Remove-Item hay `>` bị bỏ hẳn, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là /dev/null, có timeout.
+# Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2 và 5.3, sh là dash.
+# Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao
+# bỏ qua.
+if [ ! -f scripts/install-kit.sh ]; then
+  printf '• audit: bỏ qua oracle bash (chỉ chạy trong repo kit)\n'
+else
+  base_test="" base_why="$skip$miss"
+  if [ -z "$base_why" ]; then
+    if git show "$ref:./scripts/test-audit.sh" >"$tmp/test-audit-base.sh" 2>/dev/null; then
+      base_test="$tmp/test-audit-base.sh" base_why="$ref ($why)"
+    else
+      base_why="không có scripts/test-audit.sh ở $ref"
+    fi
+  fi
+  "$py" -I -B - "$tmp/oracle-pr8" "$base_test" "$base_why" <<'PYEOF' || status=1
+import ast, glob, importlib.util, os, random, re, shutil, signal, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor
+for s in (sys.stdout, sys.stderr):
+    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
+root, base_test, base_why = sys.argv[1:4]
+# Lệnh bash xoá đích ngoài thư mục tạm mà mục A vẫn bỏ sót, có từ trước bước này: (lệnh, "lý do"). Sửa được ca nào thì xoá
+# ca đó (bước này đỏ khi một ca đã hết sót mà còn nằm đây). Chỉ được giảm: thêm ca so với bản trước là đỏ, ca sót mới phải sửa.
+KNOWN_MISSES = [
+]
+t0 = time.monotonic()
+spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
+a = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(a)
+fails = []
+known = dict(KNOWN_MISSES)
+ratchet = f"bỏ qua: {base_why}"
+# Dòng đầu của bước này. Oracle bash của blissful-dirac (bước kế) cũng mở bằng "# Oracle bash:" mà không có KNOWN_MISSES.
+MARK = "# Oracle bash: đối chiếu mục A với chính bash."
+if base_test:
+    text = open(base_test, encoding="utf-8").read()
+    before = None
+    if MARK not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
+        ratchet = f"bản ở {base_why} chưa có bước oracle"
+    else:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được, kể
+        # cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
+        try:
+            i = text.index("\nKNOWN_MISSES")
+            i = text.index("\n", text.rindex("<<'PYEOF'", 0, i)) + 1
+            node = next(n.value for n in ast.parse(text[i:text.index("\nPYEOF\n", i)]).body if isinstance(n, ast.Assign)
+                        and [getattr(t, "id", "") for t in n.targets] == ["KNOWN_MISSES"])
+            before = {c for c, _why in ast.literal_eval(node)}
+            ratchet = f"so với bản ở {base_why}"
+        except Exception as exc:
+            fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
+    added = [] if before is None else [c for c in known if c not in before]
+    if added:
+        fails.append(f"KNOWN_MISSES chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
+                     + "; ".join(repr(c) for c in added) + ". Sửa audit-agent.py cho ca đó, đừng ghi thêm.")
+for c in known:
+    labels = a.suspicious_labels(c, a.SUSPICIOUS)
+    if labels:
+        fails.append(f"ca trong KNOWN_MISSES đã hết sót (mục A báo {', '.join(labels)}): xoá nó khỏi danh sách: {c!r}")
+
+def finish(note):
+    for f in fails:
+        print("✘ audit: oracle bash:", f, file=sys.stderr)
+    if note:
+        print(note)
+    sys.exit(1 if fails else 0)
+
+bash = shutil.which("bash")
+if os.name != "posix" or sys.platform.startswith(("cygwin", "msys")):
+    finish("• audit: bỏ qua oracle bash (không chạy trên Windows)")
+if not bash or not shutil.which("sh"):
+    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc sh)")
+ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                     universal_newlines=True, timeout=30).stdout.strip()
+if not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
+    finish(f"• audit: bỏ qua oracle bash (cần bash 5+, máy có bash {ver or '?'})")
+os.makedirs(root)
+root = os.path.realpath(root)
+if not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
+    finish(f"• audit: bỏ qua oracle bash (đường thư mục tạm có ký tự lạ: {root!r})")
+d = root
+while True:
+    if os.path.exists(os.path.join(d, ".git")):
+        finish(f"• audit: bỏ qua oracle bash (thư mục tạm {root} nằm trong repo git {d})")
+    if os.path.dirname(d) == d:
+        break
+    d = os.path.dirname(d)
+
+# Bộ sinh cố định: 1–4 dòng, mỗi dòng 1–3 lệnh nối bằng && ; || |, lệnh cuối là lõi `rm -rf <đích>` hay một thân -c. Cấu
+# trúc từng làm phân tích đọc sai: nối dòng, comment có `'` lẻ, heredoc đưa vào shell hay làm dữ liệu, bash -c có biến và lồng
+# nhau, cd (thành công, lỗi, builtin, nền), subshell, biến (gán, export, unset), `--`, `..`.
+RM = ["rm -rf src", "rm -rf src 'x'", "rm -rf $D", "rm -rf $D/a", "rm -rf ${D}src", "rm -rf -- -x", "rm -rf /tmp/w/x -- -x",
+      "rm -rf /tmp/w/x", "rm -rf /tmp/w\\\n  src", "rm -rf ../../src", "cd /tmp/w & rm -rf src"]
+CD = ["cd /tmp/w", "cd /tmp/w/s", "cd /tmp/nope", "cd src", "cd ..", "cd -", "cd", "cd /", "builtin cd /", "pushd /tmp/w",
+      "popd", "(cd /tmp/w)", "(cd /tmp/w && true)", "( cd / )"]
+VAR = ["D=/tmp/w", "D=/tmp/w/", "D=/", "D=", "export D=/tmp/w", "export D=/", "unset D", "echo 'a b'", 'echo "a b"', "true"]
+SHC = ["bash -c 'rm -rf $D/a'", "sh -c 'rm -rf $D/a'", "bash -lc 'rm -rf src'", "bash -c 'D=/; rm -rf $D'",
+       'bash -c "rm -rf $D/a"', 'bash -c "rm -rf \\$D/a"', "bash -c 'cd /tmp/w && rm -rf src'",
+       'sh -c "cd /tmp/w; rm -rf src"', "bash -c 'D=/tmp/w'", "bash -c \"bash -c 'rm -rf \\$D'\"",
+       "bash -c \"D=/; bash -c 'rm -rf $D'\"", "bash -c 'cd /tmp/w'", "bash -euo pipefail -c 'D=/; rm -rf $D'",
+       "bash -c -- 'rm -rf $D/a'"]
+LINE = ["bash <<'EOF'", "bash <<EOF", "sh <<'EOF'", "cat <<'EOF' | bash", "cat <<EOF | sh", "cat <<'EOF'", ": <<'EOF'",
+        "bash \\\n<<'EOF'", "EOF", "EOF", "# x \\", "# don't", "echo don't"]
+TAIL = ["", "", "", "", " \\", " # don't", " # x \\"]
+SEP = [" && ", " && ", "; ", " || ", " | "]
+rnd = random.Random(1)
+def line():
+    if rnd.random() < 0.3:
+        return rnd.choice(LINE)
+    parts = [rnd.choice(CD + VAR + SHC) for _ in range(rnd.randint(0, 2))] + [rnd.choice(RM + SHC)]
+    s = parts[0]
+    for p in parts[1:]:
+        s += rnd.choice(SEP) + p
+    return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
+fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)]
+FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
+cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
+
+# Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A
+# đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không
+# xoá gì, chỉ ghi.
+STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$(dirname \"$0\")/log.$$\"\n"
+env = {"PATH": os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(p)),
+       "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C"}
+def setup(k):
+    base = os.path.join(root, str(k))
+    for sub in ("p/src", "tmp/w/s"):
+        os.makedirs(os.path.join(base, sub))
+    with open(os.path.join(base, "stub"), "w") as fh:
+        fh.write(STUB)
+    os.chmod(os.path.join(base, "stub"), 0o755)
+    return base
+def rm_targets(args):
+    """Đích của rm như GNU rm đọc: trước `--` đầu tiên, token mở bằng `-` (trừ `-` trơn) là cờ, ở đâu cũng vậy."""
+    end = args.index("--") if "--" in args else len(args)
+    return [t for t in args[:end] if t and (t == "-" or not t.startswith("-"))] + [t for t in args[end + 1:] if t]
+def run(base, cmd):
+    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd."""
+    tmpd = os.path.join(base, "tmp")
+    text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
+    if re.search(r"\brm\b", text.replace(root, "")) or FORBID.search(text.replace(root, "")):
+        return "văn bản chạy còn rm hay lệnh bị cấm", [], []
+    for f in glob.glob(os.path.join(base, "log.*")):
+        os.remove(f)
+    p = subprocess.Popen([bash, "-c", text], cwd=os.path.join(base, "p"), env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    err = ""
+    try:
+        p.communicate(timeout=30)  # đọc tới EOF: chờ cả job nền còn giữ stdout (`a && cd x & rm …`)
+    except subprocess.TimeoutExpired:
+        err = "quá 30 giây"
+    try:
+        os.killpg(p.pid, signal.SIGKILL)  # tiến trình nào còn sót trong nhóm không được ghi lẫn sang lệnh sau
+    except ProcessLookupError:
+        pass
+    p.wait()
+    p.stdout.close()
+    calls, bad = [], []
+    for f in sorted(glob.glob(os.path.join(base, "log.*"))):
+        with open(f, "rb") as fh:
+            pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
+        for t in rm_targets(args):
+            calls.append((pwd, t))
+            r = os.path.normpath(os.path.join(pwd, t))
+            if r != tmpd and not r.startswith(tmpd + "/"):
+                rel = os.path.relpath(r, os.path.join(base, "p"))
+                bad.append(r if rel.startswith("../../..") else "<dự án>/" + rel if rel != "." else "<dự án>")
+    return err, calls, bad
+
+W = min(8, 2 * (os.cpu_count() or 1))
+bases = [setup(k) for k in range(W)]
+# Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
+for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
+                  ("bash -lc 'rm -rf /tmp/w/x src'", ["<dự án>/src"])):
+    err, calls, bad = run(bases[0], cmd)
+    if err or not calls or bad != want:
+        fails.append(f"oracle không dựng đúng: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, "
+                     f"đích ngoài thư mục tạm {bad} (phải là {want})")
+if fails:
+    finish("")
+with ThreadPoolExecutor(W) as ex:
+    res = [r for rs in ex.map(lambda k: [(c,) + run(bases[k], c) for c in cmds[k::W]], range(W)) for r in rs]
+shutil.rmtree(root, ignore_errors=True)
+misses, danger, hit = [], 0, set()
+for c, err, _calls, bad in res:
+    if err:
+        fails.append(f"{c!r}: {err}")
+    if not bad:
+        continue
+    danger += 1
+    if a.suspicious_labels(c, a.SUSPICIOUS):
+        continue
+    if c in known:
+        hit.add(c)
+    else:
+        misses.append((len(c), c, sorted(set(bad))))
+if danger < len(cmds) // 4:  # bộ sinh hay stub hỏng thì phép so vô nghĩa
+    fails.append(f"chỉ {danger}/{len(cmds)} lệnh xoá đích ngoài thư mục tạm: bộ sinh hay stub hỏng")
+if misses:
+    fails.append(f"mục A bỏ sót {len(misses)} lệnh mà bash xoá đích ngoài thư mục tạm (ngắn nhất trước):\n"
+                 + "\n".join(f"  {c!r}: bash xoá {', '.join(bad)}" for _n, c, bad in sorted(misses)[:10])
+                 + "\n  Sửa cách segments()/suspicious_labels đọc cấu trúc đó (thêm một cách đọc rồi lấy hợp, như exact hay "
+                 "nối dòng). Không ghi thêm vào KNOWN_MISSES: danh sách chỉ được giảm.")
+gone = [c for c in known if c not in hit and not a.suspicious_labels(c, a.SUSPICIOUS)]
+for c in gone:  # mục A vẫn không báo, mà bash ở máy này không xoá gì ngoài thư mục tạm (sh khác dash?): chỉ ghi chú
+    print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
+finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy bằng bash {ver} thật (rm thay bằng stub), "
+       f"{danger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong KNOWN_MISSES "
+       f"(chỉ được giảm: {ratchet}; {time.monotonic() - t0:.0f} giây)")
+PYEOF
+fi
 # Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
 # Phân tích lệnh của mục A từng đọc khác bash thật hơn mười lần (1e9882a và 3 lần vá, 3dab000, 5083855, 52233e5..9734b56,
 # reviewer chặn nhiều vòng). Bước này sinh lệnh tất định từ một ngữ pháp CHỈ gồm thứ an toàn, chạy bằng bash thật với rm giả
