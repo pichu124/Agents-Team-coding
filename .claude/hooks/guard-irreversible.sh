@@ -207,13 +207,17 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   for d in $dirs; do
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
-    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. cd -P đi theo
-    # đường vật lý như chdir của git -C (cd -L rút gọn link/.. theo chữ, ra thư mục khác).
-    branch="$(CDPATH='' cd -P -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    if text_grep "$branch" -Eqx -- "$MAIN"; then
-      reason="push khi đang ở nhánh $branch"
-      break
-    fi
+    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. Đọc theo cả hai
+    # cách đi đường: -P (vật lý, như git -C) và -L (logic, như cd của shell). Hai cách chỉ khác nhau
+    # khi đường có .. đi lùi ra từ một symlink; cách nào ở nhánh chính cũng hỏi.
+    for o in -P -L; do
+      case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
+      branch="$(CDPATH='' cd "$o" -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      if text_grep "$branch" -Eqx -- "$MAIN"; then
+        reason="push khi đang ở nhánh $branch"
+        break 2
+      fi
+    done
   done
   IFS=$' \t\n'
   set +f
