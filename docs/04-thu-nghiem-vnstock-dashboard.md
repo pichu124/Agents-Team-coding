@@ -154,8 +154,9 @@ Kết quả mong đợi:
 ✔ đã chép ... file của kit
 ✔ gộp permissions + hooks vào .claude/settings.json
 ✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md
+✔ .claude/agent-team-kit.txt: kit 1a2b3c4
 ✔ .gitattributes: giữ LF cho *.sh (Windows)
-✔ .gitignore: thêm ngoại lệ cho .claude/agents/architect.md .claude/hooks/stop-gate.sh
+✔ .gitignore: thêm ngoại lệ cho .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/rules/agent-team.md .claude/agent-team-kit.txt
 ```
 
 Nếu installer báo trùng file, nó dừng mà không chép gì. Đọc tên file trong thông báo rồi quyết định. Chỉ dùng `--force` khi bạn chắc chắn muốn ghi đè.
@@ -166,6 +167,14 @@ Cập nhật kit về sau: `git pull` trong thư mục kit, rồi chạy lại i
 git -C /c/tools/Agents-Team-coding pull
 /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial --force
 ```
+
+Commit kit đã cài nằm ở dòng `kit-commit:` của `.claude/agent-team-kit.txt`, installer ghi lại sau mỗi lần cài. Muốn biết kit có gì mới từ bản đó thì sau `git pull`, trước khi chạy lại installer, chạy lệnh ở dòng comment thứ hai của file, thay `<kit-commit>` bằng commit đó (bỏ hậu tố `-dirty` nếu có):
+
+```bash
+git -C /c/tools/Agents-Team-coding log --oneline <kit-commit>..HEAD -- .claude scripts templates
+```
+
+Kit bỏ hoặc đổi tên một file thì bản cũ vẫn nằm lại trong repo. Installer không tự xoá mà báo `⚠ kit đã bỏ N file mà repo này vẫn còn` kèm tên từng file, và báo lại ở mọi lần cài cho tới khi file đó không còn. Dự án không dùng file nào thì tự `git rm` file đó.
 
 File `.claude/rules/agent-team.md` chỉ bị thay phần của kit, từ đầu file tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng của dự án (ví dụ bộ check nhanh) thì viết dưới dòng đó, installer giữ nguyên. Bản cài cũ chưa có dòng này thì installer giữ các mục `#`/`##` không có trong template, phần còn lại bị thay. Xem `git diff` trước khi commit.
 

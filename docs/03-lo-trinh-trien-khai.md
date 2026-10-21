@@ -61,6 +61,7 @@ git switch -c chore/agent-team
 - Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
 - Nếu dự án chưa có CLAUDE.md thì tạo từ khung [`templates/project-CLAUDE.md`](../templates/project-CLAUDE.md), có các mục TODO để bạn điền. Nếu đã có thì giữ nguyên. CLAUDE.md còn quy ước đội chép từ bản kit cũ thì installer cảnh báo ở mọi lần chạy: xoá các dòng đó, giữ phần riêng của dự án.
 - Luôn đặt quy ước của đội vào `.claude/rules/agent-team.md`. Khi chạy lại để cập nhật kit, nó chỉ thay phần của kit trong file này, tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng viết dưới dòng đó được giữ. Bản cài cũ chưa có dòng này thì giữ các mục `#`/`##` không có trong template.
+- Ghi commit kit đã cài và danh sách file của kit vào `.claude/agent-team-kit.txt`, để biết repo nào đang dùng kit cũ. Cài lại thì báo ⚠ những file kit đã bỏ mà repo vẫn còn, ở mọi lần cài cho tới khi bạn xoá. Installer không tự xoá: dự án không dùng thì `git rm`.
 - Thêm `*.sh text eol=lf` vào `.gitattributes`, để script không bị đổi sang CRLF trên Windows.
 - Nếu `.gitignore` đang bỏ qua thư mục của kit thì thêm ngoại lệ dạng `!thư-mục/`. Các luật như `.env` hay `*.log` vẫn giữ hiệu lực.
 - Thêm `artifacts/` vào `.gitignore`: đó là nơi verifier lưu bằng chứng. Không ignore thì Stop gate coi đó là thay đổi và chạy check ở mọi lượt.

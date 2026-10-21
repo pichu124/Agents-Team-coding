@@ -567,6 +567,152 @@ run_install "$oldc"
 assert "S: chạy lại phải exit 0" [ $? -eq 0 ]
 assert "S: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cảnh báo" claude_warned
 
+# T. Cài mới ghi .claude/agent-team-kit.txt: commit kit đã cài và đúng danh sách file kit đã chép.
+man=.claude/agent-team-kit.txt
+kit_sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null || echo unknown)"
+section() { # section <manifest> <kit-files|kit-dropped>: in các dòng của mục đó
+  awk -v s="$2:" '/^kit-(commit|files|dropped):/ { on = ($0 == s); next } on' "$1"
+}
+no_dropped_warning() { ! grep -q 'kit đã bỏ' "$tmp/out" "$tmp/err"; }
+tm="$tmp/manifest"
+new_repo "$tm"
+run_install "$tm"
+assert "T: install phải exit 0" [ $? -eq 0 ]
+assert "T: phải tạo $man" [ -f "$tm/$man" ]
+assert "T: hai dòng đầu phải là comment, dòng 2 là lệnh xem kit có gì mới → $(head -n 2 "$tm/$man")" \
+  [ "$(head -n 2 "$tm/$man")" = "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay.
+# Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates" ]
+assert "T: phải có các mục kit-commit, kit-files, kit-dropped theo thứ tự → $(grep '^kit-' "$tm/$man")" \
+  [ "$(grep -o '^kit-[a-z]*:' "$tm/$man" | tr '\n' ' ')" = "kit-commit: kit-files: kit-dropped: " ]
+assert "T: kit-commit phải là HEAD của kit $kit_sha (kit đang sửa thì kèm -dirty) → $(grep '^kit-commit' "$tm/$man")" \
+  grep -qE "^kit-commit: $kit_sha(-dirty)?\$" "$tm/$man"
+if grep -q $'\r' "$tm/$man"; then bad "T: $man phải là LF"; else ok; fi
+copied="$(sed -n 's/^✔ đã chép \([0-9]*\) file của kit$/\1/p' "$tmp/out")"
+listed="$(section "$tm/$man" kit-files)"
+listed_n="$(printf '%s\n' "$listed" | grep -c .)"
+assert "T: kit-files phải có đúng $copied file đã chép → $listed_n" [ "$listed_n" = "$copied" ]
+for p in .claude/agents/architect.md scripts/check.sh; do
+  if grep -qxF "$p" <<<"$listed"; then ok; else bad "T: kit-files thiếu $p"; fi
+done
+mismatch=""
+while IFS= read -r p; do
+  [ -f "$tm/$p" ] && cmp -s "$kit/$p" "$tm/$p" || mismatch="$mismatch $p"
+done <<<"$listed"
+assert "T: mỗi dòng trong kit-files phải là file đã cài, giống hệt bản của kit → khác:$mismatch" [ -z "$mismatch" ]
+assert "T: lần cài đầu kit-dropped phải rỗng → $(section "$tm/$man" kit-dropped)" [ -z "$(section "$tm/$man" kit-dropped)" ]
+assert "T: lần cài đầu không được báo file kit đã bỏ" no_dropped_warning
+assert "T: phải báo ✔ commit kit đã ghi, dạng 7 ký tự → $(cat "$tmp/out")" \
+  grep -qxE "✔ $man: kit ${kit_sha:0:7}(-dirty)?" "$tmp/out"
+
+# U. Chạy lại cùng commit kit (có và không --force): manifest y hệt từng byte, không báo commit trước.
+cp "$tm/$man" "$tmp/man-T"
+run_install "$tm"
+assert "U: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "U: chạy lại phải cho $man y hệt" cmp -s "$tmp/man-T" "$tm/$man"
+if grep -q 'trước:' "$tmp/out"; then bad "U: cùng commit kit thì không được báo commit trước"; else ok; fi
+run_install "$tm" --force
+assert "U: chạy lại với --force phải exit 0" [ $? -eq 0 ]
+assert "U: chạy lại với --force phải cho $man y hệt" cmp -s "$tmp/man-T" "$tm/$man"
+
+# V. Lần cài trước (commit khác) có old.md mà kit đã bỏ, repo vẫn còn, và gone.md đã bị xoá khỏi repo.
+#    Dừng vì trùng file thì giữ nguyên manifest cũ. Cài lại: báo old.md, không xoá, ghi vào kit-dropped.
+assert "V: dừng vì trùng file (ca C) thì không được tạo $man" [ ! -e "$c/$man" ]
+assert "V: dừng vì settings.json hỏng (ca E) thì không được tạo $man" [ ! -e "$e/$man" ]
+old_p=.claude/skills/team-lead/playbooks/old.md
+gone_p=.claude/agents/gone.md
+old_sha=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
+mkdir -p "$tm/$(dirname "$old_p")"
+echo "playbook mà kit đã bỏ" > "$tm/$old_p"
+awk -v a="$old_p" -v b="$gone_p" -v s="$old_sha" '
+  /^kit-commit:/ { print "kit-commit: " s; next }
+  { print }
+  $0 == "kit-files:" { print a; print b }' "$tmp/man-T" > "$tm/$man"
+cp "$tm/$man" "$tmp/man-V"
+echo "sửa riêng" >> "$tm/.claude/agents/architect.md"
+run_install "$tm"
+assert "V: trùng file phải exit khác 0" [ $? -ne 0 ]
+assert "V: dừng vì trùng file thì không được ghi lại $man" cmp -s "$tmp/man-V" "$tm/$man"
+cp "$kit/.claude/agents/architect.md" "$tm/.claude/agents/architect.md"
+run_install "$tm"
+assert "V: cài lại phải exit 0" [ $? -eq 0 ]
+assert "V: phải cảnh báo ⚠ (stderr) kit đã bỏ 1 file → $(cat "$tmp/err")" grep -q '^⚠ kit đã bỏ 1 file' "$tmp/err"
+assert "V: cảnh báo phải nêu $old_p trên một dòng thụt lề" grep -qxF "  $old_p" "$tmp/err"
+if grep -qF gone.md "$tmp/err"; then bad "V: file đã xoá khỏi repo thì không được báo"; else ok; fi
+assert "V: không được xoá file kit đã bỏ" [ -f "$tm/$old_p" ]
+assert "V: kit-files phải đúng danh sách của kit mới" [ "$(section "$tm/$man" kit-files)" = "$listed" ]
+assert "V: kit-dropped phải đúng là $old_p → $(section "$tm/$man" kit-dropped)" [ "$(section "$tm/$man" kit-dropped)" = "$old_p" ]
+if grep -qF gone.md "$tm/$man"; then bad "V: manifest mới không được ghi lại file đã xoá"; else ok; fi
+assert "V: phải báo commit trước → $(grep "^✔ $man" "$tmp/out")" \
+  grep -qxE "✔ $man: kit ${kit_sha:0:7}(-dirty)? \(trước: ${old_sha:0:7}\)" "$tmp/out"
+
+# W. Chạy lại: vẫn báo old.md (đọc từ kit-dropped) tới khi người dùng xoá. Manifest CRLF (checkout trên
+#    Windows) có old.md ở cả hai mục: báo đúng một lần, không có \r trong tên, file ghi lại là LF.
+cp "$tm/$man" "$tmp/man-V2"
+run_install "$tm"
+assert "W: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "W: chạy lại vẫn phải báo $old_p" grep -qxF "  $old_p" "$tmp/err"
+assert "W: chạy lại phải cho $man y hệt" cmp -s "$tmp/man-V2" "$tm/$man"
+awk -v a="$old_p" '{ print } $0 == "kit-files:" { print a }' "$tmp/man-V2" | to_crlf > "$tm/$man"
+run_install "$tm" --force
+assert "W: manifest CRLF: cài lại phải exit 0" [ $? -eq 0 ]
+assert "W: manifest CRLF: phải báo $old_p đúng một lần → $(cat "$tmp/err")" [ "$(grep -cxF "  $old_p" "$tmp/err")" = 1 ]
+if grep -q $'\r' "$tmp/err"; then bad "W: manifest CRLF: tên file báo ra không được có \\r"; else ok; fi
+if grep -q 'trước:' "$tmp/out"; then bad "W: manifest CRLF cùng commit kit thì không được báo commit trước"; else ok; fi
+assert "W: manifest CRLF: file ghi lại phải đúng bản LF như lần trước" cmp -s "$tmp/man-V2" "$tm/$man"
+
+# X. Người dùng xoá file kit đã bỏ: cài lại thì không báo nữa, manifest về như lần cài đầu (kit-dropped rỗng).
+rm "$tm/$old_p"
+run_install "$tm"
+assert "X: cài lại phải exit 0" [ $? -eq 0 ]
+assert "X: đã xoá file kit đã bỏ thì không được báo" no_dropped_warning
+assert "X: manifest phải về như lần cài đầu" cmp -s "$tmp/man-T" "$tm/$man"
+
+# Y. Repo ignore .claude/*: manifest phải được mở ngoại lệ (là file, không phải thư mục), cài lại không thêm trùng.
+ig="$tmp/ignore claude"
+new_repo "$ig"
+printf '.claude/*\n' > "$ig/.gitignore"
+install "$ig"
+assert "Y: install phải exit 0" [ $? -eq 0 ]
+if git -C "$ig" check-ignore -q "$man"; then bad "Y: $man vẫn bị .gitignore bỏ qua"; else ok; fi
+install "$ig"
+assert "Y: cài lại phải exit 0" [ $? -eq 0 ]
+assert "Y: cài lại không được thêm trùng ngoại lệ cho $man" [ "$(grep -cxF "!$man" "$ig/.gitignore")" = 1 ]
+
+# Z. Kit không phải git repo (tải zip): kit-commit: unknown. Kit là git repo: sạch thì đúng HEAD; sửa file đã
+#    theo dõi thì thêm -dirty; file chưa theo dõi không tính.
+kit_copy() { # kit_copy <thư mục>: chép phần installer cần của kit (bản đang sửa, không phải bản đã commit)
+  mkdir -p "$1/.claude"
+  cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$1/.claude/"
+  cp -R "$kit/scripts" "$kit/templates" "$1/"
+}
+zk="$tmp/zip kit"
+kit_copy "$zk"
+zt="$tmp/from zip"
+new_repo "$zt"
+"$zk/scripts/install-kit.sh" "$zt" >/dev/null 2>&1
+assert "Z: cài từ kit không phải git repo phải exit 0" [ $? -eq 0 ]
+assert "Z: kit không phải git repo thì phải ghi kit-commit: unknown → $(grep '^kit-commit' "$zt/$man")" \
+  grep -qx 'kit-commit: unknown' "$zt/$man"
+gk="$tmp/git kit"
+new_repo "$gk"
+kit_copy "$gk"
+echo "ghi chú" > "$gk/NOTES.md"
+git -C "$gk" -c core.autocrlf=false add -A
+git -C "$gk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+gk_sha="$(git -C "$gk" rev-parse HEAD)"
+gt="$tmp/from git kit"
+new_repo "$gt"
+echo "chưa theo dõi" > "$gk/untracked.txt"
+"$gk/scripts/install-kit.sh" "$gt" >/dev/null 2>&1
+assert "Z: kit sạch (chỉ có file chưa theo dõi) thì kit-commit phải đúng HEAD, không -dirty → $(grep '^kit-commit' "$gt/$man")" \
+  grep -qx "kit-commit: $gk_sha" "$gt/$man"
+echo "sửa" >> "$gk/NOTES.md"
+"$gk/scripts/install-kit.sh" "$gt" > "$tmp/out" 2>/dev/null
+assert "Z: kit có file đã theo dõi bị sửa thì kit-commit phải kèm -dirty → $(grep '^kit-commit' "$gt/$man")" \
+  grep -qx "kit-commit: $gk_sha-dirty" "$gt/$man"
+assert "Z: phải báo commit trước khi trạng thái kit đổi → $(grep "^✔ $man" "$tmp/out")" \
+  grep -qxF "✔ $man: kit ${gk_sha:0:7}-dirty (trước: ${gk_sha:0:7})" "$tmp/out"
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

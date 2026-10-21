@@ -7,6 +7,8 @@
 #   đội chép từ kit cũ thì cảnh báo).
 # - Luôn tạo hoặc cập nhật .claude/rules/agent-team.md (quy ước đội). Cài lại chỉ thay phần của kit
 #   (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
+# - Ghi .claude/agent-team-kit.txt: commit kit đã cài và danh sách file của kit. Cài lại thì báo ⚠ file mà kit
+#   đã bỏ nhưng repo vẫn còn (không tự xoá), báo tiếp ở mọi lần cài cho tới khi người dùng xoá.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
 # - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
@@ -202,6 +204,58 @@ if grep -qF '/team-lead <task>' "$target/CLAUDE.md"; then
   echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
 
+# .claude/agent-team-kit.txt: commit kit đã cài và file của kit, để biết repo nào đang dùng kit cũ.
+# Không ghi ngày giờ: chạy lại cùng commit kit cho file y hệt.
+manifest="$target/.claude/agent-team-kit.txt"
+commit=unknown
+if sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
+  commit="$sha"
+  [ -n "$(git -C "$kit" status --porcelain --untracked-files=no 2>/dev/null)" ] && commit="$sha-dirty"
+fi
+nl=$'\n'
+cr=$'\r'
+kit_list="$(printf '%s\n' "${files[@]}")"
+# File kit mà lần cài trước liệt kê (kit-files, kit-dropped), kit mới không còn nhưng repo vẫn có: báo, không
+# xoá, ghi vào kit-dropped để lần sau vẫn báo. Chỉ đọc đường dẫn, không thực thi gì trong file.
+prev=""
+dropped=""
+ndropped=0
+if [ -f "$manifest" ]; then
+  in_list=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%"$cr"}"
+    case "$line" in
+      'kit-commit: '*) prev="${line#kit-commit: }" ;;
+      kit-files: | kit-dropped:) in_list=1 ;;
+      '' | '#'*) ;;
+      *)
+        [ "$in_list" = 1 ] && [ -e "$target/$line" ] || continue
+        # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
+        case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
+        dropped="$dropped$line$nl"
+        ndropped=$((ndropped + 1))
+        ;;
+    esac
+  done < "$manifest"
+fi
+{
+  echo "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay."
+  echo "# Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates"
+  echo "kit-commit: $commit"
+  echo "kit-files:"
+  printf '%s\n' "$kit_list"
+  echo "kit-dropped:"
+  printf '%s' "$dropped"
+} > "$manifest"
+short() { case "$1" in *-dirty) printf '%s-dirty' "${1:0:7}" ;; *) printf '%s' "${1:0:7}" ;; esac; }
+was=""
+[ -n "$prev" ] && [ "$prev" != "$commit" ] && was=" (trước: $(short "$prev"))"
+echo "✔ .claude/agent-team-kit.txt: kit $(short "$commit")$was"
+if [ "$ndropped" -gt 0 ]; then
+  echo "⚠ kit đã bỏ $ndropped file mà repo này vẫn còn. Dự án không dùng thì xoá (git rm):" >&2
+  printf '%s' "$dropped" | sed 's/^/  /' >&2
+fi
+
 attrs="$target/.gitattributes"
 if ! grep -qsxF '*.sh text eol=lf' "$attrs"; then
   [ -s "$attrs" ] && [ -n "$(tail -c 1 "$attrs")" ] && echo >> "$attrs"
@@ -211,7 +265,7 @@ fi
 
 ignored=()
 for probe in .claude/agents/architect.md .claude/hooks/stop-gate.sh .claude/skills/team-lead/SKILL.md \
-             .claude/rules/agent-team.md .claude/settings.json scripts/check.sh; do
+             .claude/rules/agent-team.md .claude/settings.json .claude/agent-team-kit.txt scripts/check.sh; do
   [ -e "$target/$probe" ] || continue
   git -C "$target" check-ignore -q "$probe" && ignored+=("$probe")
 done
@@ -223,7 +277,7 @@ if [ "${#ignored[@]}" -gt 0 ]; then
     # Chỉ ghi !dir/ (không ghi !dir/**): dạng ** đứng cuối file sẽ đè luật .env, *.log... phía trên.
     for p in "${ignored[@]}"; do
       case "$p" in
-        .claude/settings.json) echo "!.claude/settings.json" ;;
+        .claude/settings.json | .claude/agent-team-kit.txt) echo "!$p" ;;
         .claude/*) d="${p#.claude/}"; printf '!.claude/%s/\n' "${d%%/*}" ;;
         *) printf '!%s/\n' "${p%%/*}" ;;
       esac
