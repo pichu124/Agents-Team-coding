@@ -10,7 +10,9 @@
 # - Ghi .claude/agent-team-kit.txt: commit kit đã cài và danh sách file của kit. Cài lại thì báo ⚠ file mà kit
 #   đã bỏ nhưng repo vẫn còn (không tự xoá), báo tiếp ở mọi lần cài cho tới khi người dùng xoá.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
-# - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
+# - File của kit mà repo đã có và khác bản kit hiện tại: trùng một bản đã commit trong lịch sử kit (dự án chưa
+#   sửa; chỉ khác dòng kết thúc cũng tính là trùng) thì cập nhật luôn. Không trùng bản nào (dự án đã sửa, hoặc
+#   file riêng trùng tên) thì dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
 set -uo pipefail
 
@@ -50,10 +52,31 @@ done < <(
     scripts/audit-agent.sh scripts/audit-agent.py scripts/test-audit.sh
 )
 
+# Chỉ khi kit là gốc repo: kit giải nén vào trong một repo khác thì HEAD và lịch sử là của repo đó.
+kit_repo=""
+cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] && kit_repo=1
+
+# kit_had <f>: file <f> của repo đích trùng một bản đã commit của <f> trong lịch sử kit. Băm hai cách, cách nào
+# trùng cũng được: qua filter eol của kit (--path; kit clone với core.autocrlf=true có file CRLF mà blob là LF) và
+# byte thô (--no-filters; lịch sử có blob CRLF thì filter lại đổi file sang LF). Git lỗi thì coi như không trùng.
+kit_had() {
+  local blob hist opt
+  [ -n "$kit_repo" ] || return 1
+  hist="$(git -C "$kit" log --format= --raw --no-abbrev --no-renames -- "$1" 2>/dev/null)" || return 1
+  for opt in --path="$1" --no-filters; do
+    blob="$(git -C "$kit" hash-object "$opt" -- "$target/$1" 2>/dev/null)" || continue
+    case "$hist" in *" $blob "*) return 0 ;; esac
+  done
+  return 1
+}
+
 conflicts=0
+updated=0
 for f in "${files[@]}"; do
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
-    if [ "$force" = "--force" ]; then
+    if kit_had "$f"; then
+      updated=$((updated + 1))
+    elif [ "$force" = "--force" ]; then
       echo "⚠ ghi đè $f: bản trong repo khác bản của kit" >&2
     else
       echo "✘ $f đã tồn tại và khác bản của kit" >&2
@@ -120,6 +143,7 @@ for f in "${files[@]}"; do
   case "$f" in *.sh) chmod +x "$target/$f" ;; esac
 done
 echo "✔ đã chép ${#files[@]} file của kit"
+[ "$updated" -gt 0 ] && echo "✔ cập nhật $updated file kit mà dự án chưa sửa"
 
 if [ ! -f "$settings" ]; then
   cp "$kit/.claude/settings.json" "$settings"
@@ -215,9 +239,7 @@ fi
 # Không ghi ngày giờ: chạy lại cùng commit kit cho file y hệt.
 manifest="$target/.claude/agent-team-kit.txt"
 commit=unknown
-# Chỉ khi kit là gốc repo: kit giải nén vào trong một repo khác thì HEAD là của repo đó.
-if cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] &&
-  sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
+if [ -n "$kit_repo" ] && sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
   commit="$sha"
   [ -n "$(git -C "$kit" status --porcelain --untracked-files=no 2>/dev/null)" ] && commit="$sha-dirty"
 fi

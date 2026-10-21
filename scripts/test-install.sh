@@ -784,6 +784,149 @@ assert "AD: không --force phải báo ✘ dừng → $(cat "$tmp/err")" grep -q
 if grep -qF '⚠ ghi đè' "$tmp/err"; then bad "AD: không --force thì không được báo ⚠ ghi đè"; else ok; fi
 assert "AD: không --force thì không được ghi đè bản sửa riêng" [ "$(tail -n 1 "$fo/$fo_p")" = "sửa riêng" ]
 
+# AE..AL. Cập nhật kit (git pull rồi cài lại, không --force). File trong repo trùng một bản đã commit
+#   trong lịch sử kit là file dự án chưa sửa: chép bản mới, không tính là trùng, không cần manifest.
+#   Không trùng bản nào (dự án đã sửa, đã commit hay chưa) thì dừng như ca C. Kit không phải git repo: như ca C.
+commit_all() { # commit_all <repo> <message>
+  git -C "$1" -c core.autocrlf=false add -A
+  git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "$2"
+}
+run_kit() { local k="$1"; shift; "$k/scripts/install-kit.sh" "$@" > "$tmp/out" 2> "$tmp/err"; } # run_kit <kit> <repo> [--force]
+no_conflict_line() { ! grep -q '^✘' "$tmp/err"; }
+arch_p=.claude/agents/architect.md
+guard_p=.claude/hooks/guard-irreversible.sh
+uk="$tmp/update kit"
+new_repo "$uk"
+kit_copy "$uk"
+commit_all "$uk" "kit A"
+ua="$tmp/update clean"
+ub="$tmp/update no manifest"
+for t in "$ua" "$ub"; do
+  new_repo "$t"
+  "$uk/scripts/install-kit.sh" "$t" >/dev/null 2>&1
+  commit_all "$t" "cài kit A"
+done
+echo "Dòng mới của kit (B)." >> "$uk/$arch_p"
+commit_all "$uk" "kit B"
+
+# AE. Kit đổi một file, dự án chưa sửa nó: cài lại không --force thì cập nhật.
+run_kit "$uk" "$ua"
+assert "AE: kit đổi file mà dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AE: $arch_p phải là bản mới của kit" cmp -s "$uk/$arch_p" "$ua/$arch_p"
+assert "AE: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AE: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AF. Bản cài cũ chưa có manifest: phân loại không cần kit-commit.
+rm "$ub/$man"
+run_kit "$uk" "$ub"
+assert "AF: bản cài không có $man vẫn phải cập nhật, exit 0" [ $? -eq 0 ]
+assert "AF: $arch_p phải là bản mới của kit" cmp -s "$uk/$arch_p" "$ub/$arch_p"
+assert "AF: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AF: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AG. Dự án vá guard (đã commit), kit cũng đổi guard và architect.md: dừng, không chép gì, bản vá còn nguyên.
+ug="$tmp/update patched"
+uh="$tmp/update uncommitted"
+for t in "$ug" "$uh"; do
+  new_repo "$t"
+  "$uk/scripts/install-kit.sh" "$t" >/dev/null 2>&1
+  commit_all "$t" "cài kit B"
+  echo "# bản vá của dự án" >> "$t/$guard_p"
+done
+commit_all "$ug" "vá guard"
+cp "$uk/$arch_p" "$tmp/arch-B"
+echo "# kit đổi guard (C)" >> "$uk/$guard_p"
+echo "Dòng mới của kit (C)." >> "$uk/$arch_p"
+commit_all "$uk" "kit C"
+run_kit "$uk" "$ug"
+assert "AG: dự án đã sửa file mà kit cũng đổi thì không --force phải exit 1" [ $? -eq 1 ]
+assert "AG: phải báo ✘ $guard_p → $(cat "$tmp/err")" grep -qxF "✘ $guard_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AG: chỉ guard là trùng (architect.md là bản kit cũ) → $(cat "$tmp/err")" grep -q '^✘ dừng: 1 file trùng' "$tmp/err"
+assert "AG: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/arch-B" "$ug/$arch_p"
+assert "AG: bản vá guard phải còn nguyên" [ "$(tail -n 1 "$ug/$guard_p")" = "# bản vá của dự án" ]
+run_kit "$uk" "$ug" --force
+assert "AG: --force phải exit 0" [ $? -eq 0 ]
+assert "AG: --force chỉ báo ⚠ ghi đè guard, không báo file dự án chưa sửa → $(cat "$tmp/err")" \
+  [ "$(grep '^⚠ ghi đè' "$tmp/err")" = "⚠ ghi đè $guard_p: bản trong repo khác bản của kit" ]
+assert "AG: --force phải cập nhật $arch_p" cmp -s "$uk/$arch_p" "$ug/$arch_p"
+assert "AG: --force phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AH. Bản vá guard chưa commit: vẫn là dự án đã sửa.
+run_kit "$uk" "$uh"
+assert "AH: bản sửa chưa commit thì không --force phải exit 1" [ $? -eq 1 ]
+assert "AH: phải báo ✘ $guard_p → $(cat "$tmp/err")" grep -qxF "✘ $guard_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AH: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/arch-B" "$uh/$arch_p"
+assert "AH: bản vá chưa commit phải còn nguyên" [ "$(tail -n 1 "$uh/$guard_p")" = "# bản vá của dự án" ]
+
+# AI. Kit không phải git repo (bản chép không có .git): không có lịch sử để đối chiếu, file khác thì ✘ như ca C.
+uz="$tmp/update zip kit"
+cp -R "$uk" "$uz"
+rm -rf "$uz/.git"
+cp "$ub/$arch_p" "$tmp/ub-arch"
+run_kit "$uz" "$ub"
+assert "AI: kit không phải git repo, file khác thì phải exit 1" [ $? -eq 1 ]
+assert "AI: phải báo ✘ $arch_p → $(cat "$tmp/err")" grep -qxF "✘ $arch_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AI: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/ub-arch" "$ub/$arch_p"
+
+# AJ. Kit clone với core.autocrlf=true (mặc định Git for Windows): .md trong thư mục làm việc của kit là CRLF,
+#     blob đã commit là LF. File chỉ khác bản kit đã commit ở dòng kết thúc là dự án chưa sửa: cập nhật.
+ck="$tmp/crlf kit upstream"
+new_repo "$ck"
+kit_copy "$ck"
+cp "$kit/.gitattributes" "$ck/"
+commit_all "$ck" "kit A"
+cw="$tmp/crlf kit"
+git -c core.autocrlf=true clone -q "$ck" "$cw"
+git -C "$cw" config core.autocrlf true
+ct="$tmp/crlf target"
+new_repo "$ct"
+"$cw/scripts/install-kit.sh" "$ct" >/dev/null 2>&1
+commit_all "$ct" "cài kit A"
+assert "AJ: điều kiện của ca: $arch_p trong repo phải là CRLF" grep -q $'\r$' "$ct/$arch_p"
+echo "Dòng mới của kit (B)." >> "$ck/$arch_p"
+commit_all "$ck" "kit B"
+git -C "$cw" pull -q --ff-only
+run_kit "$cw" "$ct"
+assert "AJ: kit autocrlf=true, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AJ: $arch_p phải là bản mới của kit" cmp -s "$cw/$arch_p" "$ct/$arch_p"
+assert "AJ: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AJ: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AK. Git lỗi khi băm file của dự án (clean filter bắt buộc của kit lỗi): coi như không trùng bản nào, ✘ như ca C.
+cp "$ct/$arch_p" "$tmp/ct-arch"
+echo "Dòng mới của kit (C)." >> "$ck/$arch_p"
+commit_all "$ck" "kit C"
+git -C "$cw" pull -q --ff-only
+echo '*.md filter=boom' > "$cw/.git/info/attributes"
+git -C "$cw" config filter.boom.clean false
+git -C "$cw" config filter.boom.required true
+run_kit "$cw" "$ct"
+assert "AK: băm lỗi thì phải exit 1" [ $? -eq 1 ]
+assert "AK: phải báo ✘ $arch_p → $(cat "$tmp/err")" grep -qxF "✘ $arch_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AK: dừng thì không được chép $arch_p bản mới" cmp -s "$tmp/ct-arch" "$ct/$arch_p"
+
+# AL. Lịch sử kit có blob CRLF (commit với core.autocrlf=false) mà git của kit là core.autocrlf=true: filter eol đổi
+#     CRLF sang LF, nhưng file trùng từng byte với một bản đã commit vẫn là dự án chưa sửa.
+cr="$tmp/crlf blob kit"
+new_repo "$cr"
+kit_copy "$cr"
+cp "$kit/.gitattributes" "$cr/"
+to_crlf < "$kit/$arch_p" > "$cr/$arch_p"
+commit_all "$cr" "kit A"
+git -C "$cr" config core.autocrlf true
+crt="$tmp/crlf blob target"
+new_repo "$crt"
+"$cr/scripts/install-kit.sh" "$crt" >/dev/null 2>&1
+commit_all "$crt" "cài kit A"
+assert "AL: điều kiện của ca: $arch_p trong repo phải là CRLF" grep -q $'\r$' "$crt/$arch_p"
+printf 'Dòng mới của kit (B).\r\n' >> "$cr/$arch_p"
+commit_all "$cr" "kit B"
+run_kit "$cr" "$crt"
+assert "AL: blob CRLF trong lịch sử, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AL: $arch_p phải là bản mới của kit" cmp -s "$cr/$arch_p" "$crt/$arch_p"
+assert "AL: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AL: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1
