@@ -14,6 +14,11 @@
     "./.claude/agents/reviewer.md",
     "./.claude/agents/verifier.md"
   ],
-  "skills": "./.claude/skills/",
+  "skills": [
+    "./.claude/skills/team-lead",
+    "./.claude/skills/create-verify-skill",
+    "./.claude/skills/correct",
+    "./.claude/skills/agent-audit"
+  ],
   "hooks": "./plugin/hooks.json"
 }

@@ -317,46 +317,255 @@ assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
 assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
 assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
 
-# N. Repo chưa có CLAUDE.md: tạo từ khung của dự án, không chép CLAUDE.md của repo kit.
+# N. grep có cờ quiet nhận stdin từ pipe trong file shell của kit: validate-kit đỏ, nêu file:dòng và cách sửa.
+#    Dòng vi phạm dựng bằng $bar để chính file này không vi phạm. Dòng code của lint nằm trong
+#    validate-kit.sh đã cài, nên lần chạy xanh cũng là bằng chứng lint không tự báo mình.
+n="$tmp/pipe grep"
+new_repo "$n"
+install "$n"
+lib="$n/.claude/hooks/lib.sh"
+cp "$lib" "$tmp/lib.sh.orig"
+first=$(($(wc -l < "$lib") + 1))
+bar='|'
+cat >> "$lib" <<EOF
+printf '%s' abc $bar grep -q b
+printf '%s' abc $bar grep -Eiq B
+printf '%s' abc ${bar}grep -qxF abc
+printf '%s' abc $bar tr -d c $bar grep --quiet b
+git status --porcelain $bar grep --silent .
+printf '%s' abc \\
+  $bar grep -s -q b
+EOF
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit phải đỏ khi grep -q nhận stdin từ pipe" [ $? -ne 0 ]
+for i in 0 1 2 3 4 6; do
+  case "$out" in
+    *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
+    *) bad "N: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
+  esac
+done
+assert "N: chỉ báo đúng 6 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 6 ]
+# shellcheck disable=SC2016  # $(...) là chữ trong thông báo
+case "$out" in
+  *'text_grep (lib.sh)'*'[ -n "$(...)" ]'*) ok ;;
+  *) bad "N: thông báo phải nêu cách sửa: text_grep (lib.sh) hoặc [ -n \"\$(...)\" ] → $out" ;;
+esac
+msg="$(grep -m 1 'lib\.sh:[0-9]*: ' <<<"$out")"
+cp "$tmp/lib.sh.orig" "$lib"
+cat >> "$lib" <<'EOF'
+false || grep -q x f
+grep -q x f
+grep -Eiq x f || true
+printf '%s' abc | grep -c b
+text_grep abc -q b
+[ -n "$(git status --porcelain)" ]
+# printf '%s' abc | grep -q b
+  # printf '%s' abc | grep -Eiq b
+EOF
+printf '%s\n' "cat <<'EOF' >/dev/null" "$msg" EOF >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "N: validate-kit không được báo ||, grep không pipe, pipe không quiet, comment, thông báo của lint → $out" [ $? -eq 0 ]
+cp "$tmp/lib.sh.orig" "$lib"
+(cd "$n" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+
+# O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
+#    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
+repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh
+  .claude/skills/verify-kit/helpers/sandbox.sh"
+o="$tmp/own scripts"
+new_repo "$o"
+for f in $repo_only; do
+  mkdir -p "$o/$(dirname "$f")"
+  printf '#!/usr/bin/env bash\nif printf x %s grep -q x; then echo ok; fi\n' "$bar" > "$o/$f"
+done
+echo 'if then' >> "$o/plugin/run-hook.sh" # lỗi cú pháp: bash -n cũng không được chạy trên file của dự án
+install "$o"
+assert "O: install phải exit 0 khi dự án có file trùng tên mà kit không chép" [ $? -eq 0 ]
+out="$(cd "$o" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit không được kiểm file shell của dự án → $out" [ $? -eq 0 ]
+p="$tmp/kit copy"
+mkdir -p "$p/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$p/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$p/"
+(cd "$p" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "O: validate-kit trong bản chép repo kit phải xanh" [ $? -eq 0 ]
+for f in $repo_only; do
+  printf 'printf x %s grep -q x\n' "$bar" >> "$p/$f"
+done
+out="$(cd "$p" && ./scripts/validate-kit.sh 2>&1)"
+assert "O: validate-kit ở repo kit phải đỏ khi file chỉ repo kit có vi phạm" [ $? -ne 0 ]
+for f in $repo_only; do
+  case "$out" in
+    *"$f:$(wc -l < "$p/$f" | tr -d ' '): "*) ok ;;
+    *) bad "O: ở repo kit phải báo $f:<dòng cuối> → $out" ;;
+  esac
+done
+
+# P. check.sh: bước plugin và việc file plugin đổi kích hoạt test của kit chỉ có ở repo kit. Ở repo đích,
+#    scripts/test-plugin.sh, plugin/, .claude-plugin/ là của dự án. test-hooks.sh và test-audit.sh thay bằng
+#    stub exit 0 (bản thật mất ~2 phút): ca này chỉ kiểm check.sh quyết định chạy gì.
+plugin_paths="scripts/test-plugin.sh plugin/run-hook.sh plugin/hooks.json .claude-plugin/marketplace.json"
+edit_valid() { # edit_valid <file>: sửa mà JSON vẫn parse được, shell vẫn qua bash -n
+  case "$1" in
+    *.json) echo >> "$1" ;;
+    *) echo '# sửa' >> "$1" ;;
+  esac
+}
+q="$tmp/own plugin"
+new_repo "$q"
+mkdir -p "$q/scripts" "$q/plugin" "$q/.claude-plugin"
+cat > "$q/scripts/test-plugin.sh" <<'EOF'
+#!/usr/bin/env bash
+# test-plugin.sh riêng của dự án: cần tên plugin.
+[ $# -gt 0 ] || { echo "cách dùng: $0 <plugin>" >&2; exit 1; }
+EOF
+chmod +x "$q/scripts/test-plugin.sh"
+printf '#!/usr/bin/env bash\necho hook\n' > "$q/plugin/run-hook.sh"
+echo '{}' > "$q/plugin/hooks.json"
+echo '{}' > "$q/.claude-plugin/marketplace.json"
+install "$q"
+assert "P: install phải exit 0 khi dự án có test-plugin.sh, plugin/, .claude-plugin/ riêng" [ $? -eq 0 ]
+for s in test-hooks test-audit; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$q/scripts/$s.sh"
+done
+git -C "$q" -c core.autocrlf=false add -A
+git -C "$q" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
+out="$(cd "$q" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+assert "P: ở repo đích, KIT_SELFTEST=1 check.sh phải xanh dù test-plugin.sh của dự án đỏ → $out" [ $? -eq 0 ]
+case "$out" in
+  *"▶ plugin"*) bad "P: ở repo đích, check.sh không được chạy scripts/test-plugin.sh của dự án → $out" ;;
+  *"▶ hooks"*) ok ;;
+  *) bad "P: KIT_SELFTEST=1 check.sh phải chạy test của kit (▶ hooks) → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$q/$f"
+  out="$(cd "$q" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) bad "P: ở repo đích, sửa $f (của dự án) không được kích hoạt test của kit → $out" ;;
+    *"bỏ qua test của kit"*) ok ;;
+    *) bad "P: ở repo đích, sửa $f phải in 'bỏ qua test của kit' → $out" ;;
+  esac
+  git -C "$q" checkout -q -- .
+done
+# Repo kit: giữ nguyên hành vi. check.local.sh của repo kit chạy test-install.sh: thay bằng stub để không đệ quy.
+r="$tmp/kit repo"
+new_repo "$r"
+mkdir -p "$r/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$r/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$r/"
+for s in test-hooks test-audit check.local; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$r/scripts/$s.sh"
+done
+printf '#!/usr/bin/env bash\necho "test-plugin (stub ca P)"\n' > "$r/scripts/test-plugin.sh"
+git -C "$r" -c core.autocrlf=false add -A
+git -C "$r" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+out="$(cd "$r" && env -u CI KIT_SELFTEST=1 ./scripts/check.sh 2>&1)"
+case "$out" in
+  *"▶ plugin"*"test-plugin (stub ca P)"*) ok ;;
+  *) bad "P: ở repo kit, KIT_SELFTEST=1 check.sh phải chạy scripts/test-plugin.sh → $out" ;;
+esac
+for f in $plugin_paths; do
+  edit_valid "$r/$f"
+  out="$(cd "$r" && env -u CI KIT_SELFTEST=0 ./scripts/check.sh 2>&1)"
+  case "$out" in
+    *"▶ hooks"*) ok ;;
+    *) bad "P: ở repo kit, sửa $f phải kích hoạt test của kit (▶ hooks) → $out" ;;
+  esac
+  git -C "$r" checkout -q -- .
+done
+
+# Q. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
+#    manifest plugin chỉ được phát 4 skill của kit (trỏ cả .claude/skills/ thì verify-kit lọt sang mọi
+#    dự án cài plugin). Ở repo đích, skill cùng tên là của dự án, không bị kiểm.
+vq="$tmp/kit copy Q"
+mkdir -p "$vq/.claude"
+cp -R "$kit/.claude/agents" "$kit/.claude/skills" "$kit/.claude/hooks" "$kit/.claude/settings.json" "$vq/.claude/"
+cp -R "$kit/.claude-plugin" "$kit/plugin" "$kit/scripts" "$vq/"
+vk="$vq/.claude/skills/verify-kit"
+cp "$vk/SKILL.md" "$tmp/vk-skill.orig"
+cp "$vk/features/README.md" "$tmp/vk-features.orig"
+cp "$vq/.claude-plugin/plugin.json" "$tmp/plugin.json.orig"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh trước khi sửa" [ $? -eq 0 ]
+sed 's/^name: verify-kit$/name: verify-khac/' "$tmp/vk-skill.orig" > "$vk/SKILL.md"
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: verify-kit sai name phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/SKILL.md: name phải là 'verify-kit'"*) ok ;;
+  *) bad "Q: phải báo name sai của verify-kit → $out" ;;
+esac
+cp "$tmp/vk-skill.orig" "$vk/SKILL.md"
+printf '\n[gãy](khong-co.md)\n' >> "$vk/features/README.md"
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo kit: link gãy trong feature map của verify-kit phải đỏ" [ $? -ne 0 ]
+case "$out" in
+  *".claude/skills/verify-kit/features/README.md: link gãy → khong-co.md"*) ok ;;
+  *) bad "Q: phải báo link gãy trong features/README.md → $out" ;;
+esac
+cp "$tmp/vk-features.orig" "$vk/features/README.md"
+"$py" - "$vq/.claude-plugin/plugin.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["skills"] = "./.claude/skills/"
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PYEOF
+out="$(cd "$vq" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: plugin.json trỏ cả .claude/skills/ (phát luôn verify-kit) phải đỏ" [ $? -ne 0 ]
+case "$out" in *"plugin.json skills"*) ok ;; *) bad "Q: phải báo plugin.json skills → $out" ;; esac
+cp "$tmp/plugin.json.orig" "$vq/.claude-plugin/plugin.json"
+(cd "$vq" && ./scripts/validate-kit.sh >/dev/null 2>&1)
+assert "Q: bản chép repo kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+vr="$tmp/own verify skill"
+new_repo "$vr"
+mkdir -p "$vr/.claude/skills/verify-kit"
+printf 'không có frontmatter\n[gãy](khong-co.md)\n' > "$vr/.claude/skills/verify-kit/SKILL.md"
+install "$vr"
+assert "Q: install phải exit 0 khi dự án có skill verify-kit riêng" [ $? -eq 0 ]
+out="$(cd "$vr" && ./scripts/validate-kit.sh 2>&1)"
+assert "Q: repo đích: validate-kit không được kiểm skill verify-kit của dự án → $out" [ $? -eq 0 ]
+case "$out" in *"4 skills"*) ok ;; *) bad "Q: repo đích chỉ kiểm 4 skill của kit → $out" ;; esac
+
+# R. Repo chưa có CLAUDE.md: tạo từ khung của dự án, không chép CLAUDE.md của repo kit.
 #    Quy ước đội chỉ nằm ở .claude/rules/agent-team.md. Cài lại không đổi CLAUDE.md.
 proj_tpl="$kit/templates/project-CLAUDE.md"
 lacks_team_rules() { ! grep -qF '/team-lead <task>' "$1"; }
-n="$tmp/no claude"
-new_repo "$n"
-run_install "$n"
-assert "N: install phải exit 0" [ $? -eq 0 ]
-assert "N: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
-assert "N: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$n/CLAUDE.md"
-assert "N: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$n/CLAUDE.md"
-assert "N: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
-assert "N: không được cảnh báo về CLAUDE.md" no_claude_warning
-if grep -q 'CLAUDE.md đã có' "$tmp/out"; then bad "N: vừa tạo CLAUDE.md thì không được báo CLAUDE.md đã có"; else ok; fi
-run_install "$n" --force
-assert "N: cài lại với --force phải exit 0" [ $? -eq 0 ]
-assert "N: cài lại với --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
-assert "N: cài lại với --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
-assert "N: cài lại với --force không được cảnh báo về CLAUDE.md" no_claude_warning
-run_install "$n"
-assert "N: cài lại không --force phải exit 0" [ $? -eq 0 ]
-assert "N: cài lại không --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
-assert "N: cài lại không --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
-assert "N: cài lại không --force không được cảnh báo về CLAUDE.md" no_claude_warning
+noc="$tmp/no claude"
+new_repo "$noc"
+run_install "$noc"
+assert "R: install phải exit 0" [ $? -eq 0 ]
+assert "R: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$noc/CLAUDE.md"
+assert "R: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$noc/CLAUDE.md"
+assert "R: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: không được cảnh báo về CLAUDE.md" no_claude_warning
+if grep -q 'CLAUDE.md đã có' "$tmp/out"; then bad "R: vừa tạo CLAUDE.md thì không được báo CLAUDE.md đã có"; else ok; fi
+run_install "$noc" --force
+assert "R: cài lại với --force phải exit 0" [ $? -eq 0 ]
+assert "R: cài lại với --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: cài lại với --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: cài lại với --force không được cảnh báo về CLAUDE.md" no_claude_warning
+run_install "$noc"
+assert "R: cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "R: cài lại không --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
+assert "R: cài lại không --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
+assert "R: cài lại không --force không được cảnh báo về CLAUDE.md" no_claude_warning
 
-# O. Bản cài cũ: CLAUDE.md là bản chép từ CLAUDE.md của kit, chưa có .claude/rules/agent-team.md.
+# S. Bản cài cũ: CLAUDE.md là bản chép từ CLAUDE.md của kit, chưa có .claude/rules/agent-team.md.
 #    Cài lại: tạo rules, không sửa CLAUDE.md, cảnh báo quy ước đội nằm hai nơi ở mọi lần chạy.
-o="$tmp/old claude"
-new_repo "$o"
-install "$o"
-rm -f "$o/.claude/rules/agent-team.md"
-cp "$kit/CLAUDE.md" "$o/CLAUDE.md"
-run_install "$o" --force
-assert "O: cài lại lên bản cũ phải exit 0" [ $? -eq 0 ]
-assert "O: không được sửa CLAUDE.md chép từ kit cũ" cmp -s "$kit/CLAUDE.md" "$o/CLAUDE.md"
-assert "O: phải tạo .claude/rules/agent-team.md đúng bằng template" cmp -s "$tpl" "$o/.claude/rules/agent-team.md"
-assert "O: phải cảnh báo ⚠ (stderr) CLAUDE.md còn quy ước đội của kit cũ" claude_warned
-run_install "$o"
-assert "O: chạy lại phải exit 0" [ $? -eq 0 ]
-assert "O: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cảnh báo" claude_warned
+oldc="$tmp/old claude"
+new_repo "$oldc"
+install "$oldc"
+rm -f "$oldc/.claude/rules/agent-team.md"
+cp "$kit/CLAUDE.md" "$oldc/CLAUDE.md"
+run_install "$oldc" --force
+assert "S: cài lại lên bản cũ phải exit 0" [ $? -eq 0 ]
+assert "S: không được sửa CLAUDE.md chép từ kit cũ" cmp -s "$kit/CLAUDE.md" "$oldc/CLAUDE.md"
+assert "S: phải tạo .claude/rules/agent-team.md đúng bằng template" cmp -s "$tpl" "$oldc/.claude/rules/agent-team.md"
+assert "S: phải cảnh báo ⚠ (stderr) CLAUDE.md còn quy ước đội của kit cũ" claude_warned
+run_install "$oldc"
+assert "S: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "S: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cảnh báo" claude_warned
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2

@@ -70,6 +70,18 @@ if d is not None:
   printf '%s' "$flat" | sed -nE "s/.*${re_raw}.*/\\1/p" | head -n 1
 }
 
+# text_grep <chuỗi> <tham số grep...>: grep trên chuỗi, trả đúng mã của grep.
+# Không viết thẳng `printf | grep -q` dưới pipefail: grep -q thoát ở dòng khớp đầu tiên, printf còn
+# ghi dở thì chết vì SIGPIPE (141), cả pipeline thành 141 và "khớp" bị đọc thành "không khớp".
+# Không dùng <<<: chuỗi lớn (và mọi chuỗi trên bash < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR
+# không ghi được thì grep không chạy.
+text_grep() {
+  local s="$1"
+  shift
+  printf '%s' "$s" 2>/dev/null | grep "$@"
+  return "${PIPESTATUS[1]}"
+}
+
 # find_up <thư mục bắt đầu> <đường dẫn tương đối>: tìm ngược lên tới gốc dự án.
 find_up() {
   local d="$1" stop="${CLAUDE_PROJECT_DIR:-/}"

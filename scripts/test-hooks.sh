@@ -56,17 +56,23 @@ new_repo "$odd" main
 # Repo ở nhánh chính có tên kết thúc bằng \ (giả lập C:\vnstock\ của PowerShell trên Linux).
 bsm="$tmp/w\\"
 new_repo "$bsm" main
+# Repo ở nhánh chính có tên là mẫu glob khớp một repo ở nhánh feature (a[x]b khớp axb).
+globm="$tmp/a[x]b"
+new_repo "$globm" main
+new_repo "$tmp/axb" feat/x
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
 mode=auto
 ask_count=0
+# RUN=<hàm>: chạy guard qua hàm đó (nofile, nofile50: xem khối "không tạo được file tạm").
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$work}" out tag=" [$mode]"
-  out="$(bash_input "$cmd" "$dir" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode${RUN:+ $RUN}]"
+  inp="$(bash_input "$cmd" "$dir")"
+  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" ${RUN:+"$RUN"} "$hooks/guard-irreversible.sh")"
   if [ "$want" = ask ]; then
     [ "$mode" = auto ] && ask_count=$((ask_count + 1))
-    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd" ;; esac
+    case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd → [$out], input: $inp" ;; esac
   else
     assert "guard không được chặn$tag: $cmd → $out" [ -z "$out" ]
   fi
@@ -260,6 +266,9 @@ EOF
   expect_guard ask "git -C \"$on_main\" push && git log --grep=push"
   expect_guard ask "git push && cd \"$work\" && git push" "$on_main"
   expect_guard ask "cd \"$odd\" && git push"
+  # Đường dẫn không được bị glob thành thư mục khác.
+  expect_guard ask "cd \"$globm\" && git push"
+  expect_guard ask "git -C \"$globm\" push"
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
@@ -309,6 +318,55 @@ EOF
   TOOL=Unknown expect_guard ask $'Set-Location C:\\\nRemove-Item -Recurse -Force *'
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force `\n  C:\\'
 done
+# Lệnh dài hơn pipe buffer (64 KiB), phần nguy hiểm ở dòng đầu: grep -q thoát ở dòng khớp đầu
+# tiên, printf còn ghi dở thì chết vì SIGPIPE, pipefail từng biến "khớp" thành "không khớp".
+# Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
+# kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
+# JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
+# long_input <dòng đầu> <cwd>: dòng đầu, rồi 12000 dòng `echo line-N`.
+long_input() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
+  printf '\\necho line-%s' {1..12000}
+  printf '","description":"test"}}\n'
+}
+long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
+long_input 'git push' "$on_main" > "$tmp/long-push.json"
+for mode in $modes; do
+  for f in long-deploy long-push; do
+    out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
+    case "$out" in
+      *'"permissionDecision":"ask"'*) ok ;;
+      *) bad "guard phải hỏi [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+    esac
+  done
+done
+# Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
+# ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
+for mode in $modes; do
+  out="$( (trap '' PIPE; KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-deploy.json") 2>"$tmp/sigpipe.err")"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi [$mode] khi SIGPIPE bị bỏ qua: lệnh dài hơn pipe buffer → [$out]" ;;
+  esac
+  assert "guard không được in ra stderr [$mode] khi SIGPIPE bị bỏ qua → $(cat "$tmp/sigpipe.err")" [ ! -s "$tmp/sigpipe.err" ]
+done
+# Bash không tạo được file tạm (đĩa đầy, TMPDIR không ghi được): here-doc báo "cannot create temp
+# file", vòng đọc nó không chạy lần nào, git push trên nhánh chính từng lọt qua im lặng. Bash < 5.1
+# luôn ghi here-doc ra file tạm, bash ≥ 5.1 khi here-doc lớn hơn pipe buffer (64 KiB trên Linux)
+# hoặc BASH_COMPAT=50 (nofile50).
+# Giả lập bằng ulimit -f 0, bỏ qua SIGXFSZ để write báo EFBIG thay vì giết tiến trình. Không có
+# ulimit -f (Git Bash) thì guard chạy như thường, ca vẫn phải đúng.
+nofile() { (trap '' XFSZ; ulimit -f 0 2>/dev/null; "$@"); }
+nofile50() { nofile env BASH_COMPAT=50 "$@"; }
+# 30 lần cd vào thư mục con tên 200 ký tự: mỗi cd nối dài đường dẫn, danh sách thư mục ~94 KB.
+long_cd="$(printf "cd $(printf '%0200d' 0) ; %.0s" {1..30})"
+for mode in $modes; do
+  RUN=nofile50 expect_guard ask "git push" "$on_main"
+  RUN=nofile50 expect_guard ask "cd \"$on_main\" && git push"
+  RUN=nofile50 expect_guard ask "git -C \"$on_main\" push"
+  RUN=nofile expect_guard ask "${long_cd}git push" "$on_main"
+  RUN=nofile50 expect_guard allow "cd \"$work\" && git push origin HEAD"
+done
 if [ -n "$py" ]; then
   # Windows: Python đọc stdin theo cp1252, chữ "Đ" từng làm hỏng việc đọc lệnh.
   out="$(bash_input 'git commit -m "Đổi tên" && git push origin' "$on_main" \
@@ -338,7 +396,7 @@ stop_input() { printf '{"hook_event_name":"Stop","session_id":"%s","cwd":"%s","s
 run_stop() { stop_input "${1:-$repo}" | AGENT_STOP_GATE_MAX=2 "$hooks/stop-gate.sh" 2>/dev/null; }
 # Chặn = JSON {"decision":"block"} với exit 0, hoặc exit 2 khi không có jq/Python.
 blocked() {
-  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q '"decision": *"block"'; }
+  [ "$code" -eq 2 ] || { [ "$code" -eq 0 ] && text_grep "$out" -q '"decision": *"block"'; }
 }
 
 out="$(run_stop)"; code=$?
@@ -358,7 +416,7 @@ case "$out" in *"1/2)"*) ok ;; *) bad "stop-gate: lý do chặn phải ghi số 
 out="$(run_stop)"; code=$?
 assert "stop-gate: lần chặn thứ 2 vẫn phải chặn (exit $code)" blocked
 out="$(run_stop)"; code=$?
-if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
+if [ "$code" -eq 0 ] && text_grep "$out" -q systemMessage; then ok; else bad "stop-gate: quá giới hạn thì nhả kèm systemMessage (exit $code)"; fi
 
 # Bộ đếm phải về 0 khi không còn thay đổi: chặn 1 lần, bỏ thay đổi, rồi đỏ lại → bắt đầu từ 1.
 run_stop >/dev/null

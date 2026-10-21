@@ -11,7 +11,7 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 ## Lệnh
 
 - `./scripts/check.sh` là THE check: kiểm tra bộ kit cộng với check của dự án (`scripts/check.local.sh` nếu có). Chạy trước khi báo xong. CI chạy đúng lệnh này.
-- `./scripts/validate-kit.sh` chỉ kiểm tra file của kit: frontmatter, link, hook, cú pháp shell.
+- `./scripts/validate-kit.sh` chỉ kiểm tra file của kit: frontmatter, link, hook, cú pháp shell, `grep -q` đọc từ pipe.
 - `./scripts/test-hooks.sh`, `./scripts/test-install.sh` là test hành vi của hook và installer. Sửa hook hoặc installer thì thêm ca test tái hiện lỗi trước.
 - `./scripts/audit-agent.sh --since 7 [--all]` dò sự cố từ file phiên (guard bỏ sót, hỏi thừa, Stop gate, lỗi hook, lần bạn phải sửa agent, chỉ số tuần); `--all` soát mọi dự án trên máy. `/agent-audit` dò rồi sửa kèm test, mở PR nháp.
 <!-- TODO: lệnh chạy app local, lệnh chạy một test đơn lẻ, biến môi trường bắt buộc. -->
@@ -39,7 +39,11 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Không đọc file bí mật (`.env`, `*.pem`, `secrets/`) | `permissions.deny` trong `.claude/settings.json` |
 | Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
 | Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
+| Script của kit không cho `grep -q` đọc stdin từ pipe (pipefail đọc SIGPIPE thành "không khớp") | `scripts/validate-kit.sh` (báo file:dòng, sửa bằng `text_grep` của `lib.sh`) |
 | Không bớt ca "phải hỏi" của guard để cho dễ | `scripts/guard-ask-floor` (test-hooks đỏ khi số ca dưới sàn) |
+| Cổng push trên nhánh chính của guard không dựa vào file tạm (here-doc): đĩa đầy vẫn phải hỏi | `scripts/test-hooks.sh` (ca `ulimit -f 0`: `nofile`, `nofile50`) |
 | Sửa phân tích lệnh của audit không được làm mục A bỏ sót lệnh mà bản trước vẫn báo | `scripts/test-audit.sh` (so với bản trước trên lệnh fixture và fuzz; `NARROWING_OK` cho thu hẹp có chủ ý) |
+| Lệnh mà bash thật xoá đích ngoài thư mục tạm thì mục A phải báo; `KNOWN_MISSES` chỉ được giảm | `scripts/test-audit.sh` (bước oracle: lệnh fuzz cố định chạy bằng bash, `rm` thay bằng stub chỉ ghi đích; đỏ khi sót ca ngoài `KNOWN_MISSES`, khi ca trong đó đã hết sót, hoặc khi danh sách thêm ca so với bản trước) |
 | Phiên có bản chép (cùng uuid ở nhiều file) không được đếm hai lần trong báo cáo audit | `scripts/test-audit.sh` (chạy lại mọi fixture kèm một bản chép đầy đủ, báo cáo phải y hệt) |
+| Mục A không được bỏ sót lệnh xoá mà bash thật chạy ngoài thư mục tạm/build | `scripts/test-audit.sh` (oracle bash: lệnh sinh từ ngữ pháp an toàn, chạy bằng bash thật với rm giả; `ORACLE_FLOOR`, `KNOWN_GAPS`) |
 | Bug phải được tái hiện trước khi sửa | Chỉ có lời nhắc (playbook bug-fix). Ứng viên cho `/correct` |

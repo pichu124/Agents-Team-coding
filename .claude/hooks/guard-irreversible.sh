@@ -55,7 +55,7 @@ esac
 
 reason=""
 rule() {
-  if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "$1"; then
+  if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "$1"; then
     reason="$2"
   fi
 }
@@ -152,7 +152,7 @@ expand_dir() {
 # MỌI thư mục lệnh có thể chạm tới: thư mục của phiên, đích của mọi cd/pushd/Set-Location (nối
 # tiếp nhau), đích của mọi -C, --git-dir, --work-tree, GIT_DIR= (tính từ từng thư mục trên).
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
-if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "${G}push"; then
+if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   base="${cwd:-.}"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
@@ -160,6 +160,12 @@ if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "${G}push"; then
   CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|if|builtin|command|exec)[[:space:]])[[:space:]]*'
   dirs="$base$nl"
   unknown=""
+  # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
+  # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
+  # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
+  # lọt qua.
+  set -f
+  IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS"; do
     CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
@@ -167,40 +173,34 @@ if [ -z "$reason" ] && printf '%s' "$cmd" | grep -Eiq -- "${G}push"; then
     for f in "${forms[@]}"; do
       cur="$base"
       cds="$base$nl"
-      while IFS= read -r m; do
+      for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}"); do
         [ -n "$m" ] || continue
         t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
         cur="$(resolve_dir "$cur" "$t")"
         cds="$cds$cur$nl"
-      done <<EOF
-$(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}")
-EOF
+      done
       dirs="$dirs$cds"
-      while IFS= read -r m; do
+      for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
-        while IFS= read -r c; do
+        for c in $cds; do
           [ -n "$c" ] && dirs="$dirs$(resolve_dir "$c" "$t")$nl"
-        done <<EOF
-$cds
-EOF
-      done <<EOF
-$(printf '%s' "$f" | grep -Eo -- "$GDRE")
-EOF
+        done
+      done
     done
   done
   dirs="$(printf '%s' "$dirs" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
-  while IFS= read -r d; do
+  for d in $dirs; do
     [ -n "$d" ] || continue # git -C "" là thư mục của chính hook, không phải của lệnh
     branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    if printf '%s' "$branch" | grep -Eqx -- "$MAIN"; then
+    if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
     fi
-  done <<EOF
-$dirs
-EOF
+  done
+  IFS=$' \t\n'
+  set +f
 fi
 
 if [ -n "$reason" ]; then
