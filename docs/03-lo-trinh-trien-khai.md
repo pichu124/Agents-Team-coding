@@ -56,7 +56,7 @@ git switch -c chore/agent-team
 
 `install-kit.sh` làm những việc sau và có test tự động ([`scripts/test-install.sh`](../scripts/test-install.sh)):
 - Kiểm tra `.claude/settings.json` có sẵn trước: JSON hỏng hoặc có comment thì dừng mà không chép gì. File có BOM UTF-8 (Notepad trên Windows) vẫn đọc được.
-- Chép agents, hooks, 3 skill và các script check của kit. Nếu có file trùng tên mà khác nội dung, nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
+- Chép agents, hooks, 4 skill và các script check của kit. Khi cài lại, file kit mà dự án chưa sửa (trùng một bản đã commit trong lịch sử kit, nên kit phải là bản `git clone`) được cập nhật luôn. File đã có mà không trùng bản kit nào (dự án đã sửa, hoặc file riêng trùng tên) thì nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
 - Stage các script `.sh` của kit với quyền chạy, để commit từ Windows vẫn giữ được quyền này.
 - Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
 - Nếu dự án chưa có CLAUDE.md thì tạo từ khung [`templates/project-CLAUDE.md`](../templates/project-CLAUDE.md), có các mục TODO để bạn điền. Nếu đã có thì giữ nguyên. CLAUDE.md còn quy ước đội chép từ bản kit cũ thì installer cảnh báo ở mọi lần chạy: xoá các dòng đó, giữ phần riêng của dự án.
@@ -85,7 +85,7 @@ Yêu cầu: `bash` và `git`. Trên Windows dùng Git Bash, vì Claude Code cũn
 
 Guard cố ý hỏi thừa hơn là bỏ sót. Ví dụ, khi đang đứng trên nhánh chính thì **mọi** `git push` đều phải hỏi, kể cả push một nhánh khác.
 
-Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (mặc định với tài khoản claude.ai khi đã có Git Bash). Vì vậy guard đăng ký với matcher `Bash|PowerShell` và có thêm mẫu cho `Remove-Item -Recurse`, `rd /s`. `validate-kit.sh` báo đỏ nếu matcher thiếu PowerShell, và khi cài lại lên bản cũ, `install-kit.sh` tự thêm PowerShell vào matcher (cần `--force` nếu file của kit đã đổi). Nếu bạn đặt hook riêng chung nhóm với guard, hook đó cũng sẽ nhận lệnh PowerShell.
+Trên Windows, Claude Code chạy lệnh qua **PowerShell tool** là chính (mặc định với tài khoản claude.ai khi đã có Git Bash). Vì vậy guard đăng ký với matcher `Bash|PowerShell` và có thêm mẫu cho `Remove-Item -Recurse`, `rd /s`. `validate-kit.sh` báo đỏ nếu matcher thiếu PowerShell, và khi cài lại lên bản cũ, `install-kit.sh` tự thêm PowerShell vào matcher (trừ khi nó dừng vì dự án đã sửa một file của kit). Nếu bạn đặt hook riêng chung nhóm với guard, hook đó cũng sẽ nhận lệnh PowerShell.
 
 ### Kit chạy được ở đâu
 

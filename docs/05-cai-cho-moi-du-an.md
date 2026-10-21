@@ -60,7 +60,7 @@ claude plugin update agent-team@agents-team-coding
 ```
 Rồi mở lại phiên Claude, hoặc gõ `/reload-plugins` trong phiên đang mở.
 
-Cả hai cách chỉ cập nhật plugin. Repo tự cài kit như `C:\vnstock-trial` giữ bản kit chép riêng, và `git pull` trong repo đó không lấy được bản kit mới: nó chỉ kéo về việc đã push lên nhánh của dự án. Muốn lấy bản kit mới cho repo đó thì `git pull` trong thư mục kit rồi chạy lại `install-kit.sh`, lần đầu không có `--force`, theo các bước "Cập nhật kit" ở mục 12 của [docs/04](04-thu-nghiem-vnstock-dashboard.md). `--force` ngay từ đầu sẽ ghi đè cả bản dự án tự sửa trong file của kit.
+Cả hai cách chỉ cập nhật plugin. Repo tự cài kit như `C:\vnstock-trial` giữ bản kit chép riêng, và `git pull` trong repo đó không lấy được bản kit mới: nó chỉ kéo về việc đã push lên nhánh của dự án. Muốn lấy bản kit mới cho repo đó thì `git pull` trong thư mục kit rồi chạy lại `install-kit.sh`, không có `--force`, theo các bước "Cập nhật kit" ở mục 12 của [docs/04](04-thu-nghiem-vnstock-dashboard.md). Installer tự cập nhật file kit mà dự án chưa sửa, và dừng ở file dự án đã sửa. `--force` ghi đè cả bản sửa đó.
 
 ## Tắt hoặc gỡ
 
