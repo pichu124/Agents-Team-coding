@@ -32,6 +32,7 @@ plugin/                           hooks.json + run-hook.sh: hook của plugin (S
     create-verify-skill/          /create-verify-skill: sinh skill verify-<app> kèm feature map
     correct/                      /correct: mã hoá bài học vào type, lint, hook, test
     agent-audit/                  /agent-audit: dò sự cố từ file phiên, sửa kèm test, mở PR nháp
+    verify-kit/                   verify-kit: kiểm chứng chính kit trên repo đã cài (chỉ ở repo kit, không cài, không vào plugin)
   hooks/
     stop-gate.sh                  Stop: chưa được "báo xong" khi check còn đỏ
     guard-irreversible.sh         PreToolUse(Bash|PowerShell): hỏi người trước force-push, deploy, xoá dữ liệu...
