@@ -56,15 +56,20 @@ new_repo "$odd" main
 # Repo ở nhánh chính có tên kết thúc bằng \ (giả lập C:\vnstock\ của PowerShell trên Linux).
 bsm="$tmp/w\\"
 new_repo "$bsm" main
+# Repo ở nhánh chính có tên là mẫu glob khớp một repo ở nhánh feature (a[x]b khớp axb).
+globm="$tmp/a[x]b"
+new_repo "$globm" main
+new_repo "$tmp/axb" feat/x
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
 mode=auto
 ask_count=0
+# RUN=<hàm>: chạy guard qua hàm đó (nofile, nofile50: xem khối "không tạo được file tạm").
 expect_guard() {
-  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode]"
+  local want="$1" cmd="$2" dir="${3:-$work}" inp out tag=" [$mode${RUN:+ $RUN}]"
   inp="$(bash_input "$cmd" "$dir")"
-  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  out="$(printf '%s\n' "$inp" | KIT_JSON_TOOL="$mode" ${RUN:+"$RUN"} "$hooks/guard-irreversible.sh")"
   if [ "$want" = ask ]; then
     [ "$mode" = auto ] && ask_count=$((ask_count + 1))
     case "$out" in *'"permissionDecision":"ask"'*) ok ;; *) bad "guard phải hỏi$tag: $cmd → [$out], input: $inp" ;; esac
@@ -261,6 +266,9 @@ EOF
   expect_guard ask "git -C \"$on_main\" push && git log --grep=push"
   expect_guard ask "git push && cd \"$work\" && git push" "$on_main"
   expect_guard ask "cd \"$odd\" && git push"
+  # Đường dẫn không được bị glob thành thư mục khác.
+  expect_guard ask "cd \"$globm\" && git push"
+  expect_guard ask "git -C \"$globm\" push"
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
@@ -341,6 +349,23 @@ for mode in $modes; do
     *) bad "guard phải hỏi [$mode] khi SIGPIPE bị bỏ qua: lệnh dài hơn pipe buffer → [$out]" ;;
   esac
   assert "guard không được in ra stderr [$mode] khi SIGPIPE bị bỏ qua → $(cat "$tmp/sigpipe.err")" [ ! -s "$tmp/sigpipe.err" ]
+done
+# Bash không tạo được file tạm (đĩa đầy, TMPDIR không ghi được): here-doc báo "cannot create temp
+# file", vòng đọc nó không chạy lần nào, git push trên nhánh chính từng lọt qua im lặng. Bash < 5.1
+# luôn ghi here-doc ra file tạm, bash ≥ 5.1 khi here-doc lớn hơn pipe buffer (64 KiB trên Linux)
+# hoặc BASH_COMPAT=50 (nofile50).
+# Giả lập bằng ulimit -f 0, bỏ qua SIGXFSZ để write báo EFBIG thay vì giết tiến trình. Không có
+# ulimit -f (Git Bash) thì guard chạy như thường, ca vẫn phải đúng.
+nofile() { (trap '' XFSZ; ulimit -f 0 2>/dev/null; "$@"); }
+nofile50() { nofile env BASH_COMPAT=50 "$@"; }
+# 30 lần cd vào thư mục con tên 200 ký tự: mỗi cd nối dài đường dẫn, danh sách thư mục ~94 KB.
+long_cd="$(printf "cd $(printf '%0200d' 0) ; %.0s" {1..30})"
+for mode in $modes; do
+  RUN=nofile50 expect_guard ask "git push" "$on_main"
+  RUN=nofile50 expect_guard ask "cd \"$on_main\" && git push"
+  RUN=nofile50 expect_guard ask "git -C \"$on_main\" push"
+  RUN=nofile expect_guard ask "${long_cd}git push" "$on_main"
+  RUN=nofile50 expect_guard allow "cd \"$work\" && git push origin HEAD"
 done
 if [ -n "$py" ]; then
   # Windows: Python đọc stdin theo cp1252, chữ "Đ" từng làm hỏng việc đọc lệnh.
