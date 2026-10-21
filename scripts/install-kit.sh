@@ -53,11 +53,15 @@ done < <(
 conflicts=0
 for f in "${files[@]}"; do
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
-    echo "✘ $f đã tồn tại và khác bản của kit" >&2
-    conflicts=$((conflicts + 1))
+    if [ "$force" = "--force" ]; then
+      echo "⚠ ghi đè $f: bản trong repo khác bản của kit" >&2
+    else
+      echo "✘ $f đã tồn tại và khác bản của kit" >&2
+      conflicts=$((conflicts + 1))
+    fi
   fi
 done
-if [ "$conflicts" -gt 0 ] && [ "$force" != "--force" ]; then
+if [ "$conflicts" -gt 0 ]; then
   echo "✘ dừng: $conflicts file trùng. Đổi tên file của bạn, hoặc chạy lại với --force để ghi đè." >&2
   exit 1
 fi

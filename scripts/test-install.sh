@@ -762,6 +762,28 @@ assert "AC: cài từ kit trong repo khác phải exit 0" [ $? -eq 0 ]
 assert "AC: kit không phải gốc repo thì phải ghi kit-commit: unknown → $(grep '^kit-commit' "$nk/$man")" \
   grep -qx 'kit-commit: unknown' "$nk/$man"
 
+# AD. File kit bị sửa riêng trong repo đã cài. Có --force thì ghi đè là việc sẽ làm, không phải lỗi:
+#     báo ⚠ ghi đè (stderr), không có dòng ✘ nào. Không --force thì vẫn dừng với dòng ✘ như ca C.
+fo="$tmp/force overwrite"
+fo_p=.claude/agents/architect.md
+new_repo "$fo"
+install "$fo"
+echo "sửa riêng" >> "$fo/$fo_p"
+run_install "$fo" --force
+assert "AD: cài lại với --force phải exit 0" [ $? -eq 0 ]
+assert "AD: --force phải báo ⚠ ghi đè $fo_p (stderr) → $(cat "$tmp/err")" \
+  grep -qxF "⚠ ghi đè $fo_p: bản trong repo khác bản của kit" "$tmp/err"
+if grep -q '^✘' "$tmp/err"; then bad "AD: --force không được báo ✘ cho file sẽ ghi đè → $(cat "$tmp/err")"; else ok; fi
+assert "AD: --force phải ghi đè bằng bản của kit" cmp -s "$kit/$fo_p" "$fo/$fo_p"
+echo "sửa riêng" >> "$fo/$fo_p"
+run_install "$fo"
+assert "AD: không --force thì file trùng phải exit 1" [ $? -eq 1 ]
+assert "AD: không --force phải báo ✘ $fo_p (stderr) → $(cat "$tmp/err")" \
+  grep -qxF "✘ $fo_p đã tồn tại và khác bản của kit" "$tmp/err"
+assert "AD: không --force phải báo ✘ dừng → $(cat "$tmp/err")" grep -q '^✘ dừng: 1 file trùng' "$tmp/err"
+if grep -qF '⚠ ghi đè' "$tmp/err"; then bad "AD: không --force thì không được báo ⚠ ghi đè"; else ok; fi
+assert "AD: không --force thì không được ghi đè bản sửa riêng" [ "$(tail -n 1 "$fo/$fo_p")" = "sửa riêng" ]
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

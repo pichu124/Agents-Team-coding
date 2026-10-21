@@ -15,7 +15,7 @@
 ## How to get to it (user POV)
 
 - `cd <dự-án> && git switch -c chore/agent-team && /đường/dẫn/Agents-Team-coding/scripts/install-kit.sh .` (README, mục Bắt đầu nhanh).
-- Cập nhật kit: `git pull` trong repo kit rồi chạy lại lệnh trên trong dự án, thêm `--force` (file của kit đã đổi thì không có `--force` installer dừng vì trùng file).
+- Cập nhật kit: `git pull` trong repo kit rồi chạy lại lệnh trên trong dự án, không có `--force`. Installer dừng vì trùng file thì phân loại từng file ✘: có trong `git -C <kit> diff --stat <kit-commit> HEAD -- .claude scripts templates` là kit đổi, chạy lại với `--force` (mỗi file in `⚠ ghi đè <file>: bản trong repo khác bản của kit`); không có là bản sửa riêng của dự án, đưa về repo kit trước (docs/04 mục 12).
 
 ## Driving it with shell + helpers/sandbox.sh
 
@@ -45,5 +45,6 @@ Preconditions:
 - Installer từ chối khi repo đích chính là repo kit (`✘ repo đích trùng với kit`). Luôn cài vào sandbox.
 - Không có Python thì installer không gộp được settings.json có sẵn: nó chỉ in cảnh báo. `merge-settings` khi đó là INCONCLUSIVE, không phải FAIL.
 - `--force` ghi đè file của dự án. Chỉ dùng trong sandbox, và không dùng để làm `conflict` pass.
+- `--force` ghi đè cả bản dự án tự sửa trong file của kit (ví dụ `/agent-audit` vá guard ngay trong dự án), chỉ báo ⚠ và exit 0. Installer còn stage các script `.sh` (`git add --chmod=+x`), nên thay đổi của chúng không hiện ở `git diff`: đọc lại bằng `git diff HEAD`.
 - Kit có thay đổi chưa commit (đang sửa kit) thì `kit-commit:` có hậu tố `-dirty`. Commit kit giữa `launch` và `reinstall` thì manifest đổi theo commit mới, status không còn rỗng: `cleanup` rồi `launch` lại.
 - Số file chép (`26`) đổi khi kit thêm hoặc bớt file. Đối chiếu bằng `ls`/`jq` ở bước đọc lại, đừng chỉ so con số.
