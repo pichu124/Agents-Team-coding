@@ -558,9 +558,9 @@ def reading_key(cmd, tool, combo, bodies):
             pipe_scope)
 
 
-def suspicious_labels(cmd, patterns, tool="Bash"):
-    labels = []
-    ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+def reading_combos(cmd, tool="Bash"):
+    """Mọi tổ hợp tham số segments (join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank,
+    exact, pipe_scope) mà suspicious_labels đọc rồi hợp nhãn, cách gần bản cũ trước."""
     # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
@@ -581,8 +581,6 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # trong nháy kép, và che chữ trong comment (bản nối dòng còn dán dòng sau vào comment), nên có chỗ nghi ít hơn cách cũ.
     # Exact cũng đọc thêm như các cách đọc scoped: raw_marks (lệnh có byte dấu: như PR #5 trước khi byte được trung hoà),
     # strict_assign (lệnh có NAME=), empty_body=False (lệnh có heredoc thân rỗng: như PR #5 trước khi nhận thân rỗng).
-    # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
-    # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     joins = (True,) if tool == "PowerShell" else (False, True)
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
@@ -602,8 +600,16 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     if "|" in cmd:
         combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, True)
                    for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
+    return combos
+
+
+def suspicious_labels(cmd, patterns, tool="Bash"):
+    labels = []
+    ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+    # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
+    # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     bodies, read, segs = {}, set(), []
-    for combo in combos:
+    for combo in reading_combos(cmd, tool):
         key = reading_key(cmd, tool, combo, bodies)
         if key not in read:
             read.add(key)
