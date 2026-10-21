@@ -6,7 +6,7 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 
 ## 1. Gom nhánh về nhánh mặc định (20/10)
 
-Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR mục 2.7 trước, rồi nhánh tích hợp audit, rồi PR #22 (khác vùng code, gộp lúc nào CI xanh cũng được).
+Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR #8, rồi PR mục 2.7, rồi nhánh tích hợp audit; PR #22 khác vùng code, gộp lúc nào CI xanh cũng được. Chạy lần lượt từng session: ngày 20/10 năm session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả năm cùng dừng giữa chừng.
 
 | Nhánh | Phần đã xong đi đâu | Session |
 |---|---|---|
@@ -14,14 +14,19 @@ Mọi nhánh đã merge đều đã bị xoá. Thứ tự gộp: PR mục 2.7 tr
 | `claude/nice-hamilton-vdgw4v` | **Nhánh tích hợp audit duy nhất**: merge nhánh mặc định, giữ mọi cách đọc của PR #18 và PR #5, thêm cách đọc `strict`; cherry-pick 357c9ce, 1792c19 của blissful-dirac; revert WIP 1a1a9a0; verifier và reviewer mới cho cả 9 commit chưa qua review vòng 2 (eb9f3b8..847928b) | Đang chạy; archive khi PR merge |
 | `claude/blissful-dirac-i6vpym` | 357c9ce (port 749e0c6) và 1792c19 (port oracle 751a129) đi qua nhánh tích hợp; phần dở ghi ở 2.3 | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
 | `claude/vibrant-pascal-b81ljt` | nice-hamilton đã nhận hết (d7ce707: 103 ca MISSED, fuzz_b/fuzz_c; bảng commit ở PR của nhánh tích hợp); phần dở ở 2.2 (P2, P3) | Đã archive. Xoá nhánh khi nhánh tích hợp merge |
-| `claude/practical-hawking-le9toi` (PR #8) | 4 ca sửa của nó (0c347b2, a43055e, 3543fb4, 6b50142) nhánh mặc định đã báo nhờ PR #18; oracle riêng không gộp, xem 2.1 | Đóng PR #8 và xoá nhánh khi nhánh tích hợp merge |
+| `claude/practical-hawking-le9toi` (PR #8) | Merge chính PR #8, sau khi verifier và reviewer mới cho qua a744f97. Phần riêng của nó: cách đọc `pipe_scope` (bắt `D=/tmp/x/; true && D=/srv/; true \| D=/tmp/x/; rm -rf ${D}src`, bash xoá /srv/src, nhánh mặc định trả `[]`); oracle thứ hai bổ sung cho oracle chung (xem 2.1); MUST_FLAG 18 lệnh phải báo và 5 lệnh vô hại. 4 ca sửa cũ của nó (0c347b2, a43055e, 3543fb4, 6b50142) nhánh mặc định đã báo nhờ PR #18 | Đang chạy; archive khi PR #8 merge |
 | `claude/laughing-ride-ot94no` (PR #22) | Mọi commit tới b561645, đã xanh trên macOS và Windows thật (run 39447944773) và 01d6d51; revert 6a08ee9, 3749c74 (ca Q, xem 4.2); merge nhánh mặc định rồi chờ 3 job CI | Đang chạy; archive khi PR #22 merge |
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
-### 2.1 Oracle bash: ý của PR #8 chưa có trên bước oracle chung
-- **Vì sao:** PR #8 có oracle riêng (KNOWN_MISSES chỉ được giảm, tự kiểm stub qua `bash -l`, thay `/tmp/` bằng thư mục tạm). Bước oracle chung (blissful-dirac, ORACLE_FLOOR, KNOWN_GAPS) đã vào nhánh mặc định và có dòng trong CLAUDE.md. Hai bước song song làm test-audit chậm gấp đôi và hai danh sách lệch nhau.
-- **Xong khi:** ý nào của PR #8 mà bước chung chưa có (tự kiểm stub, ratchet theo bản trước) được thêm vào bước chung; không còn bước oracle thứ hai; PR #8 đóng.
+### 2.1 Gộp hai oracle bash thành một bước (sau khi PR #8 merge)
+- **Vì sao:** sau PR #8, test-audit có hai bước oracle: bước chung (blissful-dirac: ORACLE_FLOOR, KNOWN_GAPS) và bước của PR #8 (thư mục `$tmp/oracle-pr8`, KNOWN_MISSES chỉ được giảm, nhận bằng hằng MARK). Hai bước bổ sung cho nhau, không trùng: ngữ pháp của PR #8 sinh đúng các cấu trúc mà KNOWN_GAPS của bước chung loại ra (thân `bash -c` có biến hay lồng nhau, nháy lẻ trong comment hay thân heredoc, heredoc chưa đóng hay thân rỗng, gán trong khâu ống hay sau `&&`/`||`, `\` cuối dòng, `builtin cd`, cd lỗi). Số ca sót trên từng bản audit-agent.py (oracle PR #8 / oracle chung): 27727f5 69/25, 0667d98 6/13, 9bd03a3 0/10, 53f3ff2 0/0. Cộng lại hai bước mất khoảng 40–50 giây trên CI.
+- **Cần biết khi gộp:**
+  - Cách chặn rm khác nhau. Bước chung đặt `fakerm` trên một PATH chỉ có bash và cat; PR #8 thay chữ `rm` trong văn bản lệnh bằng đường dẫn tuyệt đối tới stub. `bash -l` có thể đặt lại PATH, nên mảnh `bash -lc` của PR #8 chỉ an toàn với cách thay trong văn bản: gộp thì dùng cách đó, hoặc bỏ `-l`.
+  - Thư mục: PR #8 thay `/tmp/` bằng `<chỗ>/tmp/`, cwd là `<chỗ>/p` có sẵn `p/src`; nguy khi normpath(PWD + đích) nằm ngoài `<chỗ>/tmp`. Ngữ pháp PR #8 không dùng tên vô hại (dist, node_modules), còn bước chung coi build là vô hại.
+  - Job nền: PR #8 đọc stdout tới EOF rồi `killpg`, mỗi lần gọi stub ghi ra `log.$$` riêng; ngữ pháp PR #8 không có `wait` hay `$( )` nên không cần lớp bọc e103274.
+  - KNOWN_MISSES chứa lệnh đã sinh mà vẫn sót; KNOWN_GAPS chứa cấu trúc không sinh. Gộp thì giữ một luật chỉ được giảm, đổi MARK cho khớp.
+- **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
 
 ### 2.2 Việc dở của nice-hamilton (sau khi nhánh tích hợp merge)
 - **P2: nhận heredoc như bash**, 41 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–55, 61–70, 72, 83–87, 91–102).
@@ -76,13 +81,14 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 - `\$D` và `'$D'` là chữ.
 - `D=/; rm -rf /tmp/$D`: xoá chính /tmp, luật under_temp coi là vô hại.
 - `git checkout .&`: mẫu nhãn `\.(\s|$)` không nhận `&`.
+- Từ báo cáo của PR #8: `(export D=/tmp/w && cd /tmp/w/s)` ⏎ `rm -rf ${D}src`; `false && D=/tmp/w/; rm -rf ${D}src`; `{ D=/tmp/w/; } | true; rm -rf ${D}src`; `true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src`; `rm -rf {,/}src`; `D=/tmp/w/ true; rm -rf ${D}src`.
 - `su -c 'rm -rf src'`; `{ D=/tmp/w; } | true; rm -rf $D` (gán trong nhóm thuộc ống); `rm -rf {/tmp/a,/}`; `| /bin/bash`; nameref, trap, hàm.
 
 ## 3. PR đang mở (ảnh chụp)
 
 | PR | Nội dung | Trạng thái |
 |---|---|---|
-| #8 | fix(audit): oracle bash và 4 lớp lệnh xoá (`claude/practical-hawking-le9toi`) | Nháp. Đóng khi nhánh tích hợp audit merge (mục 1, 2.1) |
+| #8 | fix(audit): oracle bash cho mục A, cách đọc `pipe_scope` (`claude/practical-hawking-le9toi`) | Nháp, đầu a744f97 đã merge 53f3ff2, check cục bộ xanh. Chờ verifier và reviewer mới, cập nhật mô tả, rồi merge (mục 1) |
 | #22 | fix: kit chạy đúng trên macOS (bash 3.2) và Git Bash Windows, CI portable (`claude/laughing-ride-ot94no`) | Nháp. Đang revert ca Q, merge nhánh mặc định, chờ 3 job CI |
 
 ## 4. Kit, ngoài audit
