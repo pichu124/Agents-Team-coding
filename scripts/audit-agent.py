@@ -241,6 +241,8 @@ TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >
 
 
 def expand(text, env):
+    if "$" not in text:  # không có chỗ nào để thay: khỏi duyệt env (vài nghìn biến, mỗi đoạn một lượt)
+        return text
     for name, val in env.items():
         # Regex chứa đúng chuỗi tên nên không khớp khi tên vắng trong text (đã thay ở các vòng trước): bỏ qua, khỏi dịch lại
         # regex cho mọi biến của env (quá 512 tên thì bộ đệm của `re` không giữ nổi).

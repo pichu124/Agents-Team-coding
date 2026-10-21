@@ -1754,6 +1754,15 @@ t0 = time.perf_counter()
 got = a.suspicious_labels(cmd, a.SUSPICIOUS)
 dt = time.perf_counter() - t0
 check(dt < 6 and "xoá đệ quy" in got, f"600 phép gán khác tên rồi rm phải xong dưới 6 s, rm vẫn nghi: {dt:.1f} s, {got!r}")
+# Đoạn không có `$` thì expand không duyệt env. 21/10/2026 (4 nhân), trung vị 3 lần, 5000 biến (phép gán, hay unset mà cách
+# đọc strict ghi thành rỗng) rồi 5000 đoạn `true`: b06eb79 4,6 và 2,7 s (31893fb, chưa có strict: 2,3 và 0,1 s), bản có lối
+# tắt 0,27 và 0,29 s. Ngưỡng 1,5 s cách bản có lối tắt ~5 lần, b06eb79 ~2–3 lần. Bash không xoá gì.
+for cmd in (" ".join("v%d=1" % i for i in range(5000)) + "; " + "true; " * 5000,
+            "unset " + " ".join("v%d" % i for i in range(5000)) + "; " + "true; " * 5000):
+    t0 = time.perf_counter()
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    dt = time.perf_counter() - t0
+    check(dt < 1.5 and got == [], f"5000 biến rồi 5000 đoạn không `$` phải xong dưới 1,5 s: {cmd[:12]!r}: {dt:.1f} s, {got!r}")
 # Lệnh bật mọi chiều của phép hợp cách đọc (NAME=, byte dấu, heredoc thân rỗng) không được đọc lại cả lệnh theo từng tổ hợp
 # khi các tổ hợp cho cùng kết quả. 21/10/2026 (4 nhân, Python 3.13), 1000 dòng không `$`, `#`, `\` rồi heredoc thân rỗng,
 # byte \x01, `V=1 rm`, trung vị 5 lần: 38bf5bb 6,2 s (88 lần gọi segments), be281ef (thêm pipe_scope) 7,5 s (104 lần gọi),
