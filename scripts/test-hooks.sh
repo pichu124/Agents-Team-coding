@@ -62,6 +62,12 @@ new_repo "$bsm" main
 globm="$tmp/a[x]b"
 new_repo "$globm" main
 new_repo "$tmp/axb" feat/x
+# Repo ở nhánh feature có symlink trỏ vào thư mục con của repo ở main: git -C link/.. chdir theo đường vật lý,
+# tức chạy trong repo ở main. Windows (Git Bash) thường không tạo được symlink thật thì bỏ các ca này.
+symf="$tmp/sym feat"
+new_repo "$symf" feat/x
+mkdir -p "$on_main/sub"
+ln -s "$on_main/sub" "$symf/link" 2>/dev/null && [ -L "$symf/link" ] || symf=""
 
 modes="auto sed"
 [ -n "$py" ] && modes="auto python sed"
@@ -284,6 +290,11 @@ EOF
   # Đường dẫn không được bị glob thành thư mục khác.
   expect_guard ask "cd \"$globm\" && git push"
   expect_guard ask "git -C \"$globm\" push"
+  if [ -n "$symf" ]; then
+    expect_guard ask "git -C link/.. push" "$symf"
+    expect_guard ask "git --git-dir=link/../.git push" "$symf"
+    expect_guard ask "GIT_DIR=link/../.git git push" "$symf"
+  fi
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
