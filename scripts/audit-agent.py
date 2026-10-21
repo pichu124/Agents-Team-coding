@@ -249,7 +249,7 @@ def unwrap_shell_c(text):
 
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
-             strict_assign=False, empty_body=True, blank=False, exact=False):
+             strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -277,6 +277,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     Nháy được che riêng trong từng vùng giữa các dấu, comment che như một chuỗi: nháy lẻ trong thân heredoc hay trong
     comment (`# don't`) không ghép với nháy của lệnh sau thành một chuỗi nuốt lệnh. Dòng mở heredoc là dòng logic:
     `bash \\⏎<<'EOF'` đưa thân vào bash (keep_shell_heredocs).
+    pipe_scope (dùng với exact, PR #8): khâu của ống là shell con: phép gán và cd trong đoạn kề `|` không ra ngoài, còn
+    phép gán sau `&&` vẫn áp (cách đọc chặt bỏ cả hai). Đoạn ngay sau `||` có thể không chạy: thư mục và biến nó vừa gán
+    là không biết. Là một cách đọc thêm để hợp nhãn, không đổi cách đọc exact.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env)
@@ -342,6 +345,12 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 snap = pre, pre
                 continue
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
+        # pipe_scope (PR #8): một khâu của ống chạy ở shell con, phép gán và cd trong đoạn ngay trước hay ngay sau `|`
+        # không tới khâu sau hay lệnh sau ống, còn phép gán sau `&&` vẫn áp: `true && D=/srv/⏎x | D=/tmp/w/⏎rm -rf ${D}src`
+        # xoá /srv/src (cách đọc chặt bỏ cả D=/srv/, cách đọc lỏng nhận D=/tmp/w/). Đoạn ngay sau `||` chỉ chạy khi lệnh
+        # trước lỗi: thư mục thành không biết, biến nó gán thành chưa biết.
+        piped = pipe_scope and not mark_only and (sep == "|" or parts[i + 1:i + 2] == ["|"])
+        maybe = pipe_scope and not mark_only and sep == "||"
         # Chỉ `&&` giữ thư mục: sau `;`, `||`, xuống dòng lệnh vẫn chạy khi cd lỗi, `|` chạy ở shell con. Riêng đoạn đầu
         # của thân heredoc đưa vào shell (sau OPEN; không dấu thì sau shell trơn) chạy trong shell đó, ở thư mục của nó.
         if not mark_only:
@@ -371,10 +380,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         if shell_c:
             plain = re.sub(r"[\"']", " ", plain)
         assigns = not strict_assign or not detached and ASSIGN_STMT.match(re.sub(r"(?:^|\s)#.*", "", seg.lstrip("({ ")))
+        before = (dict(env), ctx) if piped else None
         for name, val in (ASSIGN.findall(full) if assigns and not frozen else ()):
             env[name] = val.strip("\"'")
         if snapped:
             snap = pre, dict(env)
+        if before:  # khâu của ống: phép gán trong đoạn không ra ngoài. Trả env trước khi `)` đóng nhóm lấy env lúc mở nhóm
+            env = before[0]
         for _c in closes:  # subshell đóng, hay nhóm chạy nền: phép gán bên trong không ra ngoài
             o, at = groups.pop() if groups else ("(", dict(lst))
             if o == "(" or background:
@@ -410,6 +422,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             ctx = ""  # `cd x && a & b`: cả `cd x && a` chạy nền ở shell con, b chạy ở thư mục cũ
         if not mark_only:
             out.append((plain, full, ctx, "$" in raw))
+        if before:
+            ctx = before[1]
+        elif maybe:
+            ctx = ""
+            # Biến mà đoạn nêu thành chưa biết, kể cả ở cách đọc chặt (đoạn sau `||` không gán gì): thêm nghi ngờ thay vì
+            # giữ giá trị cũ; cách đọc exact không pipe_scope vẫn trong phép hợp nên không mất nhãn nhờ giá trị cũ.
+            for name, _val in ASSIGN.findall(full):
+                env.pop(name, None)
         if re.search(r"[)}]", seg):
             ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
         # Dò dấu trên raw: nháy lẻ trong thân (`# don't`) ghép với nháy sau EOF có thể nuốt dòng dấu vào một chuỗi.
@@ -507,7 +527,7 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
 
 def reading_key(cmd, tool, combo, bodies):
     """Lớp của một tổ hợp tham số segments (combo: join, scoped, parent_env, comments, raw_marks, strict_assign,
-    empty_body, blank, exact): hai tổ hợp cùng lớp cho cùng danh sách đoạn. bodies: bộ đệm chuỗi b của một lệnh.
+    empty_body, blank, exact, pipe_scope): hai tổ hợp cùng lớp cho cùng danh sách đoạn. bodies: bộ đệm chuỗi b của một lệnh.
 
     Vòng tách đoạn của segments chỉ đọc chuỗi b (lệnh sau keep_shell_heredocs, nối dòng, gỡ thân -c: tính y như các bước
     đầu của segments, sửa ở đó thì sửa cả ở đây) và các tham số dưới đây; join, empty_body chỉ tác động qua b. Lớp bỏ qua
@@ -519,8 +539,9 @@ def reading_key(cmd, tool, combo, bodies):
     - raw_marks (ngoài b) chỉ quyết đoạn có SNAP có được bỏ SNAP không.
     - scoped (ngoài b) đọc byte dấu, và scoped=False cho đoạn ngay sau shell trơn (LOCAL_SHELL) thừa hưởng thư mục: đoạn
       chỉ trông như `bash`, `sh -s`… khi b có "sh" hay có `$` để ghép ra. SNAP ở b khi scoped, không raw_marks thì đi
-      cùng dấu mở thân."""
-    join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact = combo
+      cùng dấu mở thân.
+    - pipe_scope (PR #8) đổi cả thư mục lẫn env quanh `|` và `||` ngoài b: giữ nguyên trong lớp, không gộp."""
+    join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope = combo
     join = join and tool != "PowerShell"
     k = (join, scoped, parent_env, raw_marks, empty_body, exact)
     if k not in bodies:
@@ -533,7 +554,8 @@ def reading_key(cmd, tool, combo, bodies):
     exact = exact and ("#" in b or marked)
     scoped = scoped or not (marked or dollar or "sh" in b)
     return (b, scoped, exact, "#" in b and not exact and comments, scoped and SNAP in b and raw_marks,
-            dollar and strict_assign, dollar and (OPEN in b or OPEN_RAW in b) and parent_env, dollar and OPEN in b and blank)
+            dollar and strict_assign, dollar and (OPEN in b or OPEN_RAW in b) and parent_env, dollar and OPEN in b and blank,
+            pipe_scope)
 
 
 def suspicious_labels(cmd, patterns, tool="Bash"):
@@ -565,15 +587,21 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
     empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
-    combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False)
+    combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False)
               for strict_assign in stricts for comments in (False, True)
               for scoped, parent_env in ((False, False), (True, False), (True, True))
               for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
               for join in joins]
     if re.search(r"<<-?\s*[A-Za-z_]", cmd):  # có heredoc không nháy: thân không đoán biến của shell cha (blank)
-        combos += [(join, True, True, True, False, False, True, True, False) for join in joins]
-    combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True)
+        combos += [(join, True, True, True, False, False, True, True, False, False) for join in joins]
+    combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, False)
                for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
+    # Cách đọc thêm của PR #8 (pipe_scope): như exact, nhưng khâu ống là shell con và đoạn sau `||` có thể không chạy.
+    # `true && D=/srv/; x | D=/tmp/x/; rm -rf ${D}src` xoá /srv/src: cách đọc chặt bỏ cả phép gán sau `&&`, cách đọc lỏng
+    # nhận phép gán trong ống. Thêm cách đọc rồi hợp nhãn nên không bớt nhãn của exact; chỉ đọc khi lệnh có `|`.
+    if "|" in cmd:
+        combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, True)
+                   for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
     bodies, read, segs = {}, set(), []
     for combo in combos:
         key = reading_key(cmd, tool, combo, bodies)
