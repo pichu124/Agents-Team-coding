@@ -363,7 +363,7 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
    ```powershell
    & $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
    ```
-   Exit 0 (không có dòng `✘ dừng: ...`): installer đã cập nhật các file kit mà dự án chưa sửa. Xem thay đổi, chạy check, rồi commit. Dùng `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`, nên `git diff` không hiện chúng. Dòng `kit-commit:` của `.claude/agent-team-kit.txt` trong diff cho thấy commit kit cũ và mới. `git status --short` không in gì thì kit không đổi, hết việc.
+   Exit 0 (không có dòng `✘ dừng: ...`): installer đã cập nhật các file kit mà dự án chưa sửa. Nó in tên từng file đó, mỗi file một dòng ngay dưới dòng `✔ cập nhật N file kit mà dự án chưa sửa`. Dự án cố ý giữ một bản kit cũ thì file đó cũng bị cập nhật, vì nó trùng một bản của kit: muốn giữ thì thêm một dòng comment riêng vào file để nó khác mọi bản kit, khi đó installer dừng ở bước 3. Xem thay đổi, chạy check, rồi commit. Dùng `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`, nên `git diff` không hiện chúng. Dòng `kit-commit:` của `.claude/agent-team-kit.txt` trong diff cho thấy commit kit cũ và mới. `git status --short` không in gì thì kit không đổi, hết việc.
    ```powershell
    git status --short
    git diff HEAD

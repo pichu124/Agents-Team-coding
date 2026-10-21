@@ -56,7 +56,7 @@ git switch -c chore/agent-team
 
 `install-kit.sh` làm những việc sau và có test tự động ([`scripts/test-install.sh`](../scripts/test-install.sh)):
 - Kiểm tra `.claude/settings.json` có sẵn trước: JSON hỏng hoặc có comment thì dừng mà không chép gì. File có BOM UTF-8 (Notepad trên Windows) vẫn đọc được.
-- Chép agents, hooks, 4 skill và các script check của kit. Khi cài lại, file kit mà dự án chưa sửa (trùng một bản đã commit trong lịch sử kit, nên kit phải là bản `git clone`) được cập nhật luôn. File đã có mà không trùng bản kit nào (dự án đã sửa, hoặc file riêng trùng tên) thì nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
+- Chép agents, hooks, 4 skill và các script check của kit. Khi cài lại, file kit mà dự án chưa sửa (trùng một bản đã commit trong lịch sử kit, nên kit phải là bản `git clone` đủ lịch sử, không dùng `--depth`) được cập nhật luôn. Clone nông thì mọi file kit khác bản hiện tại đều bị coi là dự án đã sửa: an toàn, nhưng phải dùng `--force`. File đã có mà không trùng bản kit nào (dự án đã sửa, hoặc file riêng trùng tên) thì nó dừng và không chép gì; muốn ghi đè thì dùng `--force`.
 - Stage các script `.sh` của kit với quyền chạy, để commit từ Windows vẫn giữ được quyền này.
 - Gộp `permissions` và `hooks` vào `.claude/settings.json` sẵn có, giữ nguyên các khoá khác. Chạy lại nhiều lần không bị nhân đôi hook.
 - Nếu dự án chưa có CLAUDE.md thì tạo từ khung [`templates/project-CLAUDE.md`](../templates/project-CLAUDE.md), có các mục TODO để bạn điền. Nếu đã có thì giữ nguyên. CLAUDE.md còn quy ước đội chép từ bản kit cũ thì installer cảnh báo ở mọi lần chạy: xoá các dòng đó, giữ phần riêng của dự án.

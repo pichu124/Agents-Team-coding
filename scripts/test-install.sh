@@ -815,6 +815,8 @@ assert "AE: kit đổi file mà dự án chưa sửa thì cài lại không --fo
 assert "AE: $arch_p phải là bản mới của kit" cmp -s "$uk/$arch_p" "$ua/$arch_p"
 assert "AE: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
 assert "AE: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+assert "AE: dòng ngay sau ✔ cập nhật phải là tên file, thụt hai dấu cách → $(cat "$tmp/out")" \
+  [ "$(grep -xF -A1 '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out" | tail -n 1)" = "  $arch_p" ]
 
 # AF. Bản cài cũ chưa có manifest: phân loại không cần kit-commit.
 rm "$ub/$man"
@@ -926,6 +928,47 @@ assert "AL: blob CRLF trong lịch sử, dự án chưa sửa thì cài lại kh
 assert "AL: $arch_p phải là bản mới của kit" cmp -s "$cr/$arch_p" "$crt/$arch_p"
 assert "AL: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
 assert "AL: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AM. Bản chỉ merge commit mới có (người dùng commit bản vá vào clone kit rồi git pull): nhánh X nối dòng cuối,
+#     main chèn dòng đầu, merge tự gộp ra bản D mà không commit thường nào có. Dự án cài ở D, chưa sửa; kit merge
+#     thêm nhánh Y. Cài lại không --force thì cập nhật.
+mk="$tmp/merge kit"
+new_repo "$mk"
+kit_copy "$mk"
+commit_all "$mk" "kit A"
+mk_main="$(git -C "$mk" symbolic-ref --short HEAD)"
+merge_into() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false merge -q --no-ff --no-edit "$2" >/dev/null; } # merge_into <repo> <nhánh>
+git -C "$mk" checkout -q -b X
+echo "Dòng cuối của nhánh X." >> "$mk/$arch_p"
+commit_all "$mk" "X"
+git -C "$mk" checkout -q "$mk_main"
+{ echo "Dòng đầu của kit (C)."; cat "$mk/$arch_p"; } > "$tmp/arch-C"
+cp "$tmp/arch-C" "$mk/$arch_p"
+commit_all "$mk" "C"
+git -C "$mk" branch Y
+merge_into "$mk" X
+assert "AM: điều kiện của ca: merge X phải tự gộp được" [ $? -eq 0 ]
+mk_d="$(git -C "$mk" rev-parse "HEAD:$arch_p")"
+case "$(git -C "$mk" log --no-merges --format= --raw --no-abbrev -- "$arch_p")" in
+  *" $mk_d "*) bad "AM: điều kiện của ca: bản D không được có ở commit thường nào" ;;
+  *) ok ;;
+esac
+mt="$tmp/merge target"
+new_repo "$mt"
+"$mk/scripts/install-kit.sh" "$mt" >/dev/null 2>&1
+commit_all "$mt" "cài kit D"
+git -C "$mk" checkout -q Y
+awk 'NR == 3 { $0 = $0 " (Y)" } { print }' "$mk/$arch_p" > "$tmp/arch-Y"
+cp "$tmp/arch-Y" "$mk/$arch_p"
+commit_all "$mk" "Y"
+git -C "$mk" checkout -q "$mk_main"
+merge_into "$mk" Y
+assert "AM: điều kiện của ca: merge Y phải tự gộp được" [ $? -eq 0 ]
+run_kit "$mk" "$mt"
+assert "AM: bản chỉ merge commit có, dự án chưa sửa thì cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "AM: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$mt/$arch_p"
+assert "AM: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
+assert "AM: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2

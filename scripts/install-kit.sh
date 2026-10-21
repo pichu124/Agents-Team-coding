@@ -56,13 +56,14 @@ done < <(
 kit_repo=""
 cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] && kit_repo=1
 
-# kit_had <f>: file <f> của repo đích trùng một bản đã commit của <f> trong lịch sử kit. Băm hai cách, cách nào
+# kit_had <f>: file <f> của repo đích trùng một bản đã commit của <f> trong lịch sử kit, kể cả bản chỉ merge commit
+# mới có (-m: diff của merge với từng parent; thiếu nó thì git log --raw bỏ qua merge). Băm hai cách, cách nào
 # trùng cũng được: qua filter eol của kit (--path; kit clone với core.autocrlf=true có file CRLF mà blob là LF) và
 # byte thô (--no-filters; lịch sử có blob CRLF thì filter lại đổi file sang LF). Git lỗi thì coi như không trùng.
 kit_had() {
   local blob hist opt
   [ -n "$kit_repo" ] || return 1
-  hist="$(git -C "$kit" log --format= --raw --no-abbrev --no-renames -- "$1" 2>/dev/null)" || return 1
+  hist="$(git -C "$kit" log --format= --raw --no-abbrev --no-renames -m -- "$1" 2>/dev/null)" || return 1
   for opt in --path="$1" --no-filters; do
     blob="$(git -C "$kit" hash-object "$opt" -- "$target/$1" 2>/dev/null)" || continue
     case "$hist" in *" $blob "*) return 0 ;; esac
@@ -71,11 +72,11 @@ kit_had() {
 }
 
 conflicts=0
-updated=0
+updated=()
 for f in "${files[@]}"; do
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
     if kit_had "$f"; then
-      updated=$((updated + 1))
+      updated+=("$f")
     elif [ "$force" = "--force" ]; then
       echo "⚠ ghi đè $f: bản trong repo khác bản của kit" >&2
     else
@@ -143,7 +144,10 @@ for f in "${files[@]}"; do
   case "$f" in *.sh) chmod +x "$target/$f" ;; esac
 done
 echo "✔ đã chép ${#files[@]} file của kit"
-[ "$updated" -gt 0 ] && echo "✔ cập nhật $updated file kit mà dự án chưa sửa"
+if [ "${#updated[@]}" -gt 0 ]; then
+  echo "✔ cập nhật ${#updated[@]} file kit mà dự án chưa sửa"
+  printf '  %s\n' "${updated[@]}"
+fi
 
 if [ ! -f "$settings" ]; then
   cp "$kit/.claude/settings.json" "$settings"
