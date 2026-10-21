@@ -537,13 +537,15 @@ assert "R: install phải exit 0" [ $? -eq 0 ]
 assert "R: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$noc/CLAUDE.md"
 assert "R: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$noc/CLAUDE.md"
 assert "R: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$noc/CLAUDE.md"
+noc_lf="$tmp/noc-CLAUDE-lf.md" # bỏ \r: kit checkout CRLF (Windows) thì khung CLAUDE.md cũng CRLF
+tr -d '\r' < "$noc/CLAUDE.md" > "$noc_lf"
 # Agent, skill và hook của kit trỏ tới các mục này "trong CLAUDE.md".
 assert "R: CLAUDE.md mới phải có quy ước commit" grep -qF 'Conventional Commits' "$noc/CLAUDE.md"
-assert "R: CLAUDE.md mới phải có mục Quyền tự chủ" grep -qx '## Quyền tự chủ' "$noc/CLAUDE.md"
-assert "R: mục cuối của CLAUDE.md mới phải là bảng Rule ↔ Thứ thực thi → $(grep '^## ' "$noc/CLAUDE.md" | tail -n 1)" \
-  [ "$(grep '^## ' "$noc/CLAUDE.md" | tail -n 1)" = '## Rule ↔ Thứ thực thi' ]
-assert "R: bảng Rule ↔ Thứ thực thi của dự án phải có header, chưa có dòng nào → $(tail -n 2 "$noc/CLAUDE.md")" \
-  [ "$(tail -n 2 "$noc/CLAUDE.md")" = '| Rule | Thực thi bởi |
+assert "R: CLAUDE.md mới phải có mục Quyền tự chủ" grep -qx '## Quyền tự chủ' "$noc_lf"
+assert "R: mục cuối của CLAUDE.md mới phải là bảng Rule ↔ Thứ thực thi → $(grep '^## ' "$noc_lf" | tail -n 1)" \
+  [ "$(grep '^## ' "$noc_lf" | tail -n 1)" = '## Rule ↔ Thứ thực thi' ]
+assert "R: bảng Rule ↔ Thứ thực thi của dự án phải có header, chưa có dòng nào → $(tail -n 2 "$noc_lf")" \
+  [ "$(tail -n 2 "$noc_lf")" = '| Rule | Thực thi bởi |
 |---|---|' ]
 assert "R: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$noc/.claude/rules/agent-team.md"
 assert "R: không được cảnh báo về CLAUDE.md" no_claude_warning
@@ -791,6 +793,8 @@ commit_all() { # commit_all <repo> <message>
   git -C "$1" -c core.autocrlf=false add -A
   git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "$2"
 }
+has_cr() { [ "$(($(tr -cd '\r' < "$1" | wc -c)))" -gt 0 ]; } # có \r; không dùng grep: grep của Git for Windows bỏ \r
+to_lf_file() { tr -d '\r' < "$1" > "$tmp/to-lf" && cat "$tmp/to-lf" > "$1"; } # kit_copy trên Windows chép bản CRLF
 run_kit() { local k="$1"; shift; "$k/scripts/install-kit.sh" "$@" > "$tmp/out" 2> "$tmp/err"; } # run_kit <kit> <repo> [--force]
 no_conflict_line() { ! grep -q '^✘' "$tmp/err"; }
 arch_p=.claude/agents/architect.md
@@ -876,6 +880,7 @@ ck="$tmp/crlf kit upstream"
 new_repo "$ck"
 kit_copy "$ck"
 cp "$kit/.gitattributes" "$ck/"
+to_lf_file "$ck/$arch_p" # blob LF như trên Linux; kit checkout CRLF (Windows) thì blob sẽ CRLF và AK không còn là ca băm lỗi
 commit_all "$ck" "kit A"
 cw="$tmp/crlf kit"
 git -c core.autocrlf=true clone -q "$ck" "$cw"
@@ -884,7 +889,7 @@ ct="$tmp/crlf target"
 new_repo "$ct"
 "$cw/scripts/install-kit.sh" "$ct" >/dev/null 2>&1
 commit_all "$ct" "cài kit A"
-assert "AJ: điều kiện của ca: $arch_p trong repo phải là CRLF" grep -q $'\r$' "$ct/$arch_p"
+assert "AJ: điều kiện của ca: $arch_p trong repo phải có CRLF (\r)" has_cr "$ct/$arch_p"
 echo "Dòng mới của kit (B)." >> "$ck/$arch_p"
 commit_all "$ck" "kit B"
 git -C "$cw" pull -q --ff-only
@@ -920,7 +925,7 @@ crt="$tmp/crlf blob target"
 new_repo "$crt"
 "$cr/scripts/install-kit.sh" "$crt" >/dev/null 2>&1
 commit_all "$crt" "cài kit A"
-assert "AL: điều kiện của ca: $arch_p trong repo phải là CRLF" grep -q $'\r$' "$crt/$arch_p"
+assert "AL: điều kiện của ca: $arch_p trong repo phải có CRLF (\r)" has_cr "$crt/$arch_p"
 printf 'Dòng mới của kit (B).\r\n' >> "$cr/$arch_p"
 commit_all "$cr" "kit B"
 run_kit "$cr" "$crt"
@@ -934,7 +939,9 @@ assert "AL: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep 
 #     thêm nhánh Y. Cài lại không --force thì cập nhật.
 mk="$tmp/merge kit"
 new_repo "$mk"
+git -C "$mk" config core.autocrlf false # runner Windows đặt autocrlf=true ở system: checkout nhánh sẽ đổi dòng kết thúc
 kit_copy "$mk"
+to_lf_file "$mk/$arch_p"
 commit_all "$mk" "kit A"
 mk_main="$(git -C "$mk" symbolic-ref --short HEAD)"
 merge_into() { git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false merge -q --no-ff --no-edit "$2" >/dev/null; } # merge_into <repo> <nhánh>
