@@ -51,7 +51,7 @@ scripts/
 templates/agent-team-rules.md     quy ước đội, cài thành .claude/rules/agent-team.md của dự án
 templates/project-CLAUDE.md       khung CLAUDE.md cho dự án chưa có
 examples/vnstock-dashboard/       check.local.sh mẫu cho dự án Python + pytest
-.github/workflows/check.yml       CI chạy ./scripts/check.sh
+.github/workflows/check.yml       CI chạy ./scripts/check.sh trên Linux, macOS (bash 3.2) và Git Bash Windows
 ```
 
 ## Bắt đầu nhanh

@@ -20,31 +20,44 @@ cmd="$(json_get "$input" tool_input.command)"
 # rõ tool thì so thêm bản gốc. Kiểm tra push trên nhánh chính đọc từng dạng riêng ($forms).
 nl=$'\n'
 tool="$(json_get "$input" tool_name)"
+# join_lines <lệnh> <dấu nối> <join|keep>: dòng có dòng sau mà kết thúc bằng dấu nối (xét lần lượt từng ký
+# tự của <dấu nối>) thì bỏ dấu đó cùng xuống dòng, thay bằng dấu cách (join), hoặc chỉ bỏ dấu và giữ xuống
+# dòng (keep, khi đó dấu kế tiếp cũng được bỏ). \\ là dấu \ thật, không phải dấu nối. Dùng awk, không dùng
+# ${x//a/b}: bash 3.2 (macOS) thay chuỗi mất thời gian bậc hai, lệnh 15 KB tốn ~50 giây, quá timeout 10 giây
+# của hook, và Claude Code cho lệnh chạy mà không hỏi.
+join_lines() {
+  # Dấu nối đi qua ENVIRON: -v xử lý escape, \ sẽ mất.
+  printf '%s\n' "$1" | MARKS="$2" LC_ALL=C awk -v how="$3" '
+    BEGIN { marks = ENVIRON["MARKS"] }
+    function emit(line, more,   i, n, part, sep) {
+      gsub(/\\\\/, "\001", line)
+      sep = more ? "\n" : ""
+      for (i = 1; more && i <= length(marks); i++) {
+        if (substr(line, length(line), 1) != substr(marks, i, 1)) continue
+        line = substr(line, 1, length(line) - 1)
+        if (how == "join") { sep = " "; break }
+      }
+      n = split(line, part, /\001/)
+      printf "%s", part[1]
+      for (i = 2; i <= n; i++) printf "\\\\%s", part[i]
+      printf "%s", sep
+    }
+    NR > 1 { emit(prev, 1) }
+    { prev = $0 }
+    END { emit(prev, 0) }'
+}
 kept="$cmd"
 forms=("$cmd")
 case "$cmd" in
   *"\\$nl"* | *"\`$nl"*)
-    ph=$'\001'
-    bs='\'
     case "$tool" in
       Bash) marks='\' ;;
       PowerShell) marks='`' ;;
       *) marks='\`' ;;
     esac
-    src="${cmd//"$bs$bs"/"$ph"}"
-    joined="$src"
-    kept="$src"
-    both="$src"
-    for ((i = 0; i < ${#marks}; i++)); do
-      m="${marks:i:1}"
-      joined="${joined//"$m$nl"/" "}"
-      kept="${kept//"$m$nl"/"$nl"}"
-    done
-    both="${both//"$bs$nl"/" "}"
-    both="${both//"\`$nl"/" "}"
-    joined="${joined//"$ph"/"$bs$bs"}"
-    kept="${kept//"$ph"/"$bs$bs"}"
-    both="${both//"$ph"/"$bs$bs"}"
+    joined="$(join_lines "$cmd" "$marks" join)"
+    kept="$(join_lines "$cmd" "$marks" keep)"
+    both="$(join_lines "$cmd" '\`' join)"
     forms=("$kept" "$joined" "$both")
     case "$tool" in
       Bash | PowerShell) cmd="$joined$nl$kept$nl$both" ;;
@@ -192,12 +205,19 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   dirs="$(printf '%s' "$dirs" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
   for d in $dirs; do
-    [ -n "$d" ] || continue # git -C "" là thư mục của chính hook, không phải của lệnh
-    branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    if text_grep "$branch" -Eqx -- "$MAIN"; then
-      reason="push khi đang ở nhánh $branch"
-      break
-    fi
+    [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
+    # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
+    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. Đọc theo cả hai
+    # cách đi đường: -P (vật lý, như git -C) và -L (logic, như cd của shell). Hai cách chỉ khác nhau
+    # khi đường có .. đi lùi ra từ một symlink; cách nào ở nhánh chính cũng hỏi.
+    for o in -P -L; do
+      case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
+      branch="$(CDPATH='' cd "$o" -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      if text_grep "$branch" -Eqx -- "$MAIN"; then
+        reason="push khi đang ở nhánh $branch"
+        break 2
+      fi
+    done
   done
   IFS=$' \t\n'
   set +f

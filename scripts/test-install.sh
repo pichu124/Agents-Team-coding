@@ -200,7 +200,7 @@ mark='<!-- agent-team:kit-end'
 tpl_bytes=$(($(wc -c < "$tpl")))
 kit_part_ok() { head -c "$tpl_bytes" "$1" | cmp -s - "$tpl"; } # file mở đầu đúng bằng toàn bộ template mới
 own_part_is() { tail -c +"$((tpl_bytes + 1))" "$1" | cmp -s - "$2"; } # phần sau template giống hệt file $2
-to_crlf() { awk '{ printf "%s\r\n", $0 }'; }
+to_crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; } # file đã CRLF (clone trên Windows) giữ nguyên
 rules_repo() { # rules_repo <thư mục>: repo có CLAUDE.md riêng, đã có .claude/rules/
   new_repo "$1"
   echo "# CLAUDE.md của dự án" > "$1/CLAUDE.md"
@@ -253,9 +253,9 @@ EOF
 sep_own_x="$tmp/sep-own-x.md" # dòng trống ngăn cách + mục riêng
 { echo; cat "$own_x"; } > "$sep_own_x"
 
-# H. Template có đúng một dòng dấu, là dòng cuối, kết thúc bằng newline.
+# H. Template có đúng một dòng dấu, là dòng cuối, kết thúc bằng newline (LF, hoặc CRLF khi clone trên Windows).
 assert "H: template phải có đúng một dòng bắt đầu bằng $mark" [ "$(grep -c "^$mark" "$tpl")" = 1 ]
-case "$(tail -n 1 "$tpl")" in
+case "$(tail -n 1 "$tpl" | tr -d '\r')" in
   "$mark"*'-->') ok ;;
   *) bad "H: dòng cuối của template phải là dòng dấu $mark ... -->" ;;
 esac
@@ -969,6 +969,27 @@ assert "AM: bản chỉ merge commit có, dự án chưa sửa thì cài lại k
 assert "AM: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$mt/$arch_p"
 assert "AM: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
 assert "AM: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+
+# AN. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
+#    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
+crc="$tmp/crlf checkout"
+new_repo "$crc"
+install "$crc"
+for f in "$crc"/.claude/agents/*.md "$crc"/.claude/skills/*/SKILL.md; do
+  to_crlf < "$f" > "$tmp/crlf.md" && cat "$tmp/crlf.md" > "$f"
+done
+out="$(cd "$crc" && ./scripts/validate-kit.sh 2>&1)"
+assert "AN: validate-kit phải xanh khi agent và skill của kit là CRLF → $out" [ $? -eq 0 ]
+# to_crlf sau awk: gawk của Git for Windows bỏ \r khi đọc, file sẽ thành LF.
+awk '{ sub(/^name: verifier/, "name: khac-ten"); print }' "$crc/.claude/agents/verifier.md" | to_crlf > "$tmp/crlf.md"
+cat "$tmp/crlf.md" > "$crc/.claude/agents/verifier.md"
+out="$(cd "$crc" && ./scripts/validate-kit.sh 2>&1)"
+assert "AN: validate-kit phải đỏ khi agent CRLF sai name → $out" [ $? -ne 0 ]
+case "$out" in
+  *"verifier.md: name phải là 'verifier'"*) ok ;;
+  *) bad "AN: phải báo name sai của agent CRLF, không báo lỗi khác → $out" ;;
+esac
+assert "AN: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
