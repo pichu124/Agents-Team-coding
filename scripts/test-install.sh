@@ -37,6 +37,9 @@ new_repo() {
   git -C "$1" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m init
 }
 install() { "$kit/scripts/install-kit.sh" "$@" >/dev/null 2>&1; }
+run_install() { "$kit/scripts/install-kit.sh" "$@" > "$tmp/out" 2> "$tmp/err"; } # giữ stdout, stderr của lần cài
+claude_warned() { grep -q '^⚠.*CLAUDE\.md' "$tmp/err"; }
+no_claude_warning() { ! grep -q '^⚠.*CLAUDE\.md' "$tmp/out" "$tmp/err"; }
 hook_groups() { # hook_groups <settings.json> <event>
   "$py" -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["hooks"].get(sys.argv[2], [])))' "$1" "$2" | tr -d '\r'
 }
@@ -76,8 +79,9 @@ printf '.claude/*\n!.claude/settings.json\n!.claude/skills/\n!.claude/skills/**\
 echo "[gãy](khong-ton-tai.md)" > "$b/docs/note.md"
 git -C "$b" -c core.autocrlf=false add -A
 git -C "$b" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m project
-install "$b"
+run_install "$b"
 assert "B: install phải exit 0" [ $? -eq 0 ]
+assert "B: CLAUDE.md riêng không chép quy ước đội thì không được cảnh báo về CLAUDE.md" no_claude_warning
 assert "B: không được sửa CLAUDE.md có sẵn" [ "$(cat "$b/CLAUDE.md")" = "# CLAUDE.md của dự án" ]
 assert "B: thiếu .claude/rules/agent-team.md" [ -f "$b/.claude/rules/agent-team.md" ]
 assert "B: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" \
@@ -312,6 +316,47 @@ install "$m" --force
 assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
 assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
 assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
+
+# N. Repo chưa có CLAUDE.md: tạo từ khung của dự án, không chép CLAUDE.md của repo kit.
+#    Quy ước đội chỉ nằm ở .claude/rules/agent-team.md. Cài lại không đổi CLAUDE.md.
+proj_tpl="$kit/templates/project-CLAUDE.md"
+lacks_team_rules() { ! grep -qF '/team-lead <task>' "$1"; }
+n="$tmp/no claude"
+new_repo "$n"
+run_install "$n"
+assert "N: install phải exit 0" [ $? -eq 0 ]
+assert "N: CLAUDE.md phải đúng bằng templates/project-CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
+assert "N: CLAUDE.md mới không được chứa quy ước đội" lacks_team_rules "$n/CLAUDE.md"
+assert "N: báo điền TODO thì CLAUDE.md mới phải có TODO" grep -q 'TODO' "$n/CLAUDE.md"
+assert "N: lần cài đầu .claude/rules/agent-team.md phải đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
+assert "N: không được cảnh báo về CLAUDE.md" no_claude_warning
+if grep -q 'CLAUDE.md đã có' "$tmp/out"; then bad "N: vừa tạo CLAUDE.md thì không được báo CLAUDE.md đã có"; else ok; fi
+run_install "$n" --force
+assert "N: cài lại với --force phải exit 0" [ $? -eq 0 ]
+assert "N: cài lại với --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
+assert "N: cài lại với --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
+assert "N: cài lại với --force không được cảnh báo về CLAUDE.md" no_claude_warning
+run_install "$n"
+assert "N: cài lại không --force phải exit 0" [ $? -eq 0 ]
+assert "N: cài lại không --force không được đổi CLAUDE.md" cmp -s "$proj_tpl" "$n/CLAUDE.md"
+assert "N: cài lại không --force thì .claude/rules/agent-team.md vẫn đúng bằng template" cmp -s "$tpl" "$n/.claude/rules/agent-team.md"
+assert "N: cài lại không --force không được cảnh báo về CLAUDE.md" no_claude_warning
+
+# O. Bản cài cũ: CLAUDE.md là bản chép từ CLAUDE.md của kit, chưa có .claude/rules/agent-team.md.
+#    Cài lại: tạo rules, không sửa CLAUDE.md, cảnh báo quy ước đội nằm hai nơi ở mọi lần chạy.
+o="$tmp/old claude"
+new_repo "$o"
+install "$o"
+rm -f "$o/.claude/rules/agent-team.md"
+cp "$kit/CLAUDE.md" "$o/CLAUDE.md"
+run_install "$o" --force
+assert "O: cài lại lên bản cũ phải exit 0" [ $? -eq 0 ]
+assert "O: không được sửa CLAUDE.md chép từ kit cũ" cmp -s "$kit/CLAUDE.md" "$o/CLAUDE.md"
+assert "O: phải tạo .claude/rules/agent-team.md đúng bằng template" cmp -s "$tpl" "$o/.claude/rules/agent-team.md"
+assert "O: phải cảnh báo ⚠ (stderr) CLAUDE.md còn quy ước đội của kit cũ" claude_warned
+run_install "$o"
+assert "O: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "O: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cảnh báo" claude_warned
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2

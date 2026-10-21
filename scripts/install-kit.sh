@@ -3,8 +3,10 @@
 #   ./scripts/install-kit.sh <repo-đích> [--force]
 # - Chép agents, hooks, 4 skill của kit, scripts/{check,validate-kit,test-hooks,audit-agent,test-audit}.sh, audit-agent.py, guard-ask-floor.
 # - Gộp permissions + hooks vào .claude/settings.json sẵn có (giữ nguyên các khoá khác).
-# - Repo đã có CLAUDE.md: không đụng, thay vào đó tạo .claude/rules/agent-team.md. Cài lại chỉ thay phần
-#   của kit (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
+# - Repo chưa có CLAUDE.md: tạo từ templates/project-CLAUDE.md. Đã có thì không đụng (CLAUDE.md còn quy ước
+#   đội chép từ kit cũ thì cảnh báo).
+# - Luôn tạo hoặc cập nhật .claude/rules/agent-team.md (quy ước đội). Cài lại chỉ thay phần của kit
+#   (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
 # - File trùng tên mà khác nội dung: dừng, không chép gì (trừ khi --force).
 # Chạy lại nhiều lần vẫn cho cùng kết quả.
@@ -160,36 +162,44 @@ own_part() {
   ' "$rules_tpl" "$1"
 }
 
-if [ -f "$target/CLAUDE.md" ]; then
-  rules="$target/.claude/rules/agent-team.md"
-  mkdir -p "$target/.claude/rules"
-  if [ ! -f "$rules" ]; then
-    cp "$rules_tpl" "$rules"
-    echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
-  else
-    has_mark=0
-    grep -q "^$rules_mark" "$rules" && has_mark=1
-    # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
-    if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
-      echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
-      exit 1
-    fi
-    own="${own%x}"
-    # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
-    { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
-    if [ -n "$own" ]; then
-      n=$(($(printf '%s' "$own" | wc -l)))
-      echo "✔ CLAUDE.md đã có nên giữ nguyên; .claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
-    else
-      echo "✔ CLAUDE.md đã có nên giữ nguyên; quy ước đội ở .claude/rules/agent-team.md"
-    fi
-    if [ "$has_mark" = 0 ]; then
-      echo "  (bản cài cũ chưa có dòng $rules_mark -->: chỉ giữ được mục #/## mà template không có, sửa trong phần của kit đã bị thay; xem git diff)"
-    fi
-  fi
-else
-  cp "$kit/CLAUDE.md" "$target/CLAUDE.md"
+kept="CLAUDE.md đã có nên giữ nguyên; "
+if [ ! -f "$target/CLAUDE.md" ]; then
+  cp "$kit/templates/project-CLAUDE.md" "$target/CLAUDE.md"
   echo "✔ tạo CLAUDE.md (điền các mục TODO)"
+  kept=""
+fi
+
+rules="$target/.claude/rules/agent-team.md"
+mkdir -p "$target/.claude/rules"
+if [ ! -f "$rules" ]; then
+  cp "$rules_tpl" "$rules"
+  echo "✔ ${kept}quy ước đội ở .claude/rules/agent-team.md"
+else
+  has_mark=0
+  grep -q "^$rules_mark" "$rules" && has_mark=1
+  # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
+  if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
+    echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
+    exit 1
+  fi
+  own="${own%x}"
+  # Ghi thẳng vào file, không mv từ mktemp: giữ quyền của file.
+  { cat "$rules_tpl"; printf '%s' "$own"; } > "$rules"
+  if [ -n "$own" ]; then
+    n=$(($(printf '%s' "$own" | wc -l)))
+    echo "✔ ${kept}.claude/rules/agent-team.md: thay phần của kit, giữ $n dòng riêng của dự án"
+  else
+    echo "✔ ${kept}quy ước đội ở .claude/rules/agent-team.md"
+  fi
+  if [ "$has_mark" = 0 ]; then
+    echo "  (bản cài cũ chưa có dòng $rules_mark -->: chỉ giữ được mục #/## mà template không có, sửa trong phần của kit đã bị thay; xem git diff)"
+  fi
+fi
+
+# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có chuỗi này.
+if grep -qF '/team-lead <task>' "$target/CLAUDE.md"; then
+  echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
+  echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
 
 attrs="$target/.gitattributes"

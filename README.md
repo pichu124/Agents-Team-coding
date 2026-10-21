@@ -46,7 +46,8 @@ scripts/
   install-kit.sh                  cài kit vào một repo khác bằng một lệnh
   test-install.sh                 test của installer
   check.local.sh                  check riêng của repo kit (không chép sang dự án khác)
-templates/agent-team-rules.md     quy ước đội, dùng khi dự án đã có CLAUDE.md
+templates/agent-team-rules.md     quy ước đội, cài thành .claude/rules/agent-team.md của dự án
+templates/project-CLAUDE.md       khung CLAUDE.md cho dự án chưa có
 examples/vnstock-dashboard/       check.local.sh mẫu cho dự án Python + pytest
 .github/workflows/check.yml       CI chạy ./scripts/check.sh
 ```
