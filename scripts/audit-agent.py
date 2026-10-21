@@ -525,9 +525,42 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
     return True
 
 
-def suspicious_labels(cmd, patterns, tool="Bash"):
-    labels = []
-    ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+def reading_key(cmd, tool, combo, bodies):
+    """Lớp của một tổ hợp tham số segments (combo: join, scoped, parent_env, comments, raw_marks, strict_assign,
+    empty_body, blank, exact, pipe_scope): hai tổ hợp cùng lớp cho cùng danh sách đoạn. bodies: bộ đệm chuỗi b của một lệnh.
+
+    Vòng tách đoạn của segments chỉ đọc chuỗi b (lệnh sau keep_shell_heredocs, nối dòng, gỡ thân -c: tính y như các bước
+    đầu của segments, sửa ở đó thì sửa cả ở đây) và các tham số dưới đây; join, empty_body chỉ tác động qua b. Lớp bỏ qua
+    tham số khi b cho thấy nó không đổi được đoạn nào:
+    - strict_assign, blank, parent_env (ngoài SNAP đã ở b) chỉ đổi env, mà env chỉ vào đoạn qua expand, chỉ thay sau `$`.
+      parent_env, blank cũng chỉ tác động ở dấu mở thân.
+    - exact (ngoài b) che comment như chuỗi, che nháy theo vùng giữa các byte dấu \\x01–\\x04, chồng env ở dấu mở. Không
+      `#` và byte dấu thì che như comments=False. comments: hai cách che nháy chỉ khác ở `#`.
+    - raw_marks (ngoài b) chỉ quyết đoạn có SNAP có được bỏ SNAP không.
+    - scoped (ngoài b) đọc byte dấu, và scoped=False cho đoạn ngay sau shell trơn (LOCAL_SHELL) thừa hưởng thư mục: đoạn
+      chỉ trông như `bash`, `sh -s`… khi b có "sh" hay có `$` để ghép ra. SNAP ở b khi scoped, không raw_marks thì đi
+      cùng dấu mở thân.
+    - pipe_scope (PR #8) đổi cả thư mục lẫn env quanh `|` và `||` ngoài b: giữ nguyên trong lớp, không gộp."""
+    join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope = combo
+    join = join and tool != "PowerShell"
+    k = (join, scoped, parent_env, raw_marks, empty_body, exact)
+    if k not in bodies:
+        b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env)
+        if join:
+            b = LINE_JOIN.sub(r"\1", b)
+        bodies[k] = unwrap_shell_c(b) if exact else b
+    b = bodies[k]
+    dollar, marked = "$" in b, bool(re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", b))
+    exact = exact and ("#" in b or marked)
+    scoped = scoped or not (marked or dollar or "sh" in b)
+    return (b, scoped, exact, "#" in b and not exact and comments, scoped and SNAP in b and raw_marks,
+            dollar and strict_assign, dollar and (OPEN in b or OPEN_RAW in b) and parent_env, dollar and OPEN in b and blank,
+            pipe_scope)
+
+
+def reading_combos(cmd, tool="Bash"):
+    """Mọi tổ hợp tham số segments (join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank,
+    exact, pipe_scope) mà suspicious_labels đọc rồi hợp nhãn, cách gần bản cũ trước."""
     # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
@@ -552,24 +585,41 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
     empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
-    segs = [s for strict_assign in stricts for comments in (False, True)
-            for scoped, parent_env in ((False, False), (True, False), (True, True))
-            for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
-            for join in joins
-            for s in segments(cmd, tool, join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body)]
+    combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False)
+              for strict_assign in stricts for comments in (False, True)
+              for scoped, parent_env in ((False, False), (True, False), (True, True))
+              for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
+              for join in joins]
     if re.search(r"<<-?\s*[A-Za-z_]", cmd):  # có heredoc không nháy: thân không đoán biến của shell cha (blank)
-        segs += [s for join in joins for s in segments(cmd, tool, join, parent_env=True, blank=True)]
-    segs += [s for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins
-             for s in segments(cmd, tool, join, raw_marks=raw_marks, strict_assign=strict_assign,
-                               empty_body=empty_body, exact=True)]
+        combos += [(join, True, True, True, False, False, True, True, False, False) for join in joins]
+    combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, False)
+               for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
     # Cách đọc thêm của PR #8 (pipe_scope): như exact, nhưng khâu ống là shell con và đoạn sau `||` có thể không chạy.
     # `true && D=/srv/; x | D=/tmp/x/; rm -rf ${D}src` xoá /srv/src: cách đọc chặt bỏ cả phép gán sau `&&`, cách đọc lỏng
     # nhận phép gán trong ống. Thêm cách đọc rồi hợp nhãn nên không bớt nhãn của exact; chỉ đọc khi lệnh có `|`.
     if "|" in cmd:
-        segs += [s for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins
-                 for s in segments(cmd, tool, join, raw_marks=raw_marks, strict_assign=strict_assign,
-                                   empty_body=empty_body, exact=True, pipe_scope=True)]
-    for plain, full, ctx, subst in segs:
+        combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, True)
+                   for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
+    return combos
+
+
+def suspicious_labels(cmd, patterns, tool="Bash"):
+    labels = []
+    ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+    # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
+    # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
+    bodies, read, segs = {}, set(), []
+    for combo in reading_combos(cmd, tool):
+        key = reading_key(cmd, tool, combo, bodies)
+        if key not in read:
+            read.add(key)
+            segs += segments(cmd, tool, *combo)
+    done = set()
+    for seg in segs:
+        if seg in done:
+            continue
+        done.add(seg)
+        plain, full, ctx, subst = seg
         for rx, label in patterns:
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
