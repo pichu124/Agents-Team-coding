@@ -2355,13 +2355,11 @@ ORACLE_FLOOR = 2400
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc.
-#   - nháy (' hay ") trong comment, nháy lẻ cặp hay trải nhiều dòng trong thân heredoc (ngữ pháp chỉ có nháy ở 'EOF' và giá
-#     trị gán "x /", trọn cặp trên một dòng)
+#   - nháy lẻ cặp không thoát, chuỗi trải nhiều dòng (ngữ pháp chỉ có nháy trọn cặp trên một dòng, `\'` và nháy trong comment)
 #   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
 #   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
 #   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
-#   - gán biến trong pipeline, gán tạm (`D=x cmd`), gán sau `&&`/`||`, kể cả nhóm `{ }` có phép gán ở các chỗ đó
-#   - `..` có nháy hay thoát
+#   - nhóm `{ }` có phép gán, trong pipeline hay sau `&&`/`||` (`{ D=x; } | true`: docs/viec-can-lam.md 2.8)
 #   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
 #   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
 if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
@@ -2531,6 +2529,48 @@ def render(p, word):
 
 
 cmds = list(dict.fromkeys(tuple(lst(0, True)[0]) for _ in range(N)))
+# Lệnh thêm, Random riêng (lệnh của ngữ pháp trên giữ nguyên): cấu trúc mà KNOWN_GAPS thôi loại khi nhánh tích hợp audit
+# merge. `..` viết trong nháy hay sau `\` (đích rm, đích cd, và bẫy: cd vào thư mục tạm rồi rm đích đó); nháy trọn cặp trên
+# một dòng, `\'`, nháy trong comment; bẫy gán: D gán trong ống, sau `&&`/`||` hay gán tạm, rồi rm đích có $D.
+QDOT = [".'.'/src", '".."/src', ".\\./src", "'..'", ".'.'", '"../src"', ".\\./.\\./x", "'..'/'..'/x"]
+RM_T += QDOT
+CD_T += [".'.'", '".."', ".\\.", "'../..'"]
+COMMENT += ["# don't", "# it's && x", "# a 'b' c", '# say "hi"']
+OTHER += ["echo don\\'t", "echo 'a b'", 'echo "a b"']
+lst_base = lst
+
+
+def lst(depth, top):
+    r = rnd.random()
+    if r < 0.4:
+        return lst_base(depth, top)
+    items = [item(depth, top) for _ in range(rnd.randint(0, 2))]
+    if r < 0.6:
+        items.append(([pick(["cd ", "pushd ", "builtin cd "]) + REAL + " &&"], "", False))
+        target = pick(QDOT)
+    else:
+        v = pick(["D=", "export D="]) + pick(D_V)
+        k = rnd.randrange(4)
+        if k == 0:
+            items.append(([v + pick([" | true", " |& true"])], "", False))
+        elif k == 1:
+            items.append(([pick(["true", "false"]) + pick([" && ", " || "]) + v], "", False))
+        elif k == 2:
+            items.append(([pick(["true | ", "false || "]) + v], "", False))
+        else:
+            items.append(([v + " true"], "", False))
+        target = pick(["$D", "$D/src", "src"] + VAR_T)
+    items.append(([RM, " -rf " + target], "", False))
+    out = []
+    for i, (p, kind, _ga) in enumerate(items):
+        out += p
+        if i < len(items) - 1:
+            out.append(" " if p[-1].endswith("&&") else "\n" if kind in ("heredoc", "comment") else pick(["; ", "\n", " && "]))
+    return out, False
+
+
+rnd.seed(1009)
+cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
