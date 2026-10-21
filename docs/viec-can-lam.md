@@ -84,7 +84,6 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 | PR | Nội dung | Trạng thái |
 |---|---|---|
 | #8 | fix(audit): oracle bash cho mục A, cách đọc `pipe_scope` (`claude/practical-hawking-le9toi`) | Nháp, đầu a744f97 đã merge 53f3ff2, check cục bộ xanh. Chờ verifier và reviewer mới, cập nhật mô tả, rồi merge (mục 1) |
-| #25 | fix(install): quy ước đội luôn ở `.claude/rules`, manifest `.claude/agent-team-kit.txt`, cài lại tự cập nhật file kit mà dự án chưa sửa (nhận theo lịch sử git của kit); docs cập nhật kit và auto-update plugin | Nháp, mở ngày 21/10. Đã qua verifier và reviewer mới; CI xanh trên Linux, macOS và Windows (9ee8be3). Chờ người review. Việc còn lại: 4.6–4.9 |
 
 ## 4. Kit, ngoài audit
 
@@ -104,7 +103,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
-- Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của nhánh `ccr-651f0a3f-wykij0` ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
+- Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của PR #25 ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
   - `git add --chmod=+x` ở cuối stage cả nội dung các script `.sh`, nên `git diff` không hiện thay đổi của chúng. Có thể chỉ đặt bit chạy (`git update-index --chmod=+x`) cho file đã được theo dõi.
   - Dòng sửa tay trong manifest kiểu `../x`, tên thư mục hay `-rf` bị báo "kit đã bỏ" mãi, vì installer kiểm bằng `-e` và không lọc `..`, `/`, `-`.
@@ -116,15 +115,15 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 - **Vì sao:** cài lại thì installer tự cập nhật file kit trùng một bản đã commit trong lịch sử kit (hàm `kit_had`, dùng `git log --raw -m`). Có hai chỗ hở, cả hai chỉ làm installer báo ✘ thừa và dừng, không ghi đè gì:
   - `-m` phụ thuộc config `log.diffMerges` của người dùng. Với `off`, merge bị bỏ qua. Với `remerge`, output có thêm blob giả (bản gộp lại có conflict marker), gần như không thể trùng.
   - Lọc theo đường dẫn thì `git log` cắt bớt lịch sử: ở merge mà file trùng một parent, git chỉ đi theo parent đó, nên bản trên nhánh bị bỏ không được nhận.
-  Reviewer của 12bf299 đã tái hiện chỗ đầu. Chỗ sau do implementer chỉ ra.
+  Reviewer của PR #25 (commit 12bf299) đã tái hiện chỗ đầu. Chỗ sau do implementer chỉ ra.
 - **Xong khi:** `kit_had` gọi `git -c log.diffMerges=separate -C "$kit" log --full-history ...`; có ca test-install cho kit có `log.diffMerges=off` và cho lịch sử bị cắt bớt, đỏ trước rồi xanh.
 
 ### 4.7 Cài lại trên Windows ghi `settings.json` từ CRLF sang LF
-- **Vì sao:** kit clone với `core.autocrlf=true` (mặc định của Git for Windows) thì `.claude/settings.json` của kit là CRLF. Lần cài đầu chép nguyên văn (CRLF), lần cài lại gộp bằng Python và ghi LF, nên `git diff HEAD` hiện cả file (66 dòng) dù nội dung không đổi. Lỗi có từ trước nhánh `ccr-651f0a3f-wykij0`; verifier của nhánh đó thấy khi mô phỏng autocrlf trên Linux.
+- **Vì sao:** kit clone với `core.autocrlf=true` (mặc định của Git for Windows) thì `.claude/settings.json` của kit là CRLF. Lần cài đầu chép nguyên văn (CRLF), lần cài lại gộp bằng Python và ghi LF, nên `git diff HEAD` hiện cả file (66 dòng) dù nội dung không đổi. Lỗi có từ trước PR #25; verifier của PR đó thấy khi mô phỏng autocrlf trên Linux.
 - **Xong khi:** có ca test-install với kit `autocrlf=true`: cài, commit, cài lại, `git status --porcelain` rỗng.
 
 ### 4.8 Lệnh PowerShell của đoạn "Cập nhật kit" chưa chạy tay trên Windows
-- **Đã có:** CI của PR #25 xanh trên cả 3 OS ở 9ee8be3 (run 39576148967): test-install (ca AE..AN) chạy trên macOS `/bin/bash` 3.2 và Git Bash Windows với `core.autocrlf=true`. Lần chạy Windows đầu tiên (f737e75) đỏ 7 assert. Lỗi nằm ở test fixture: grep và gawk của Git for Windows bỏ `\r`, và kit checkout CRLF. 9ee8be3 đã sửa.
+- **Đã có:** CI của PR #25 (merge thành ced0c81) xanh trên cả 3 OS ở 9ee8be3 (run 39576148967): test-install (ca AE..AN) chạy trên macOS `/bin/bash` 3.2 và Git Bash Windows với `core.autocrlf=true`. Lần chạy Windows đầu tiên (f737e75) đỏ 7 assert. Lỗi nằm ở test fixture: grep và gawk của Git for Windows bỏ `\r`, và kit checkout CRLF. 9ee8be3 đã sửa.
 - **Vì sao còn:** lệnh PowerShell ở đoạn "Cập nhật kit" của docs/04 mục 12 (`git diff --no-index C:\tools\Agents-Team-coding\<file> <file>`, `git restore --source=HEAD --staged --worktree -- <file>`) chưa chạy trên PowerShell 5.1; CI chỉ chạy phần bash.
 - **Xong khi:** một lần làm tay đoạn "Cập nhật kit" trên `C:\vnstock-trial`, kết quả ghi vào đây.
 
