@@ -1491,6 +1491,20 @@ for cmd in ("D=/; bash <<EOF\nD=/tmp/w && rm -rf $D/a\nEOF",             # xoá 
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"biến bị đổi mà cách đọc khác không theo: {cmd!r}: {got!r}")
 check(not a.suspicious_labels("D=/tmp/w; unset -f D; rm -rf $D/a", a.SUSPICIOUS), "unset -f chỉ xoá hàm: biến giữ giá trị")
+# Thân <<EOF không nháy có `\'` hay `$'…'`: chỉ cách đọc strict che đúng, các cách khác để nháy mở chuỗi nuốt dòng rm. `\$D`
+# shell cha để nguyên cho shell con thay (D không export: rỗng); `$D` shell cha thay bằng giá trị tại toán tử heredoc, trước
+# gán tạm và lệnh sau toán tử trên dòng mở, kể cả khi có thân -c gỡ ra ở giữa. Thân -c sau toán tử vẫn được gỡ (`+e` chỉ
+# regex của strict nhận). Bash 5.2 xoá đích ghi bên cạnh (rm thay bằng echo).
+for cmd in ("D=/tmp/w; bash <<EOF\necho it\\'s\nrm -rf \\$D/a\necho 'x'\nEOF",                # xoá /a
+            "D=/tmp/w; bash <<EOF\nprintf $'a\\'b\\n'\nrm -rf \\$D/a\necho 'x'\nEOF",        # xoá /a
+            "D=/; bash <<EOF; D=/tmp/w\necho it\\'s\nrm -rf $D/x\necho 'x'\nEOF",           # xoá //x
+            "D=/; D=/tmp/w bash <<EOF\necho it\\'s\nrm -rf $D/x\necho 'x'\nEOF",            # xoá //x
+            "D=/; bash <<EOF; D=/tmp/w\nprintf $'a\\'b\\n'\nrm -rf $D/x\necho 'x'\nEOF",    # xoá //x
+            "D=/; bash <<EOF && D=/tmp/w\necho it\\'s\nrm -rf $D/x\necho 'x'\nEOF",         # xoá //x
+            "D=/; bash <<EOF; bash +e -c 'true'; D=/tmp/w\necho it\\'s\nrm -rf $D/x\necho 'x'\nEOF",  # xoá //x
+            "bash <<EOF +e -c 'rm -rf /'; true\necho it\\'s\nEOF"):                         # xoá /
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"thân <<EOF: `\\$` là của shell con, env của shell cha chụp tại toán tử: {cmd!r}: {got!r}")
 # Thư mục cd không biết: cd ngay sau `||` chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (bash chạy rm ở thư mục dự
 # án). Đích còn `$` hay lệnh lồng sau khi thay biến đã biết có thể là đường tuyệt đối: cd vào thư mục tạm không làm nó vô hại
 # (D chưa gán, `echo` in rỗng: bash xoá /a).
