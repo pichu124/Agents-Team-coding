@@ -84,7 +84,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 | PR | Nội dung | Trạng thái |
 |---|---|---|
 | #8 | fix(audit): oracle bash cho mục A, cách đọc `pipe_scope` (`claude/practical-hawking-le9toi`) | Nháp, đầu a744f97 đã merge 53f3ff2, check cục bộ xanh. Chờ verifier và reviewer mới, cập nhật mô tả, rồi merge (mục 1) |
-| (nhánh `ccr-651f0a3f-wykij0`) | fix(install): quy ước đội luôn ở `.claude/rules`, manifest `.claude/agent-team-kit.txt`, cài lại tự cập nhật file kit mà dự án chưa sửa (nhận theo lịch sử git của kit); docs cập nhật kit và auto-update plugin | Nháp, mở ngày 21/10. Đã qua verifier và reviewer mới, check xanh trên Linux. Chờ CI 3 OS và người review. Việc còn lại: 4.6–4.9 |
+| #25 | fix(install): quy ước đội luôn ở `.claude/rules`, manifest `.claude/agent-team-kit.txt`, cài lại tự cập nhật file kit mà dự án chưa sửa (nhận theo lịch sử git của kit); docs cập nhật kit và auto-update plugin | Nháp, mở ngày 21/10. Đã qua verifier và reviewer mới, check xanh trên Linux. Chờ CI 3 OS và người review. Việc còn lại: 4.6–4.9 |
 
 ## 4. Kit, ngoài audit
 
@@ -125,7 +125,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 
 ### 4.8 Cập nhật kit theo nội dung chưa chạy trên Windows và macOS thật
 - **Vì sao:** các ca AE..AN của test-install và hành trình `update` của verify-kit mới chạy trên Linux (git 2.43, bash 5.2); CRLF chỉ được mô phỏng. Lệnh PowerShell ở đoạn "Cập nhật kit" của docs/04 mục 12 (`git diff --no-index C:\tools\Agents-Team-coding\<file> <file>`, `git restore --source=HEAD --staged --worktree -- <file>`) chưa chạy trên PowerShell 5.1.
-- **Xong khi:** CI của PR nhánh `ccr-651f0a3f-wykij0` xanh trên cả 3 OS; một lần làm tay đoạn "Cập nhật kit" trên `C:\vnstock-trial`, kết quả ghi vào đây.
+- **Xong khi:** CI của PR #25 xanh trên cả 3 OS; một lần làm tay đoạn "Cập nhật kit" trên `C:\vnstock-trial`, kết quả ghi vào đây.
 
 ### 4.9 Chưa có cách ghim một file kit ở bản cũ
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
