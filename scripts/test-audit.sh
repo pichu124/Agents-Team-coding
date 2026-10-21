@@ -2467,12 +2467,17 @@ from concurrent.futures import ThreadPoolExecutor
 for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
 sbx = sys.argv[1]
-# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng sàn này. Đo trên
-# bash 5.2: 2655, trong đó 165 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với cd nhiều tham số, còn bash 3.2 (/bin/bash của
-# macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là 2655 - 165 = 2490, làm tròn xuống. CHỈ ĐƯỢC NÂNG. Hạ
-# sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì sửa phân tích lệnh
-# trong audit-agent.py.
+# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng ORACLE_FLOOR. Đo
+# trên bash 5.2 ở ngữ pháp gốc (trước lô thêm): 2655/4294 lệnh, trong đó 165 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với
+# cd nhiều tham số, còn bash 3.2 (/bin/bash của macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là
+# 2655 - 165 = 2490, làm tròn xuống. Số so với sàn này đếm cả lô thêm (cả hai: 3615/5677 lệnh), nên bỏ lô thêm vẫn qua sàn.
+# ORACLE_FLOOR_EXTRA canh riêng lệnh do chính hàm lst thứ hai sinh (EXTRA, không qua lst_base): đo 586, trong đó 12 có cd
+# nhiều tham số và 62 có `|&` (bash 3.2 chưa có: lỗi cú pháp, rm không chạy), sàn là 586 - 12 - 62 = 512, làm tròn xuống.
+# Bỏ lô thêm hay bỏ hàm lst thứ hai (lô thêm vẫn có 953 lệnh nguy hiểm, mọi lệnh qua lst_base) thì EXTRA rỗng. CHỈ ĐƯỢC
+# NÂNG cả hai sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
+# sửa phân tích lệnh trong audit-agent.py.
 ORACLE_FLOOR = 2400
+ORACLE_FLOOR_EXTRA = 500
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc.
@@ -2658,7 +2663,7 @@ RM_T += QDOT
 CD_T += [".'.'", '".."', ".\\.", "'../..'"]
 COMMENT += ["# don't", "# it's && x", "# a 'b' c", '# say "hi"']
 OTHER += ["echo don\\'t", "echo 'a b'", 'echo "a b"']
-lst_base = lst
+lst_base, EXTRA = lst, set()
 
 
 def lst(depth, top):
@@ -2687,6 +2692,8 @@ def lst(depth, top):
         out += p
         if i < len(items) - 1:
             out.append(" " if p[-1].endswith("&&") else "\n" if kind in ("heredoc", "comment") else pick(["; ", "\n", " && "]))
+    if depth == 0:
+        EXTRA.add(tuple(out))  # lệnh do chính hàm này sinh, không qua lst_base: ORACLE_FLOOR_EXTRA đếm chúng
     return out, False
 
 
@@ -2760,6 +2767,7 @@ def dangerous(pwd, t):
 
 
 danger, miss, timeouts = 0, [], []
+danger_extra = 0
 for i, (calls, err, to) in enumerate(results):
     c = render(cmds[i], "rm")
     if to:
@@ -2768,6 +2776,7 @@ for i, (calls, err, to) in enumerate(results):
     if not bad:
         continue
     danger += 1
+    danger_extra += cmds[i] in EXTRA
     if "xoá đệ quy" not in au.suspicious_labels(c, au.SUSPICIOUS, "Bash"):
         miss.append((len(c), c, bad, err))
 el = time.time() - t0
@@ -2794,10 +2803,15 @@ if danger < ORACLE_FLOOR:
     print(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa bị "
           "thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ sàn.",
           file=sys.stderr)
+if danger_extra < ORACLE_FLOOR_EXTRA:
+    fail = True
+    print(f"✘ audit: lệnh thêm của oracle bash (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
+          f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
+          "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.", file=sys.stderr)
 if fail:
     sys.exit(1)
 print(f"✔ audit: oracle bash: mục A báo đủ {danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, "
-      f"sàn {ORACLE_FLOOR}, {el:.1f}s)")
+      f"sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ hai, sàn {ORACLE_FLOOR_EXTRA}; {el:.1f}s)")
 PYEOF
 rm -rf "$tmp/oracle"
 
