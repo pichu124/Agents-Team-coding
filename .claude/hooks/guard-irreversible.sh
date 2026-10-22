@@ -244,11 +244,11 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   set -f
   IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
-    um=bash
+    um="bash"
     q=""
-    [ "$a" = "$ARG_PS" ] && um=ps
+    [ "$a" = "$ARG_PS" ] && um="ps"
     [ "$a" = "$ARG_BSQ" ] && q=1
-    [ "$a" = "$ARG_PSQ" ] && um=ps && q=1
+    [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
     CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
