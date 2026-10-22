@@ -10,7 +10,7 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 
 | Nhánh | Giữ commit gì | Xoá khi |
 |---|---|---|
-| `claude/vibrant-pascal-b81ljt` | 970114a (bộ nhận `heredocs_word`, mốc so nhãn của P2) | P2 ở 2.2 xong |
+| `claude/vibrant-pascal-b81ljt` | 970114a (bộ nhận `heredocs_word`, mốc so nhãn của P2) | xoá được: P2 đã port (cách đọc bash) |
 | `claude/blissful-dirac-i6vpym` | 55a62d6, 73226cf, 5b32600, 98b74d0, 876ad37, 78e474a, WIP e69f5dd | xoá được: 2.3 đã port (cách đọc pure, fixture s101–s143, lô oracle var_trap2) |
 
 Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả nhóm cùng dừng giữa chừng.
@@ -25,14 +25,6 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
   - Job nền: PR #8 đọc stdout tới EOF rồi `killpg`, mỗi lần gọi stub ghi ra `log.$$` riêng; ngữ pháp PR #8 không có `wait` hay `$( )` nên không cần lớp bọc e103274.
   - KNOWN_MISSES chứa lệnh đã sinh mà vẫn sót; KNOWN_GAPS chứa cấu trúc không sinh. Gộp thì giữ một luật chỉ được giảm, đổi MARK cho khớp.
 - **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
-
-### 2.2 Việc dở của nice-hamilton
-- **P2: nhận heredoc như bash**, 40 ca trong `MISSED_VP_PENDING` (38, 40, 41, 46–54, 61–70, 72, 83–87, 91–102). Ca 55 của P2 (`<<E\X`) đã nghi.
-  - Vì sao: nhận heredoc hiện là heuristic. Cần cách đọc "tên là cả từ shell": bỏ nháy tên, `$"…"`, `\`⏎ trong tên, giải `$'…'`, `\r`, tên mở bằng chữ số; `<<` trong `$((`/`((`/`$[` là dịch bit; `<<` trong nháy, comment hay sau `\`; `<<\EOF`; `$(…)` và backtick trong thân dữ liệu không nháy (phải tuyến tính).
-  - Thiết kế đề xuất: thêm cách đọc `segments(..., exact=True, strict=True, bash=True)` với bộ nhận `heredocs_word` port từ vibrant-pascal 970114a (audit-agent.py khoảng dòng 234–270), hợp nhãn, bỏ qua khi lệnh không có `<<`.
-  - Tái hiện: bỏ chỉ số khỏi PENDING rồi chạy test-audit, hoặc `suspicious_labels(MISSED_VP[i][0], SUSPICIOUS)` trả `[]`.
-  - Thêm: here-string đưa vào shell `bash <<< 'rm -rf src'` (bash xoá src, mọi bản trả `[]`).
-  - Xong khi: hết chỉ số P2 trong PENDING, assert xanh, nhãn ⊇ bản trước.
 
 ### 2.4 Đường chậm bậc hai có từ trước
 - Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
@@ -64,7 +56,7 @@ Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
 - `for D in ..; do :; done; rm -rf node_modules/$D`.
 - `read D </dev/null; rm -rf $D/src`.
 - `D=/tmp/w; D+=/../..; rm -rf $D`: ASSIGN không nhận `+=`, nên mọi bản giữ D là /tmp/w và trả `[]`; bash xoá `/tmp/w/../..`, tức `/`. Cách đọc pure nay bắt (`D+=` làm D thành không biết); còn thiếu fixture và oracle.
-- Delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), CRLF.
+- Delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), CRLF: cách đọc bash (P2) nay bắt (MISSED_VP 46–48, 62); oracle chung chưa sinh (KNOWN_GAPS).
 - `\$D` và `'$D'` là chữ.
 - `D=/; rm -rf /tmp/$D`: xoá chính /tmp, luật under_temp coi là vô hại.
 - `git checkout .&`: mẫu nhãn `\.(\s|$)` không nhận `&`.

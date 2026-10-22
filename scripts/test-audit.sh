@@ -1970,6 +1970,9 @@ def every_reading(cmd, tool="Bash"):
     if "$" in cmd:  # cách đọc pure (P3): biến chỉ đổi theo phép gán thuần
         segs += [s for rm in marks for j in joins
                  for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=True)]
+    if "<<" in cmd:  # cách đọc bash (P2): heredoc và here-string như bash, với env của strict và của pure
+        segs += [s for pu in ((False, True) if "$" in cmd else (False,)) for rm in marks for j in joins
+                 for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=pu, bash=True)]
     ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
     for plain, full, ctx, subst in segs:
         for rx, label in a.SUSPICIOUS:
@@ -2059,10 +2062,29 @@ for cmd in ["D=/tmp/x; local D=/; rm -rf $D"] + [pcmd() for _ in range(400)]:
         if seen.setdefault(key, (combo, segs))[1] != segs:
             pclash.append((len(cmd), cmd, seen[key][0], combo))
             break
-    pdiff += any(c[-1] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:-1] + (False,))) for c in combos)
+    pdiff += any(c[11] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:11] + (False,) + c[12:]))
+                 for c in combos)  # trường 11: pure
 check(not pclash, f"reading_key gộp hai tổ hợp (trường pure) cho danh sách đoạn khác nhau ({len(pclash)} lệnh), ngắn nhất: "
                   f"{sorted(pclash)[:1]!r}")
 check(pdiff >= 100, f"lô của trường pure phải có lệnh mà pure đọc khác strict (canh lô thật sự phủ trường mới): {pdiff}/401")
+# Trường bash (P2) của tổ hợp: lô MISSED_VP và fuzz_vp_c (heredoc tên lạ, `<<` dịch bit, here-string). Gộp tổ hợp bash với
+# tổ hợp strict thì danh sách đoạn khác (`cat <<E-X⏎D=/tmp/w⏎E-X⏎rm -rf $D/a`: thân là dữ liệu chỉ ở cách đọc bash).
+bclash, bdiff = [], 0
+bcmds = [c for c, _why in vp.MISSED_VP] + vp.fuzz_vp_c() + ["bash <<< 'rm -rf src'", "cat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a"]
+for cmd in bcmds:
+    bodies, seen = {}, {}
+    combos = a.reading_combos(cmd)
+    for combo in combos:
+        key, segs = a.reading_key(cmd, "Bash", combo, bodies), a.segments(cmd, "Bash", *combo)
+        if seen.setdefault(key, (combo, segs))[1] != segs:
+            bclash.append((len(cmd), cmd, seen[key][0], combo))
+            break
+    bdiff += any(c[12] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:12] + (False,) + c[13:]))
+                 for c in combos)  # trường 12: bash
+check(not bclash, f"reading_key gộp hai tổ hợp (trường bash) cho danh sách đoạn khác nhau ({len(bclash)} lệnh), ngắn nhất: "
+                  f"{sorted(bclash)[:1]!r}")
+check(bdiff >= 100, f"lô của trường bash phải có lệnh mà bash đọc khác strict (canh lô thật sự phủ trường mới): "
+                    f"{bdiff}/{len(bcmds)}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
