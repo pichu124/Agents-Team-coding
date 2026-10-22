@@ -144,6 +144,9 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+# here_strings: tên shell ở đâu đó trong đoạn (như SHELL_WORD, đoạn đã cắt ở `|;&` và xuống dòng), `| shell` ngay sau từ.
+SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
@@ -421,16 +424,29 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
 
 def here_strings(cmd):
     """Here-string `<<<` đưa vào shell (keep_shell_heredocs(bash=True)): bỏ khỏi dòng, đặt chuỗi như thân heredoc sau
-    dòng đó (OPEN_RAW nếu trong nháy đơn hay `$'…'`, không thì OPEN: shell cha thay biến)."""
+    dòng đó (OPEN_RAW nếu trong nháy đơn hay `$'…'`, không thì OPEN: shell cha thay biến, `\\$` để shell con thay).
+    `<<<` trong nháy, comment hay sau `\\` (ARITH_X) không phải toán tử. Lệnh đầu đoạn (sau `|;&` hay xuống dòng gần nhất)
+    và cuối dòng dò dần theo vị trí: tuyến tính trên dòng dài có nhiều `<<<`."""
     out, pos, pend, eol = [], 0, [], 0
+    toks, last = ARITH_X.finditer(cmd), None
+    tok = next(toks, None)
+    scan, fed_seg, line_end = 0, False, -1  # đã dò tới scan; đoạn hiện tại có tên shell chưa; cuối dòng đã tìm
     for m in HERESTR_X.finditer(cmd):
+        while tok and tok.start() < m.start():
+            last, tok = tok, next(toks, None)
+        if last and last.end() > m.start():
+            continue
         if pend and m.start() > eol:
             out += [cmd[pos:eol]] + pend
             pos, pend = eol, []
-        line_start = cmd.rfind("\n", 0, m.start()) + 1
-        line_end = cmd.find("\n", m.end())
-        line_end = len(cmd) if line_end < 0 else line_end
-        if not (SHELL_WORD.search(cmd[line_start:m.start()]) or PIPE_SHELL.match(cmd[m.end():line_end])):
+        chunk = cmd[scan:m.start()]
+        cut = max(chunk.rfind(c) for c in "\n|;&")
+        fed_seg = bool(SHELL_WORD_ANY.search(chunk[cut + 1:])) or (cut < 0 and fed_seg)
+        scan = m.end()
+        if line_end < m.end():
+            line_end = cmd.find("\n", m.end())
+            line_end = len(cmd) if line_end < 0 else line_end
+        if not (fed_seg or HS_PIPE_SHELL.match(cmd, m.end(), line_end)):
             continue
         w = m[1]
         if w.startswith("$'"):
@@ -438,9 +454,9 @@ def here_strings(cmd):
         elif w[0] == "'":
             body, raw = w[1:-1], True
         elif w[0] == '"':
-            body, raw = re.sub(r'\\([$`"\\])|\\\n', r"\1", w[1:-1]), False
+            body, raw = re.sub(r'\\(["\n])', lambda x: "" if x[1] == "\n" else x[1], w[1:-1]), False
         else:
-            body, raw = re.sub(r"\\(.)", r"\1", w), False
+            body, raw = re.sub(r"\\([^$`\\])", r"\1", w), False
         out.append(cmd[pos:m.start()])
         pos, eol = m.end(), line_end
         pend.append("\n" + "\n".join(((OPEN_RAW if raw else OPEN), body, CLOSE)))
