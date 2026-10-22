@@ -129,7 +129,7 @@ Kết quả đo trên Linux, chỉ với các gói của `tests.yml`: danh sách
 ## 2. Lấy bộ kit
 
 ```bash
-git clone -b claude/sharp-knuth-lpdhqz https://github.com/pichu124/Agents-Team-coding.git /c/tools/Agents-Team-coding
+git clone https://github.com/pichu124/Agents-Team-coding.git /c/tools/Agents-Team-coding
 ```
 
 ## 3. Tạo bản clone thử nghiệm và branch mới
@@ -166,6 +166,18 @@ Cập nhật kit về sau: `git pull` trong thư mục kit, rồi chạy lại i
 ```bash
 git -C /c/tools/Agents-Team-coding pull     # báo lỗi thì dừng, không cài
 /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
+```
+
+Bản clone kit tạo trước ngày 22/10/2026 theo nhánh `claude/sharp-knuth-lpdhqz` thì `git pull` báo lỗi, vì nhánh đó đã đổi tên thành `main`. Chạy một lần, trong PowerShell (Git Bash thì thay đường bằng `/c/tools/Agents-Team-coding`). `git branch --show-current` in ra `main` thì bỏ qua lệnh `branch -m`:
+
+```powershell
+cd C:\tools\Agents-Team-coding
+git branch --show-current
+git branch -m claude/sharp-knuth-lpdhqz main
+git fetch origin
+git branch -u origin/main main
+git remote set-head origin -a
+git pull
 ```
 
 Installer tự cập nhật các file kit mà dự án chưa sửa (file trong repo trùng một bản đã commit trong lịch sử kit) và báo `✔ cập nhật N file kit mà dự án chưa sửa`. File dự án đã sửa (ví dụ do `/agent-audit`) thì nó dừng với dòng `✘ <file> đã tồn tại và khác bản của kit` và chưa đụng gì: làm như bước 3 ở [mục 12](#12-việc-hằng-ngày-trong-đợt-thử). Cài xong thì xem `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`. Chạy check rồi mới commit.
@@ -339,7 +351,7 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
 | Lúc | Việc | Lệnh |
 |---|---|---|
 | Đầu buổi | Lấy việc máy kia đã push lên `trial/agent-team`. Lệnh này không lấy bản kit mới | `cd C:\vnstock-trial; git pull` |
-| Lần đầu trên máy, chưa có `C:\tools\Agents-Team-coding` | Clone kit một lần như mục 2. Đường tắt và luồng desktop không clone kit | `git clone -b claude/sharp-knuth-lpdhqz https://github.com/pichu124/Agents-Team-coding.git C:\tools\Agents-Team-coding` |
+| Lần đầu trên máy, chưa có `C:\tools\Agents-Team-coding` | Clone kit một lần như mục 2. Đường tắt và luồng desktop không clone kit | `git clone https://github.com/pichu124/Agents-Team-coding.git C:\tools\Agents-Team-coding` |
 | Đầu buổi | Lấy bản kit mới rồi cài lại vào `C:\vnstock-trial`, không dùng `--force`. Luôn cài lại, kể cả khi pull in `Already up to date.`: hôm trước pull mà quên cài thì hôm nay vẫn cài bù | Bốn bước ở đoạn "Cập nhật kit" ngay dưới bảng |
 | Đầu buổi, nếu đã cài plugin ([docs/05](05-cai-cho-moi-du-an.md)) | Cập nhật plugin | Đã bật auto-update thì không cần làm gì. Chưa bật thì `claude plugin marketplace update agents-team-coding; claude plugin update agent-team@agents-team-coding` |
 | Trong buổi | Giao việc không tầm thường cho đội | `/team-lead <việc>` |
