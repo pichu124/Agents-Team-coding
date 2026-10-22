@@ -222,7 +222,8 @@ PURE_STMT = re.compile(r"^(?:(?:export|declare|typeset|readonly)(?:\s+[A-Za-z_][
 # không biết), từ đóng chỉ ở đầu đoạn (port blissful-dirac 5b32600).
 COMPOUND_OPEN = re.compile(r"(?<![^\s&()`'\"])(?:if|while|until|for|select|case|\{)(?![^\s&|;()<>])")
 COMPOUND_CLOSE = re.compile(r"(?:fi|done|esac|\})(?![^\s&|;()<>`])")
-FUNC_DEF = re.compile(r"(?:^|[\s;&|(){}])(?:function\s+([^\s()<>&|;'\"=$`]+)|([^\s()<>&|;'\"=$`]+)\s*\(\s*\))")
+# Tên hàm không chứa `{`, `}`: chuỗi ngoặc dài không làm regex quay lui bậc hai.
+FUNC_DEF = re.compile(r"(?:^|[\s;&|(){}])(?:function\s+([^\s(){}<>&|;'\"=$`]+)|([^\s(){}<>&|;'\"=$`]+)\s*\(\s*\))")
 # Lệnh nhận tên biến dính cờ (`read -aD`, `printf -vD`, `wait -pD`, `declare -nD`...).
 NAME_FLAGS = {"read", "mapfile", "readarray", "printf", "wait", "declare", "typeset", "local", "export", "readonly"}
 CD = re.compile(r"^(cd|pushd|set-location|sl|push-location)\s+(.+)$", re.IGNORECASE)
@@ -445,8 +446,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # env tại toán tử cộng gán tạm của lệnh nhận thân, rồi theo phép gán trong thân).
     pinned = []
     # pure: số lệnh ghép và thân hàm đang mở (kw), số `(` đang mở (par), tên hàm đã định nghĩa, IFS đã bị gán
-    kw = par = 0
-    funcs, ifs_dirty = set(), False
+    # case: số case đang mở (`)` của mẫu không đóng subshell); anded: comment vừa đóng mở ngay sau `&&` (`false && # c⏎D=x`:
+    # D=x vẫn là vế phải của `&&`)
+    kw = par = case = 0
+    funcs, ifs_dirty, anded = set(), False, False
     parts = re.split("(" + SPLIT.pattern + ")", marked)
     for i, seg in enumerate(parts):
         if i % 2:  # dấu tách: lấy dấu đầu tiên không phải xuống dòng (bash cho xuống dòng ngay sau &&, ||, |)
@@ -455,6 +458,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if comment and seg == "\n":
                 # Hết comment. Comment ngay sau `||`/`|` không ngắt chuỗi: lệnh dòng sau vẫn là vế phải của `||` hay của ống
                 comment = False
+                anded = csep == "&&"
                 if csep in ("||", "|"):
                     sep = csep
             continue
@@ -502,7 +506,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             env = dict(lst)  # `D=x && a & rm $D`: cả danh sách trước `&` chạy nền, lệnh sau `&` thấy env lúc mở danh sách
         groups += [(o, dict(env)) for o in opens]
         bg = bool(background)
-        lone = sep in (None, ";", "\n")  # pure: dấu ngắt thật trước đoạn là đầu lệnh, `;` hay xuống dòng
+        lone = sep in (None, ";", "\n") and not anded  # pure: dấu ngắt thật trước đoạn là đầu lệnh, `;` hay xuống dòng
+        if not raw.lstrip("({ ").startswith("#"):
+            anded = False
         after_or_pipe, sep = sep in ("||", "|"), None
         # strict: trong thân <<EOF, biến đã được shell cha thay (pinned), không theo phép gán trong thân. Bản so mẫu thay bằng
         # env lúc mở thân như bản trước (mẫu khớp như cũ); bản đầy đủ (benign_delete đọc) chỉ thay biến có cùng giá trị tại
@@ -535,17 +541,27 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             cont = i >= 2 and bool(re.search(r"(?<!\\)(?:\\\\)*\\$", parts[i - 2]))  # `echo a\; D=x`: `;` là chữ
             sure = (lone and not commented and not cont and not ifs_dirty and kw == 0 and par == 0
                     and parts[i + 1:i + 2] != ["|"] and not re.search(r"[(){}&]", stmt) and bool(PURE_STMT.match(stmt)))
-            for f1, f2 in FUNC_DEF.findall(stmt):
-                funcs.add(f1 or f2)
+            if "(" in stmt or "function" in stmt:
+                for f1, f2 in FUNC_DEF.findall(stmt):
+                    funcs.add(f1 or f2)
+            words = [w for w in re.split(r"[\s();&|<>`]+", code) if w]
+            # Hàm trùng tên lệnh của phép gán thuần (`export() {`), hay lệnh đầu đoạn qua biến khi đã có hàm (`$F`): có thể
+            # là lời gọi hàm
+            sure = sure and not (funcs & set(words[:1])) and not (funcs and words[:1] and re.search(r"[$`]", words[0]))
             if not commented:
-                kw += len(COMPOUND_OPEN.findall(stmt))
+                opened = COMPOUND_OPEN.findall(stmt)
+                kw += len(opened)
+                case += opened.count("case")
                 if COMPOUND_CLOSE.match(stmt) and not cont:  # `echo a\; fi`: `fi` là chữ, không đóng lệnh ghép
                     kw = max(kw - 1, 0)
-                par = max(par + stmt.count("(") - stmt.count(")"), 0)
+                    case = max(case - stmt.startswith("esac"), 0)
+                # Trong case, `)` có thể là của mẫu (`a)`): không trừ, chỉ làm biến thành không biết lâu hơn
+                par = max(par + stmt.count("(") - (0 if case else stmt.count(")")), 0)
             toks = [t for t in re.split(r"[\s(){};&|<>!`]+", code) if t]
             if re.search(r"(?<![\w$])(?<!\$\{)IFS(?!\w)", code):
                 ifs_dirty = True
-            if ifs_dirty or (not sure and funcs & set(toks)):
+            called = funcs & (set(toks) | set(words)) or (funcs and words[:1] and re.search(r"[$`]", words[0]))
+            if ifs_dirty or (not sure and called):
                 for x in [env, kid] + (saved if ifs_dirty else []) + [y for p in pinned if p for y in p]:
                     x.clear()  # sau IFS cả env đã chụp (thân heredoc, phạm vi lồng) cũng thành không biết
             elif not sure:
