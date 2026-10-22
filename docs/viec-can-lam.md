@@ -11,7 +11,7 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 | Nhánh | Giữ commit gì | Xoá khi |
 |---|---|---|
 | `claude/vibrant-pascal-b81ljt` | 970114a (bộ nhận `heredocs_word`, mốc so nhãn của P2) | P2 ở 2.2 xong |
-| `claude/blissful-dirac-i6vpym` | 55a62d6, 73226cf, 5b32600, 98b74d0, 876ad37, 78e474a, WIP e69f5dd | các ý ở 2.3 xong |
+| `claude/blissful-dirac-i6vpym` | 55a62d6, 73226cf, 5b32600, 98b74d0, 876ad37, 78e474a, WIP e69f5dd | xoá được: 2.3 đã port (cách đọc pure, fixture s101–s143, lô oracle var_trap2) |
 
 Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả nhóm cùng dừng giữa chừng.
 
@@ -33,18 +33,6 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
   - Tái hiện: bỏ chỉ số khỏi PENDING rồi chạy test-audit, hoặc `suspicious_labels(MISSED_VP[i][0], SUSPICIOUS)` trả `[]`.
   - Thêm: here-string đưa vào shell `bash <<< 'rm -rf src'` (bash xoá src, mọi bản trả `[]`).
   - Xong khi: hết chỉ số P2 trong PENDING, assert xanh, nhãn ⊇ bản trước.
-- **P3: env chỉ học từ phép gán thuần**, 7 ca trong PENDING (29, 32, 35, 36, 76, 77, 79). 10 ca khác của P3 (10, 11, 12, 30, 80–82, 88–90) đã nghi sau khi nhánh tích hợp merge nhánh mặc định và 357c9ce; chú thích của PENDING ở test-audit.sh liệt kê chung 11 ca đã nghi, gồm 10 ca này và ca 55 của P2. **Cùng việc với 2.3**, làm một lần.
-  - Vì sao: env chỉ nên học từ đoạn chỉ gồm phép gán thuần, đứng sau đầu dòng, `;` hay xuống dòng, không đứng trước `|`, `|&`, `&`. Gán ở chỗ khác (`echo D=`, gán tạm, sau `&&`, `local`, `D[0]=`, `((D=0))`, `${N:=}`) phải thành "không biết". Cần ngăn xếp env cho `(`/`)`; IFS; `r\ead`, `read -aD`; cd trong nháy hay có `\`.
-  - Thêm: `D=/tmp/w; read -aD <<< /etc; rm -rf "$D"`, `unset D -f`.
-  - Xong khi: PENDING rỗng; so với `AUDIT_BASE_REF=970114a` chỉ mất nhãn ở 52 lệnh mà vibrant-pascal báo thừa (bash thật không xoá ngoài /tmp/w).
-- **Phép gán có nháy trong thân đưa vào shell qua ống**: `cat <<'EOF' | bash` ⏎ `D=~; D="x /"; D=/tmp/w & true; rm -rf /tmp/w/$D` ⏎ `EOF` (bash xoá `/`), mọi bản trả `[]`. Có `| bash` thì shell_c bật, nháy không được che, nên `ASSIGN_STMT` của strict_assign không nhận `D="x /"` là phép gán. Ngữ pháp oracle của 1792c19 sinh được lớp này ở seed khác (seed 7 và 1009 không gặp). Xong khi: lệnh trên có assert vào A, oracle xanh.
-
-### 2.3 Việc dở của blissful-dirac (cùng việc với P3 ở 2.2)
-Nhánh `claude/blissful-dirac-i6vpym` còn giữ commit gốc. Fixture s101–s137 nằm trong test-audit.sh của 98b74d0. Mỗi ý xong khi assert vào A có nhãn "xoá đệ quy", oracle xanh, `AUDIT_BASE_REF=<nền> ./scripts/test-audit.sh` exit 0.
-- **55a62d6, chỉ ghi phép gán thật:** `true D=dist; rm -rf $D/src`, `make PREFIX=/tmp/x install; rm -rf $PREFIX/lib` (bash xoá /src, /lib). Còn 2 assert báo thừa phải giữ vô hại sau khi port: `D=/tmp/x # c | d` ⏎ `rm -rf $D/src`, `true # a |` ⏎ `D=/tmp/x` ⏎ `rm -rf $D/src`.
-- **73226cf, gán rỗng, `unset`, `local`:** `local D=/tmp/x; rm -rf $D/src`, `D=/tmp/x; D=; rm -rf $D/src`, `D=/tmp/x; unset D; rm -rf $D/src`.
-- **5b32600 + 98b74d0, gán có điều kiện:** `D=..; if false; then D=; fi; true D=/tmp/y; rm -rf node_modules/$D` (xoá thư mục dự án), `false && D=/tmp/x; rm -rf $D/src`, `while false; do D=/tmp/x; done; rm -rf $D/src`, `function f {`.
-- **Oracle 876ad37 và 78e474a:** ngữ pháp sinh gán qua đối số, gán tạm, gán trong pipeline (WIP e69f5dd: sàn 2500, KNOWN_GAPS bỏ gán tạm/pipeline) và gán có điều kiện, `if`, thân hàm, `{ }|` (ORACLE_FLOOR 2600, đo được 2836). Oracle 78e474a phải đỏ trên nền trước khi port 5b32600.
 
 ### 2.4 Đường chậm bậc hai có từ trước
 - Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
@@ -64,21 +52,25 @@ Bash xoá trong thư mục tạm mà mục A vẫn báo. Sửa là thu hẹp: ph
 - `D=/tmp/y/; bash <<EOF` ⏎ `rm -rf ${D}src` ⏎ `EOF`: cách đọc blank (port blissful-dirac `cd828ea`) không đoán biến của shell cha trong thân `<<EOF`. Chủ ý: giá trị đoán từng sai (vòng lặp, delimiter lạ, brace).
 - `cd /tmp/x && rm -rf y & wait`: BACKGROUND xoá thư mục cd khi còn lệnh sau `&` (port youthful-fermi `2e5b8bc`).
 - `D=/tmp/x; true & rm -rf $D/src`: benign_delete đọc cả đoạn, coi `true`, `&` là đích. Có từ trước.
+- Fixture s112 `true # a |` ⏎ `D=/tmp/x` ⏎ `rm -rf $D/src`, s113 `D=/tmp/x # c | d` ⏎ `rm -rf $D/src` (`|` trong comment là chữ), s124 `D=/tmp/x; unset D | true; rm -rf $D/src` (unset trong ống chạy ở shell con): blissful-dirac (55a62d6, 73226cf) assert vô hại, nền đã báo trước khi port. Cách đọc pure không thể bớt nhãn (chỉ hợp), nên ba lệnh này vẫn bị báo.
+- s125 `D=/tmp/x; D= true; rm -rf $D/src`: cách đọc pure (P3) coi gán tạm làm biến thành không biết, như việc P3 yêu cầu; bash giữ D là /tmp/x.
+- Cách đọc pure coi phép gán trong subshell, lệnh ghép hay thân hàm là không biết cả bên trong lẫn sau đó (không có ngăn xếp env cho `(`/`)`): `(D=/tmp/w; rm -rf $D/x)` bị báo.
 - Sau khi 357c9ce (port blissful-dirac 749e0c6) vào: `rm -rf "$TMPDIR/x"`, `rm -rf $HOME/.cache/pip`, `cd /tmp && rm -rf node_modules/$PKG`, PowerShell `$env:TEMP\x` bị báo, vì đoạn xoá còn biến chưa thay được thì không vô hại.
 
 ### 2.8 Lỗ mà mọi bản đều bỏ sót (bash 5.2 thật xoá, chưa ai làm)
 Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
-- Hàm gọi sau một phép gán chắc chắn chạy: `D=/tmp/x; f() { D=..; }; D=/tmp/x; f; rm -rf node_modules/$D`.
-- `\;` hay `\|` làm SPLIT tách sai nên `fi` bị trừ độ sâu: `if false; then echo a\; fi; D=/tmp/x; fi; rm -rf $D/src`.
+- Hàm gọi sau một phép gán chắc chắn chạy: `D=/tmp/x; f() { D=..; }; D=/tmp/x; f; rm -rf node_modules/$D`. Cách đọc pure nay bắt (gọi hàm đã định nghĩa làm mọi biến thành không biết); còn thiếu fixture và oracle.
+- `\;` hay `\|` làm SPLIT tách sai nên `fi` bị trừ độ sâu: `if false; then echo a\; fi; D=/tmp/x; fi; rm -rf $D/src`. Cách đọc pure nay bắt ca này; còn thiếu fixture và oracle.
 - `for D in ..; do :; done; rm -rf node_modules/$D`.
 - `read D </dev/null; rm -rf $D/src`.
-- `D=/tmp/w; D+=/../..; rm -rf $D`: ASSIGN không nhận `+=`, nên mọi bản giữ D là /tmp/w và trả `[]`; bash xoá `/tmp/w/../..`, tức `/`.
+- `D=/tmp/w; D+=/../..; rm -rf $D`: ASSIGN không nhận `+=`, nên mọi bản giữ D là /tmp/w và trả `[]`; bash xoá `/tmp/w/../..`, tức `/`. Cách đọc pure nay bắt (`D+=` làm D thành không biết); còn thiếu fixture và oracle.
 - Delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), CRLF.
 - `\$D` và `'$D'` là chữ.
 - `D=/; rm -rf /tmp/$D`: xoá chính /tmp, luật under_temp coi là vô hại.
 - `git checkout .&`: mẫu nhãn `\.(\s|$)` không nhận `&`.
-- Từ báo cáo của PR #8: `(export D=/tmp/w && cd /tmp/w/s)` ⏎ `rm -rf ${D}src`; `false && D=/tmp/w/; rm -rf ${D}src`; `{ D=/tmp/w/; } | true; rm -rf ${D}src`; `true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src`; `rm -rf {,/}src`; `D=/tmp/w/ true; rm -rf ${D}src`.
-- `su -c 'rm -rf src'`; `{ D=/tmp/w; } | true; rm -rf $D` (gán trong nhóm thuộc ống); `rm -rf {/tmp/a,/}`; `| /bin/bash`; nameref, trap, hàm.
+- Từ báo cáo của PR #8: `(export D=/tmp/w && cd /tmp/w/s)` ⏎ `rm -rf ${D}src`; `true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src` (cách đọc pure nay bắt, còn thiếu oracle); `rm -rf {,/}src`.
+- Reviewer của cách đọc pure (PR P3): `D="/tmp/w"/../..; rm -rf $D` (ASSIGN chỉ lấy phần trong nháy; bash xoá `/`); `D=/tmp/x; ((x=1,D=0)); rm -rf $D/src` (strict bỏ qua, bash xoá `0/src`); alias với `shopt -s expand_aliases`; hàm tên có `!` hay `{` (`a!b() { D=/; }; D=/tmp/x; a!b; rm -rf $D/src`). Mọi bản trả `[]`.
+- `su -c 'rm -rf src'`; `rm -rf {/tmp/a,/}`; `| /bin/bash`; nameref, trap, hàm.
 - Heredoc lồng trong thân heredoc đưa vào shell: HEREDOC_STRICT chỉ nhận toán tử ngoài cùng, thân lồng đọc như lệnh của thân ngoài. `bash <<'A'` ⏎ `bash <<X -c 'rm -rf /'` ⏎ `X` ⏎ `A` (bash xoá /); `D=/; bash <<'EOF'` ⏎ `D=/tmp/w; bash <<EOF2` ⏎ `rm -rf \$D/x` ⏎ `EOF2` ⏎ `EOF` (bash xoá /x: thân EOF2 không nháy để `$D` cho shell cháu, nơi D không export là rỗng). Mọi bản trả `[]` (đã thử 3b87a56, 4fba736, 13b4f43, af91da1, 31893fb và bản có bản so mẫu thứ hai cho thân <<EOF). Nhận thân lồng ngay trong cách đọc strict thì thân dữ liệu lồng (`cat <<X` trong thân) thôi là lệnh, mất nhãn mà bản trước báo: cần một cách đọc thêm rồi hợp nhãn.
 - `\` trong cờ: `rm \-rf /x` (bash xoá /x), cả trong thân <<EOF: `O=-rf; bash <<EOF` ⏎ `rm \\$O /x` ⏎ `EOF` (shell cha đổi `\\` thành `\`, shell con bỏ `\`: xoá /x). Mọi bản trả `[]`: mẫu xoá đệ quy so trên chữ còn `\` (`\s-\w*r` không khớp `\-rf`).
 - `cat <<'EOF' | X=1 bash`, `cat <<'EOF' | env bash` ⏎ `rm -rf /x` ⏎ `EOF`: PIPE_SHELL chỉ nhận shell ngay sau `|`, nên thân thành dữ liệu (bash xoá /x; mọi bản trả `[]`).

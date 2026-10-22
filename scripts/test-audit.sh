@@ -440,6 +440,63 @@ call("s83", "bash <<EOF;D=dist\nrm -rf $D/src\nEOF")
 call("s92", "rm -rf /tmp/$X")
 call("s93", "cd /tmp && rm -rf node_modules/$X")
 call("s94", "(D=..); rm -rf node_modules/$D")
+# Port blissful-dirac (98b74d0, fixture s101–s137) và ca P3 của docs/viec-can-lam.md: biến chỉ đổi theo phép gán thuần chắc
+# chạy ở shell này. Chữ NAME=… là đối số của lệnh khác, gán tạm, gán trong ống, sau `&&`/`||`, trong lệnh ghép hay thân hàm,
+# `local` ngoài hàm, gán rỗng, unset: bash 5.2 xoá ngoài thư mục tạm ở mọi lệnh dưới đây trừ s106–s108, s112, s113,
+# s122–s125, s133–s136 (xoá trong /tmp/x).
+call("s101", "true D=dist; rm -rf $D/src")
+call("s102", "make PREFIX=/tmp/x install; rm -rf $PREFIX/lib")
+call("s103", "D=/tmp/x true; rm -rf $D/src")
+call("s104", "D=/tmp/x | true; rm -rf $D/src")
+call("s105", "echo D=/tmp/x; rm -rf $D")
+call("s106", "D=/tmp/x; rm -rf $D/src")
+call("s107", "export D=/tmp/x; rm -rf $D/src")
+call("s108", "D=/tmp/x E=/tmp/y; rm -rf $D $E")
+call("s109", "D=/tmp/x; { D=..; }; true D=/tmp/x; rm -rf node_modules/$D")
+call("s110", "D=/tmp/x; D=.. # c\ntrue D=/tmp/x; rm -rf node_modules/$D")
+call("s111", "echo a\\|#b | # c\nexport D=/tmp/x; rm -rf $D/src")
+call("s112", "true # a |\nD=/tmp/x\nrm -rf $D/src")
+call("s113", "D=/tmp/x # c | d\nrm -rf $D/src")
+call("s114", "local D=/tmp/x; rm -rf $D/src")
+call("s115", "D=/tmp/x; D=; rm -rf $D/src")
+call("s116", 'D=/tmp/x; D=""; rm -rf $D/src')
+call("s117", "D=/tmp/x; unset D; rm -rf $D/src")
+call("s118", "D=/tmp/x; D= E=/tmp/y; rm -rf $D/src")
+call("s119", "D=/tmp/x; export D=; rm -rf $D/src")
+call("s120", "D=/tmp/x; { unset -v D; }; rm -rf $D/src")
+call("s121", "f() { true; D=/tmp/w; local D=..; true D=/tmp/y; rm -rf node_modules/$D; }; f")
+call("s122", "D=/tmp/x; export D; rm -rf $D/src")
+call("s123", "D=/tmp/x; unset -f D; rm -rf $D/src")
+call("s124", "D=/tmp/x; unset D | true; rm -rf $D/src")
+call("s125", "D=/tmp/x; D= true; rm -rf $D/src")
+call("s126", "D=..; if false; then D=; fi; true D=/tmp/y; rm -rf node_modules/$D")
+call("s127", "D=..; f() { true; D=; }; true D=/tmp/y; rm -rf node_modules/$D")
+call("s128", "if false; then D=/tmp/z; fi; rm -rf $D/src")
+call("s129", "false && D=/tmp/x; rm -rf $D/src")
+call("s130", "while false; do D=/tmp/x; done; rm -rf $D/src")
+call("s131", "if true; then echo a\\; fi; else D=/tmp/x; fi; rm -rf $D/src")
+call("s132", "if false; then x=$(if true; then echo; fi); D=/tmp/x; fi; rm -rf $D/src")
+call("s133", "if true; then :; fi; D=/tmp/x; rm -rf $D/src")
+call("s134", "f() { :; }; D=/tmp/x; rm -rf $D/src")
+call("s135", "x=$(for i in 1; do echo; done); D=/tmp/x; rm -rf $D/src")
+call("s136", "D=/tmp/x && rm -rf $D/src")
+call("s137", "D=/tmp/x; function f { D=..; }; f; true D=/tmp/y; rm -rf node_modules/$D")
+# Ca thêm của P3 và 2.2, ca ngắn nhất oracle bash (lô var_trap2) tìm ra trên nền: bash 5.2 xoá /, /etc, node_modules/../..
+# hay dist/../.. (thư mục cha của dự án). s143: `D="x /"` trong thân đưa vào shell qua ống (nháy không được che) và
+# `D=/tmp/w &` chạy nền không đổi D: rm xoá /tmp/w/x và /.
+call("s138", 'D=/tmp/w; read -aD <<< /etc; rm -rf "$D"')
+call("s139", "D=/tmp/w; unset D -f; rm -rf $D/a")
+call("s140", "D=../.. # a\n{ D=~; } | true && rm -rf node_modules/$D")
+call("s141", "D=../..; local D=/tmp/w; rm -rf node_modules/$D")
+call("s142", "export D=../..; { D=/tmp/w; } | true | rm -rf dist/$D")
+call("s143", "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF")
+# Reviewer của cách đọc pure: comment chen sau `&&`, `)` của mẫu case trong subshell, gọi hàm qua biến, hàm tên export
+# (bash 5.2 xoá //src ở cả năm lệnh).
+call("s144", "D=/; false && # c\nD=/tmp/x; rm -rf $D/src")
+call("s145", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src")
+call("s146", "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src")
+call("s147", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src")
+call("s148", "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1227,6 +1284,37 @@ for must in ("cat <<'EOF'\nEOF\nrm -rf src", "cd /tmp && rm -rf $D",
 for must in ("rm -rf /tmp/$X", "cd /tmp && rm -rf node_modules/$X", "(D=..); rm -rf node_modules/$D"):
     check(must in A, f"biến audit không thay được có thể chứa `..`, khoảng trắng hay đường tuyệt đối, dù sau thư mục tạm hay "
                      f"tên lành: {must!r}")
+# Port blissful-dirac 55a62d6, 73226cf, 5b32600, 98b74d0 và ca P3 (fixture s101–s143): biến chỉ đổi theo phép gán thuần chắc
+# chạy ở shell này, chỗ khác làm biến thành không biết. Lệnh phải vào A, và có nhãn xoá đệ quy (kiểm sau khi nạp audit-agent).
+P3_MUST = ("true D=dist; rm -rf $D/src", "make PREFIX=/tmp/x install; rm -rf $PREFIX/lib", "D=/tmp/x true; rm -rf $D/src",
+             "D=/tmp/x | true; rm -rf $D/src", "echo D=/tmp/x; rm -rf $D",
+             "D=/tmp/x; { D=..; }; true D=/tmp/x; rm -rf node_modules/$D", "D=/tmp/x; D=.. # c\ntrue D=/tmp/x; rm -rf node_modules/$D",
+             "echo a\\|#b | # c\nexport D=/tmp/x; rm -rf $D/src", "local D=/tmp/x; rm -rf $D/src", "D=/tmp/x; D=; rm -rf $D/src",
+             'D=/tmp/x; D=""; rm -rf $D/src', "D=/tmp/x; unset D; rm -rf $D/src", "D=/tmp/x; D= E=/tmp/y; rm -rf $D/src",
+             "D=/tmp/x; export D=; rm -rf $D/src", "D=/tmp/x; { unset -v D; }; rm -rf $D/src",
+             "f() { true; D=/tmp/w; local D=..; true D=/tmp/y; rm -rf node_modules/$D; }; f",
+             "D=..; if false; then D=; fi; true D=/tmp/y; rm -rf node_modules/$D",
+             "D=..; f() { true; D=; }; true D=/tmp/y; rm -rf node_modules/$D", "if false; then D=/tmp/z; fi; rm -rf $D/src",
+             "false && D=/tmp/x; rm -rf $D/src", "while false; do D=/tmp/x; done; rm -rf $D/src",
+             "if true; then echo a\\; fi; else D=/tmp/x; fi; rm -rf $D/src",
+             "if false; then x=$(if true; then echo; fi); D=/tmp/x; fi; rm -rf $D/src",
+             "D=/tmp/x; function f { D=..; }; f; true D=/tmp/y; rm -rf node_modules/$D",
+             'D=/tmp/w; read -aD <<< /etc; rm -rf "$D"', "D=/tmp/w; unset D -f; rm -rf $D/a",
+             "D=../.. # a\n{ D=~; } | true && rm -rf node_modules/$D", "D=../..; local D=/tmp/w; rm -rf node_modules/$D",
+             "export D=../..; { D=/tmp/w; } | true | rm -rf dist/$D",
+             "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF",
+             "D=/; false && # c\nD=/tmp/x; rm -rf $D/src", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src",
+             "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src",
+             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
+for must in P3_MUST:
+    check(must in A, f"phép gán không thuần hay có thể không chạy ở shell này không đặt biến: {must!r}")
+# Vô hại theo bash 5.2 (xoá trong /tmp/x): phép gán thuần, export, lệnh ghép và thân hàm đã đóng, phép gán trước `&&`,
+# `export D` giữ giá trị, `unset -f` bỏ hàm.
+for benign in ("D=/tmp/x; rm -rf $D/src", "export D=/tmp/x; rm -rf $D/src", "D=/tmp/x E=/tmp/y; rm -rf $D $E",
+               "D=/tmp/x; export D; rm -rf $D/src", "D=/tmp/x; unset -f D; rm -rf $D/src",
+               "if true; then :; fi; D=/tmp/x; rm -rf $D/src", "f() { :; }; D=/tmp/x; rm -rf $D/src",
+               "x=$(for i in 1; do echo; done); D=/tmp/x; rm -rf $D/src", "D=/tmp/x && rm -rf $D/src"):
+    check(benign not in A, f"phép gán thuần chắc chạy ở shell này đổi biến: vô hại: {benign!r}")
 WT = "/khong-co-tren-may/kitproj/.claude/worktrees/agent-abc"
 AW = {(i["command"], i["cwd"]) for i in r["A_possible_misses"]}
 # `rm -rf src` (w5) từng vô hại chỉ nhờ cwd của phiên là worktree agent. Lead chốt 18/10: cwd của phiên không phải cd
@@ -1289,6 +1377,15 @@ check("plain proj" in sys.argv[8] and "mainrepo" in sys.argv[8], "--all: mỗi d
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
+for must in P3_MUST:
+    check("xoá đệ quy" in a.suspicious_labels(must, a.SUSPICIOUS), f"P3: nhãn xoá đệ quy: {must!r}")
+# Cách đọc pure tìm định nghĩa hàm trên từng đoạn: chuỗi ngoặc dài không được làm regex quay lui bậc hai (reviewer đo
+# `"{"*40000 + " $D"` 18 giây trước khi sửa, nền 0,07 giây).
+import time
+for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" * 40000 + "() $D"):
+    t0 = time.time()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(time.time() - t0 < 1, f"cách đọc pure tuyến tính trên chuỗi ngoặc dài: {cmd[:12]!r}… mất {time.time() - t0:.1f} s")
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
 for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
@@ -1593,8 +1690,8 @@ spec.loader.exec_module(vp)
 MISSED_VP_PENDING = {
     38, 40, 41, *range(46, 55), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
     # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
-    29, 32, 35, 36, 76, 77, 79,  # biến như bash: gán không thuần (local, `D[0]=`, `((D=0))`), gán ngay sau `(`, IFS, `r\ead`,
-    # `-aD`. 10, 11, 12, 30, 55, 80–82, 88–90 nay đã nghi nhờ các cách đọc của PR #18 trong phép hợp
+    # Ca 55 (P2) và các ca P3 (10, 11, 12, 29, 30, 32, 35, 36, 76, 77, 79, 80–82, 88–90) nay đã nghi: các cách đọc của PR #18
+    # và cách đọc pure (biến chỉ đổi theo phép gán thuần) trong phép hợp
 }
 for i, (cmd, why) in enumerate(vp.MISSED_VP):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -1870,6 +1967,9 @@ def every_reading(cmd, tool="Bash"):
                                      pipe_scope=True)]
     # cách đọc strict của nhánh tích hợp audit
     segs += [s for rm in marks for j in joins for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True)]
+    if "$" in cmd:  # cách đọc pure (P3): biến chỉ đổi theo phép gán thuần
+        segs += [s for rm in marks for j in joins
+                 for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=True)]
     ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
     for plain, full, ctx, subst in segs:
         for rx, label in a.SUSPICIOUS:
@@ -1941,6 +2041,28 @@ for tool, cmd in REPS + [(t, kcmd()) for t in ("Bash", "Bash", "PowerShell") for
             break
 check(not clash, f"reading_key gộp hai tổ hợp cho danh sách đoạn khác nhau ({len(clash)} lệnh), ngắn nhất: "
                  f"{sorted(clash)[:1]!r}")
+# Trường pure (P3) của tổ hợp: lô riêng (hạt riêng, lô trên giữ nguyên) có cấu trúc mà cách đọc pure đọc khác strict: phép
+# gán không thuần, lệnh ghép, thân hàm, subshell, local, unset, read, IFS, `\;`. Tổ hợp pure phải là một lớp riêng: gộp nó
+# với tổ hợp strict thì danh sách đoạn khác (`D=/tmp/x; local D=/; rm -rf $D` cho `rm -rf /tmp/x` ở strict, `rm -rf $D` ở pure).
+PTOK = ["D=/tmp/x", "D=/", "D=", "local D=/", "unset D", "unset -f D", "read -aD", "((D=0))", "D[0]=/", "echo D=/", "D=/ true",
+        "if true", "then", "fi", "f() {", "function f {", "}", "f", "(", ")", "{", "IFS=/", "echo a\\", "export D",
+        "rm -rf $D", "rm -rf ${D}src", "bash <<EOF", "EOF", "# x", "$(", "while false", "do", "done"]
+prnd = random.Random(11)
+def pcmd():
+    return "".join(prnd.choice(PTOK) + prnd.choice(KSEP) for _ in range(prnd.randint(1, 9))) + "rm -rf $D/src"
+pclash, pdiff = [], 0
+for cmd in ["D=/tmp/x; local D=/; rm -rf $D"] + [pcmd() for _ in range(400)]:
+    bodies, seen = {}, {}
+    combos = a.reading_combos(cmd)
+    for combo in combos:
+        key, segs = a.reading_key(cmd, "Bash", combo, bodies), a.segments(cmd, "Bash", *combo)
+        if seen.setdefault(key, (combo, segs))[1] != segs:
+            pclash.append((len(cmd), cmd, seen[key][0], combo))
+            break
+    pdiff += any(c[-1] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:-1] + (False,))) for c in combos)
+check(not pclash, f"reading_key gộp hai tổ hợp (trường pure) cho danh sách đoạn khác nhau ({len(pclash)} lệnh), ngắn nhất: "
+                  f"{sorted(pclash)[:1]!r}")
+check(pdiff >= 100, f"lô của trường pure phải có lệnh mà pure đọc khác strict (canh lô thật sự phủ trường mới): {pdiff}/401")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -2575,10 +2697,14 @@ sbx = sys.argv[1]
 # ORACLE_FLOOR_EXTRA canh riêng lệnh do chính hàm lst thứ hai sinh (EXTRA, không qua lst_base): đo 586, trong đó 12 có cd
 # nhiều tham số và 62 có `|&` (bash 3.2 chưa có: lỗi cú pháp, rm không chạy), sàn là 586 - 12 - 62 = 512, làm tròn xuống.
 # Bỏ lô thêm hay bỏ hàm lst thứ hai (lô thêm vẫn có 953 lệnh nguy hiểm, mọi lệnh qua lst_base) thì EXTRA rỗng. CHỈ ĐƯỢC
-# NÂNG cả hai sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
+# NÂNG các sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
 # sửa phân tích lệnh trong audit-agent.py.
-ORACLE_FLOOR = 2400
+# Lô var_trap2 (port blissful-dirac 78e474a) đo trên bash 5.2: tổng 4612/7090 lệnh nguy hiểm (364 có cd nhiều tham số hay
+# `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
+# cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
+ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
+ORACLE_FLOOR_TRAP2 = 450
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc.
@@ -2586,7 +2712,6 @@ N = 4500  # khoảng 12 giây trên 4 CPU
 #   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
 #   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
 #   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
-#   - nhóm `{ }` có phép gán, trong pipeline hay sau `&&`/`||` (`{ D=x; } | true`: docs/viec-can-lam.md 2.8)
 #   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
 #   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
 if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
@@ -2800,6 +2925,87 @@ def lst(depth, top):
 
 rnd.seed(1009)
 cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
+# Lô thêm thứ hai, hạt riêng (lệnh của hai lô trên giữ nguyên): ngữ pháp oracle của blissful-dirac 876ad37, 78e474a (WIP
+# e69f5dd). Bẫy biến: D gán giá trị đưa đích ra ngoài ở shell này, rồi D được đặt lại ở chỗ có thể không đổi D của shell này:
+# đối số của builtin (`true D=…`), gán tạm (`D=… true`), trong ống, sau `&&`/`||`, trong `if`, `while`, thân hàm có gọi hay
+# không (`f() {`, `function f {`), `local` trong và ngoài hàm, nhóm `{ }` kể cả trong ống, rồi rm đích có $D sau phần trông
+# lành. Các khâu ghép nhau bằng mọi dấu ngắt, trừ phép gán D ra ngoài phải chạy ở shell này (không sát `|`, không sau
+# `&&`/`||`), không thì bẫy hết tác dụng. Thân heredoc và lệnh ghép lồng (item) cũng sinh từ đây.
+lst_extra = lst
+
+
+def var_trap2(depth, top):
+    items = [item(depth, top) for _ in range(rnd.randint(0, 1))]
+    items.append(([pick(["D=", "export D="]) + pick(D_OUT)], "out", False))
+    v = "D=" + pick(D_V)
+    k = rnd.randrange(13 if top else 12)  # heredoc chỉ ở mức ngoài cùng, như heredoc()
+    if k == 0:
+        p = ["( " + v + " )"]
+    elif k == 1:
+        p = [v + " & true"]
+    elif k == 2:
+        p = [v]
+    elif k == 3:
+        p = [pick(["true ", ": "]) + v]
+    elif k == 4:
+        p = [v + " true"]
+    elif k == 5:
+        p = [pick([v + " | true", "true | " + v])]
+    elif k == 6:
+        p = [pick(["true", "false"]) + pick([" && ", " || "]) + v]
+    elif k == 7:
+        p = ["if " + pick(["true", "false"]) + "; then " + v + "; fi"]
+    elif k == 8:
+        p = [pick(["f() { ", "function f { "]) + v + "; }" + pick(["", "; f"])]
+    elif k == 9:
+        p = [pick(["{ " + v + "; }", "{ " + v + "; } | true", "true | { " + v + "; }"])]
+    elif k == 10:
+        p = [pick(["while false", "until true"]) + "; do " + v + "; done"]
+    elif k == 11:
+        p = [pick(["local " + v, "f() { local " + v + "; }; f"])]
+    else:
+        p = [pick(["bash <<'EOF'", "bash <<EOF", "cat <<EOF | bash", "cat <<'EOF' | bash"]) + "\n" + v + "\nEOF"]
+    items.append((p, "heredoc" if k == 12 else "", False))
+    if rnd.random() < 0.5:
+        items.append(item(depth, top))
+    items.append(([RM, " -rf " + pick(VAR_T)], "", False))
+    out, bg = [], False
+    for i, (p, kind, _ga) in enumerate(items):
+        out += p
+        if i == len(items) - 1:
+            break
+        if kind in ("heredoc", "comment"):
+            sep = "\n"
+        else:
+            sep = pick(["&&", "||", ";", "|", "\n", "&"])
+            if (kind == "out" and sep == "|") or (items[i + 1][1] == "out" and sep in ("&&", "||", "|")):
+                sep = ";"  # bẫy biến hết tác dụng khi phép gán D ra ngoài không chạy ở shell này
+        bg = bg or sep == "&"
+        if sep == "\n":
+            if kind not in ("heredoc", "comment") and rnd.random() < P_TRC:
+                out.append(" " + pick(COMMENT))
+            out.append("\n")
+        elif sep in ("&&", "||", "|") and rnd.random() < P_OPC:
+            out.append(" %s %s\n" % (sep, pick(COMMENT)))
+        else:
+            out.append(" " + sep + " " if sep != ";" else "; ")
+    if bg:
+        out.append("\nwait")
+    return out
+
+
+def lst(depth, top):
+    if rnd.random() < 0.5:
+        return lst_extra(depth, top)
+    out = var_trap2(depth, top)
+    if depth == 0:
+        TRAP2.add(tuple(out))
+    return out, False
+
+
+TRAP2 = set()
+rnd.seed(2600)
+cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
@@ -2868,7 +3074,7 @@ def dangerous(pwd, t):
 
 
 danger, miss, timeouts = 0, [], []
-danger_extra = 0
+danger_extra = danger_trap2 = 0
 for i, (calls, err, to) in enumerate(results):
     c = render(cmds[i], "rm")
     if to:
@@ -2878,6 +3084,7 @@ for i, (calls, err, to) in enumerate(results):
         continue
     danger += 1
     danger_extra += cmds[i] in EXTRA
+    danger_trap2 += cmds[i] in TRAP2
     if "xoá đệ quy" not in au.suspicious_labels(c, au.SUSPICIOUS, "Bash"):
         miss.append((len(c), c, bad, err))
 el = time.time() - t0
@@ -2909,10 +3116,16 @@ if danger_extra < ORACLE_FLOOR_EXTRA:
     print(f"✘ audit: lệnh thêm của oracle bash (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
           f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
           "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.", file=sys.stderr)
+if danger_trap2 < ORACLE_FLOOR_TRAP2:
+    fail = True
+    print(f"✘ audit: bẫy biến của lô thêm thứ hai (var_trap2) chỉ có {danger_trap2} lệnh nguy hiểm, dưới sàn "
+          f"ORACLE_FLOOR_TRAP2={ORACLE_FLOOR_TRAP2}. Lô hay hàm var_trap2 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
+          "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.", file=sys.stderr)
 if fail:
     sys.exit(1)
 print(f"✔ audit: oracle bash: mục A báo đủ {danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, "
-      f"sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ hai, sàn {ORACLE_FLOOR_EXTRA}; {el:.1f}s)")
+      f"sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn "
+      f"{ORACLE_FLOOR_TRAP2}; {el:.1f}s)")
 PYEOF
 rm -rf "$tmp/oracle"
 
