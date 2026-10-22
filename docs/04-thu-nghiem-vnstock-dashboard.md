@@ -168,13 +168,16 @@ git -C /c/tools/Agents-Team-coding pull     # báo lỗi thì dừng, không cà
 /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
 ```
 
-Bản clone kit tạo trước ngày 22/10/2026 theo nhánh `claude/sharp-knuth-lpdhqz` thì `git pull` báo lỗi, vì nhánh đó đã đổi tên thành `main`. Chạy một lần:
+Bản clone kit tạo trước ngày 22/10/2026 theo nhánh `claude/sharp-knuth-lpdhqz` thì `git pull` báo lỗi, vì nhánh đó đã đổi tên thành `main`. Chạy một lần, trong PowerShell (Git Bash thì thay đường bằng `/c/tools/Agents-Team-coding`). `git branch --show-current` in ra `main` thì bỏ qua lệnh `branch -m`:
 
-```bash
-git -C /c/tools/Agents-Team-coding branch -m claude/sharp-knuth-lpdhqz main
-git -C /c/tools/Agents-Team-coding fetch origin
-git -C /c/tools/Agents-Team-coding branch -u origin/main main
-git -C /c/tools/Agents-Team-coding remote set-head origin -a
+```powershell
+cd C:\tools\Agents-Team-coding
+git branch --show-current
+git branch -m claude/sharp-knuth-lpdhqz main
+git fetch origin
+git branch -u origin/main main
+git remote set-head origin -a
+git pull
 ```
 
 Installer tự cập nhật các file kit mà dự án chưa sửa (file trong repo trùng một bản đã commit trong lịch sử kit) và báo `✔ cập nhật N file kit mà dự án chưa sửa`. File dự án đã sửa (ví dụ do `/agent-audit`) thì nó dừng với dòng `✘ <file> đã tồn tại và khác bản của kit` và chưa đụng gì: làm như bước 3 ở [mục 12](#12-việc-hằng-ngày-trong-đợt-thử). Cài xong thì xem `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`. Chạy check rồi mới commit.
