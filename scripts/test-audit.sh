@@ -1950,6 +1950,9 @@ def every_reading(cmd, tool="Bash"):
                                      pipe_scope=True)]
     # cách đọc strict của nhánh tích hợp audit
     segs += [s for rm in marks for j in joins for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True)]
+    if "$" in cmd:  # cách đọc pure (P3): biến chỉ đổi theo phép gán thuần
+        segs += [s for rm in marks for j in joins
+                 for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=True)]
     ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
     for plain, full, ctx, subst in segs:
         for rx, label in a.SUSPICIOUS:
@@ -2021,6 +2024,28 @@ for tool, cmd in REPS + [(t, kcmd()) for t in ("Bash", "Bash", "PowerShell") for
             break
 check(not clash, f"reading_key gộp hai tổ hợp cho danh sách đoạn khác nhau ({len(clash)} lệnh), ngắn nhất: "
                  f"{sorted(clash)[:1]!r}")
+# Trường pure (P3) của tổ hợp: lô riêng (hạt riêng, lô trên giữ nguyên) có cấu trúc mà cách đọc pure đọc khác strict: phép
+# gán không thuần, lệnh ghép, thân hàm, subshell, local, unset, read, IFS, `\;`. Tổ hợp pure phải là một lớp riêng: gộp nó
+# với tổ hợp strict thì danh sách đoạn khác (`D=/tmp/x; local D=/; rm -rf $D` cho `rm -rf /tmp/x` ở strict, `rm -rf $D` ở pure).
+PTOK = ["D=/tmp/x", "D=/", "D=", "local D=/", "unset D", "unset -f D", "read -aD", "((D=0))", "D[0]=/", "echo D=/", "D=/ true",
+        "if true", "then", "fi", "f() {", "function f {", "}", "f", "(", ")", "{", "IFS=/", "echo a\\", "export D",
+        "rm -rf $D", "rm -rf ${D}src", "bash <<EOF", "EOF", "# x", "$(", "while false", "do", "done"]
+prnd = random.Random(11)
+def pcmd():
+    return "".join(prnd.choice(PTOK) + prnd.choice(KSEP) for _ in range(prnd.randint(1, 9))) + "rm -rf $D/src"
+pclash, pdiff = [], 0
+for cmd in ["D=/tmp/x; local D=/; rm -rf $D"] + [pcmd() for _ in range(400)]:
+    bodies, seen = {}, {}
+    combos = a.reading_combos(cmd)
+    for combo in combos:
+        key, segs = a.reading_key(cmd, "Bash", combo, bodies), a.segments(cmd, "Bash", *combo)
+        if seen.setdefault(key, (combo, segs))[1] != segs:
+            pclash.append((len(cmd), cmd, seen[key][0], combo))
+            break
+    pdiff += any(c[-1] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:-1] + (False,))) for c in combos)
+check(not pclash, f"reading_key gộp hai tổ hợp (trường pure) cho danh sách đoạn khác nhau ({len(pclash)} lệnh), ngắn nhất: "
+                  f"{sorted(pclash)[:1]!r}")
+check(pdiff >= 100, f"lô của trường pure phải có lệnh mà pure đọc khác strict (canh lô thật sự phủ trường mới): {pdiff}/401")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))
@@ -2655,11 +2680,14 @@ sbx = sys.argv[1]
 # ORACLE_FLOOR_EXTRA canh riêng lệnh do chính hàm lst thứ hai sinh (EXTRA, không qua lst_base): đo 586, trong đó 12 có cd
 # nhiều tham số và 62 có `|&` (bash 3.2 chưa có: lỗi cú pháp, rm không chạy), sàn là 586 - 12 - 62 = 512, làm tròn xuống.
 # Bỏ lô thêm hay bỏ hàm lst thứ hai (lô thêm vẫn có 953 lệnh nguy hiểm, mọi lệnh qua lst_base) thì EXTRA rỗng. CHỈ ĐƯỢC
-# NÂNG cả hai sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
+# NÂNG các sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
 # sửa phân tích lệnh trong audit-agent.py.
-ORACLE_FLOOR = 2400
+# Lô var_trap2 (port blissful-dirac 78e474a) đo trên bash 5.2: tổng 4612/7090 lệnh nguy hiểm (364 có cd nhiều tham số hay
+# `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
+# cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
+ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
-ORACLE_FLOOR_TRAP2 = 0
+ORACLE_FLOOR_TRAP2 = 450
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc.
@@ -2667,7 +2695,6 @@ N = 4500  # khoảng 12 giây trên 4 CPU
 #   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
 #   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
 #   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
-#   - nhóm `{ }` có phép gán, trong pipeline hay sau `&&`/`||` (`{ D=x; } | true`: docs/viec-can-lam.md 2.8)
 #   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
 #   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
 if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
