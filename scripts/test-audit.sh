@@ -497,6 +497,15 @@ call("s145", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src")
 call("s146", "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src")
 call("s147", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src")
 call("s148", "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
+# P2: here-string đưa vào shell: bash chạy chuỗi như lệnh (bash 5.2 xoá ./src, /tmp/w/.. tức /tmp, ./src).
+call("s149", "bash <<< 'rm -rf src'")
+call("s150", "D=/tmp/w; sh <<< \"rm -rf $D/..\"")
+call("s151", "cat <<< 'rm -rf src' | bash")
+# Reviewer của cách đọc bash: `\$D` trong here-string nháy kép để shell con thay (bash xoá //src); `<<<` trong comment hay
+# trong nháy không mở here-string, nháy lẻ sau nó không nuốt lệnh sau (bash xoá /a).
+call("s152", "D=/tmp/w; bash <<< \"D=/; rm -rf \\$D/src\"")
+call("s153", "# bash <<< '\ncat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\n# '")
+call("s154", "echo \"bash <<< '\"; cat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\necho \"'\"")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1305,7 +1314,10 @@ P3_MUST = ("true D=dist; rm -rf $D/src", "make PREFIX=/tmp/x install; rm -rf $PR
              "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF",
              "D=/; false && # c\nD=/tmp/x; rm -rf $D/src", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src",
              "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src",
-             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
+             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src",
+             "bash <<< 'rm -rf src'", "D=/tmp/w; sh <<< \"rm -rf $D/..\"", "cat <<< 'rm -rf src' | bash",
+             "D=/tmp/w; bash <<< \"D=/; rm -rf \\$D/src\"", "# bash <<< '\ncat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\n# '",
+             "echo \"bash <<< '\"; cat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\necho \"'\"")
 for must in P3_MUST:
     check(must in A, f"phép gán không thuần hay có thể không chạy ở shell này không đặt biến: {must!r}")
 # Vô hại theo bash 5.2 (xoá trong /tmp/x): phép gán thuần, export, lệnh ghép và thân hàm đã đóng, phép gán trước `&&`,
@@ -1386,6 +1398,12 @@ for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" 
     t0 = time.time()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(time.time() - t0 < 1, f"cách đọc pure tuyến tính trên chuỗi ngoặc dài: {cmd[:12]!r}… mất {time.time() - t0:.1f} s")
+# Cách đọc bash dò here-string theo từng `<<<`: dòng dài có nhiều `<<<` không được làm nó bậc hai (reviewer đo 7,9–91 giây
+# trước khi sửa, nền 0,3–1 giây).
+for cmd in ("read D<<<x; " * 3000, "wc <<< x; " * 5000, 'grep a <<< "$x" && ' * 3000, "echo hi; " * 20000 + "<<< a " * 4000):
+    t0 = time.time()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(time.time() - t0 < 4, f"cách đọc bash tuyến tính trên nhiều here-string: {cmd[:14]!r}… mất {time.time() - t0:.1f} s")
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
 for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
@@ -1687,12 +1705,7 @@ check(not a.suspicious_labels("cd /tmp && rm -rf src", a.SUSPICIOUS), "cd vào t
 spec = importlib.util.spec_from_file_location("missed_vp", sys.argv[14])
 vp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vp)
-MISSED_VP_PENDING = {
-    38, 40, 41, *range(46, 55), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
-    # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
-    # Ca 55 (P2) và các ca P3 (10, 11, 12, 29, 30, 32, 35, 36, 76, 77, 79, 80–82, 88–90) nay đã nghi: các cách đọc của PR #18
-    # và cách đọc pure (biến chỉ đổi theo phép gán thuần) trong phép hợp
-}
+MISSED_VP_PENDING = set()  # P2 (heredoc như bash, cách đọc bash) và P3 (cách đọc pure) đã nghi mọi ca
 for i, (cmd, why) in enumerate(vp.MISSED_VP):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     if i in MISSED_VP_PENDING:
@@ -1970,6 +1983,9 @@ def every_reading(cmd, tool="Bash"):
     if "$" in cmd:  # cách đọc pure (P3): biến chỉ đổi theo phép gán thuần
         segs += [s for rm in marks for j in joins
                  for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=True)]
+    if "<<" in cmd:  # cách đọc bash (P2): heredoc và here-string như bash, với env của strict và của pure
+        segs += [s for pu in ((False, True) if "$" in cmd else (False,)) for rm in marks for j in joins
+                 for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=pu, bash=True)]
     ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
     for plain, full, ctx, subst in segs:
         for rx, label in a.SUSPICIOUS:
@@ -2059,10 +2075,29 @@ for cmd in ["D=/tmp/x; local D=/; rm -rf $D"] + [pcmd() for _ in range(400)]:
         if seen.setdefault(key, (combo, segs))[1] != segs:
             pclash.append((len(cmd), cmd, seen[key][0], combo))
             break
-    pdiff += any(c[-1] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:-1] + (False,))) for c in combos)
+    pdiff += any(c[11] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:11] + (False,) + c[12:]))
+                 for c in combos)  # trường 11: pure
 check(not pclash, f"reading_key gộp hai tổ hợp (trường pure) cho danh sách đoạn khác nhau ({len(pclash)} lệnh), ngắn nhất: "
                   f"{sorted(pclash)[:1]!r}")
 check(pdiff >= 100, f"lô của trường pure phải có lệnh mà pure đọc khác strict (canh lô thật sự phủ trường mới): {pdiff}/401")
+# Trường bash (P2) của tổ hợp: lô MISSED_VP và fuzz_vp_c (heredoc tên lạ, `<<` dịch bit, here-string). Gộp tổ hợp bash với
+# tổ hợp strict thì danh sách đoạn khác (`cat <<E-X⏎D=/tmp/w⏎E-X⏎rm -rf $D/a`: thân là dữ liệu chỉ ở cách đọc bash).
+bclash, bdiff = [], 0
+bcmds = [c for c, _why in vp.MISSED_VP] + vp.fuzz_vp_c() + ["bash <<< 'rm -rf src'", "cat <<E-X\nD=/tmp/w\nE-X\nrm -rf $D/a"]
+for cmd in bcmds:
+    bodies, seen = {}, {}
+    combos = a.reading_combos(cmd)
+    for combo in combos:
+        key, segs = a.reading_key(cmd, "Bash", combo, bodies), a.segments(cmd, "Bash", *combo)
+        if seen.setdefault(key, (combo, segs))[1] != segs:
+            bclash.append((len(cmd), cmd, seen[key][0], combo))
+            break
+    bdiff += any(c[12] and a.segments(cmd, "Bash", *c) != a.segments(cmd, "Bash", *(c[:12] + (False,) + c[13:]))
+                 for c in combos)  # trường 12: bash
+check(not bclash, f"reading_key gộp hai tổ hợp (trường bash) cho danh sách đoạn khác nhau ({len(bclash)} lệnh), ngắn nhất: "
+                  f"{sorted(bclash)[:1]!r}")
+check(bdiff >= 100, f"lô của trường bash phải có lệnh mà bash đọc khác strict (canh lô thật sự phủ trường mới): "
+                    f"{bdiff}/{len(bcmds)}")
 # Mục I (bạn phải sửa agent) và J (chỉ số theo tuần).
 import collections
 lr = json.load(open(sys.argv[9], encoding="utf-8"))

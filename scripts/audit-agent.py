@@ -121,7 +121,32 @@ HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
 # lấy các dòng sau `cat <<< EOF` làm thân.
 HEREDOC_STRICT = re.compile(r"(?<!<)<<-?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q)(?P<rest>[^\n]*)(?:\n|$)"
                             r"(?P<body>.*?)(?:(?<=\n)[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)", re.DOTALL)
+# keep_shell_heredocs(bash=True), port vibrant-pascal 970114a: tên heredoc là cả một từ shell (`EOF-PY`, `E"O"F`, `'E-X'`,
+# `<<\EOF`, `$'E'`, `$'\x45'`, `$"E"`, `E\`⏎`F` nối dòng, `EOF\r`, tên mở bằng chữ số: bash chỉ tách từ ở dấu cách, tab,
+# xuống dòng): có phần trong nháy hay sau `\` thì thân không được thay biến, dòng đóng đúng bằng tên đã bỏ nháy (UNQUOTE_X,
+# `$'…'` giải mã như bash: ansi_c; `<<-`: bỏ tab đầu). Từ dừng ở chỗ không phải dấu tách (nháy chưa đóng) hay tên nhiều
+# dòng thì không đọc là heredoc; `<<` khi số học đang mở (`$((1<<n))`, `$[1<<n]`: ARITH_X) là dịch bit.
+HEREDOC_X = re.compile(r"(?<!<)<<(?!<)(?P<tab>-)?[ \t]*(?P<word>(?:[^ \t\n;&|()<>\\\"'$]|\$(?!')|\\[\s\S]"
+                       r"|\$'(?:[^'\\]|\\[\s\S])*'|\"(?:[^\"\\]|\\[\s\S])*\"|'[^']*')+)")
+# Phần có nháy của một từ: `\x`, $'…', '…', "…", $"…" (trong "…" chỉ `\` trước $ ` " \ là thoát); `\` + xuống dòng
+# (nối dòng, cả trong "…") bị bỏ.
+UNQUOTE_X = re.compile(r"\\(.)|\\\n|\$'((?:[^'\\]|\\[\s\S])*)'|'([^']*)'|\$?\"((?:[^\"\\]|\\[\s\S])*)\"")
+# Ký tự thoát trong $'…' (ansi_c): \a…\v, \\ \' \" \?, bát phân 1–3 chữ số, \xH(H), \uH…(4), \UH…(8), \c; `\`
+# trước chữ khác giữ nguyên như bash.
+ANSI_C_X = re.compile(r"\\(?:([abeEfnrtv])|([\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})"
+                      r"|U([0-9A-Fa-f]{1,8})|c)")
+# Số học đang mở ở `<<` của HEREDOC_X: `$((`, `((` đóng bằng `))`; `$[` đóng bằng `]` (đếm cả `[…]` lồng bên trong).
+# Phần trong nháy (chưa đóng thì tới hết lệnh), comment, ký tự thoát là một khớp riêng, không đếm (`echo "(("`,
+# `echo '))'`); `<<` nằm trong một khớp như vậy (`let 'x=1<<2'`, `# a<<b`, `\<<E`) không phải toán tử heredoc.
+ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[\s\S])*(?:\"|\Z)|'[^']*(?:'|\Z)"
+                     r"|(?:^|[\s;&|()<>])#[^\n]*|(?P<dp>\$?\(\()|(?P<dc>\)\))|(?P<bo>\$\[)|(?P<b>[\[\]])", re.MULTILINE)
+# Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
+# | bash`) thì chuỗi là lệnh, như thân heredoc.
+HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+# here_strings: tên shell ở đâu đó trong đoạn (như SHELL_WORD, đoạn đã cắt ở `|;&` và xuống dòng), `| shell` ngay sau từ.
+SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
@@ -281,8 +306,35 @@ def expand_body(text, outer, inner):
     return out
 
 
+def ansi_c(e):
+    """Một ký tự thoát của $'…' (ANSI_C_X) như bash. Chỗ không chắc (NUL mà bash cắt chuỗi ở đó, ngoài ASCII tuỳ locale,
+    \\cX) thành xuống dòng: tên heredoc nhiều dòng thì keep_shell_heredocs không đọc là heredoc (port 970114a)."""
+    if e[1] or e[2]:
+        return e[2] or "\a\b\x1b\x1b\f\n\r\t\v"["abeEfnrtv".index(e[1])]
+    n = int(e[3], 8) if e[3] else int(e[4] or e[5] or e[6] or "0", 16)
+    return chr(n) if 0 < n < 0x80 else "\n"
+
+
+def command_subs(body):
+    """Lệnh lồng `$(…)` (tới `)` đầu tiên) và `…` trong thân dữ liệu không nháy, quét một lượt (tuyến tính)."""
+    out, start, tick = [], None, None
+    for t in re.finditer(r"\\[\s\S]|\$\(|\)|`", body):
+        if t[0] == "`" and start is None:
+            if tick is None:
+                tick = t.end()
+            else:
+                out.append(body[tick:t.start()])
+                tick = None
+        elif t[0] == "$(" and start is None and tick is None:
+            start = t.end()
+        elif t[0] == ")" and start is not None:
+            out.append(body[start:t.start()])
+            start = None
+    return out
+
+
 def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False,
-                        strict=False):
+                        strict=False, bash=False):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
@@ -293,16 +345,23 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
     exact: phần trước `<<` là dòng logic, gồm cả các dòng trước kết thúc bằng `\\` lẻ mà bash nối vào (`bash \\⏎<<'EOF'`,
     `bash \\⏎  -s <<'EOF'`: bash nhận thân). Cả khi không join: cách đọc đó để `\\` cuối comment là chữ, và comment trong
     thân (`bash \\⏎<<'EOF'⏎# x \\⏎rm -rf src`) cần cả hai cùng lúc. Cách khác chỉ xét dòng vật lý chứa `<<`.
-    strict: heredoc theo HEREDOC_STRICT (thân rỗng đóng lỏng, `<<<` không mở heredoc), thay cho HEREDOC và empty_body."""
+    strict: heredoc theo HEREDOC_STRICT (thân rỗng đóng lỏng, `<<<` không mở heredoc), thay cho HEREDOC và empty_body.
+    bash (dùng với strict, port vibrant-pascal 970114a): nhận heredoc như bash, thay cho HEREDOC_STRICT: tên là cả từ shell
+    (HEREDOC_X), dòng đóng đúng bằng tên đã bỏ nháy, `<<` trong nháy, comment, sau `\\` hay khi số học đang mở (ARITH_X)
+    không mở heredoc. Thân dữ liệu không nháy: shell cha vẫn chạy lệnh lồng `$(…)`, `…` trong đó, mỗi lệnh thành một dòng
+    `( … )` (shell con). Here-string `<<<` đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< … | bash`): chuỗi là thân."""
     def sub(m):
-        line_start = m.string.rfind("\n", 0, m.start()) + 1
+        return place(m.string, m.start(), m["rest"], m["body"], m["q"])
+
+    def place(string, start, rest, body, quoted):
+        line_start = string.rfind("\n", 0, start) + 1
         while exact and line_start:  # dòng trước kết thúc bằng số lẻ `\`: bash nối nó với dòng đang xét
-            prev_start = m.string.rfind("\n", 0, line_start - 1) + 1
-            prev = m.string[prev_start:line_start - 1]
+            prev_start = string.rfind("\n", 0, line_start - 1) + 1
+            prev = string[prev_start:line_start - 1]
             if (len(prev) - len(prev.rstrip("\\"))) % 2 == 0:
                 break
             line_start = prev_start
-        rest, body = m["rest"], m["body"] or ""  # phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
+        body = body or ""  # rest: phần còn lại của dòng mở heredoc vẫn là lệnh: `; git ...`, `| bash`
         # Kéo dòng theo chỉ số rồi ghép một lần: cắt chuỗi mỗi vòng là bậc hai theo số dòng. `\` lẻ đã bỏ trước khi ghép
         # dòng kế, nên số `\` cuối cả lệnh cùng chẵn lẻ với số `\` cuối dòng vừa kéo.
         parts, pos = [rest], 0
@@ -313,15 +372,98 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             parts.append(body[pos:end])
             pos = end + 1
         rest, body = "".join(parts), body[pos:]
-        lead = m.string[line_start:m.start()]
+        lead = string[line_start:start]
         fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
+        if bash and not (fed or quoted):
+            return rest + "\n" + "".join("(%s)\n" % c for c in command_subs(body))
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         mark = SNAP if snap and not raw_marks else ""
-        return "\n".join((mark + rest, (OPEN_RAW if m["q"] else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+        return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
-    return (HEREDOC_STRICT if strict else HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
+    if not (bash and scoped):
+        return (HEREDOC_STRICT if strict else HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
+    cmd = here_strings(cmd)
+    out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
+    tok = next(toks, None)
+    while m:  # thân tới dòng đúng bằng tên đã bỏ nháy (có thể rỗng), không có thì tới hết lệnh
+        # Số học mở tới `<<`: đếm tiếp từ chỗ trước (không đếm lại: bậc hai), không âm (`))` thừa), không về 0 ở xuống
+        # dòng (bash cho số học viết nhiều dòng)
+        while tok and tok.start() < m.start():
+            if tok.lastgroup in ("dp", "dc"):
+                dp = max(dp + (1 if tok.lastgroup == "dp" else -1), 0)
+            elif tok.lastgroup == "bo" or bk and tok.lastgroup == "b":
+                bk += -1 if tok[0] == "]" else 1
+            last, tok = tok, next(toks, None)
+        # Trong nháy, comment hay sau `\`: không phải heredoc, tìm tiếp sau phần đó
+        if last and last.end() > m.start():
+            m = HEREDOC_X.search(cmd, last.end())
+            continue
+        name = UNQUOTE_X.sub(lambda q: re.sub(r"\\([$`\"\\])|\\\n", r"\1", q[4]) if q[4] is not None
+                             else ANSI_C_X.sub(ansi_c, q[2]) if q[2] is not None else q[1] or q[3] or "", m["word"])
+        # Dịch bit, hay không chắc tên (từ dừng ở chỗ không phải dấu tách; tên nhiều dòng): không phải heredoc
+        if dp or bk or "\n" in name \
+                or cmd[m.end():m.end() + 1] not in ("", " ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"):
+            m = HEREDOC_X.search(cmd, m.end())
+            continue
+        end = re.compile(r"([^\n]*)(?:\n(.*?))??(?:\n%s%s(?=\n|\Z)|\Z)" % (r"\t*" * bool(m["tab"]), re.escape(name)),
+                         re.DOTALL).match(cmd, m.end())
+        out += [cmd[pos:m.start()], place(cmd, m.start(), end[1], end[2], re.search(r"[\"']|\\(?!\n)", m["word"]))]
+        pos = end.end()
+        # Phần sau `<<` tới hết thân không đếm: thân là dữ liệu. Nháy lẻ trong thân che lố qua dòng đóng thì che lại từ
+        # sau thân.
+        while tok and tok.end() <= pos:
+            tok = next(toks, None)
+        if tok and tok.start() < pos:
+            toks = ARITH_X.finditer(cmd, pos)
+            tok = next(toks, None)
+        m = HEREDOC_X.search(cmd, pos)
+    return "".join(out) + cmd[pos:]
+
+
+def here_strings(cmd):
+    """Here-string `<<<` đưa vào shell (keep_shell_heredocs(bash=True)): bỏ khỏi dòng, đặt chuỗi như thân heredoc sau
+    dòng đó (OPEN_RAW nếu trong nháy đơn hay `$'…'`, không thì OPEN: shell cha thay biến, `\\$` để shell con thay).
+    `<<<` trong nháy, comment hay sau `\\` (ARITH_X) không phải toán tử. Lệnh đầu đoạn (sau `|;&` hay xuống dòng gần nhất)
+    và cuối dòng dò dần theo vị trí: tuyến tính trên dòng dài có nhiều `<<<`."""
+    out, pos, pend, eol = [], 0, [], 0
+    toks, last = ARITH_X.finditer(cmd), None
+    tok = next(toks, None)
+    scan, fed_seg, line_end = 0, False, -1  # đã dò tới scan; đoạn hiện tại có tên shell chưa; cuối dòng đã tìm
+    for m in HERESTR_X.finditer(cmd):
+        while tok and tok.start() < m.start():
+            last, tok = tok, next(toks, None)
+        if last and last.end() > m.start():
+            continue
+        if pend and m.start() > eol:
+            out += [cmd[pos:eol]] + pend
+            pos, pend = eol, []
+        chunk = cmd[scan:m.start()]
+        cut = max(chunk.rfind(c) for c in "\n|;&")
+        fed_seg = bool(SHELL_WORD_ANY.search(chunk[cut + 1:])) or (cut < 0 and fed_seg)
+        scan = m.end()
+        if line_end < m.end():
+            line_end = cmd.find("\n", m.end())
+            line_end = len(cmd) if line_end < 0 else line_end
+        if not (fed_seg or HS_PIPE_SHELL.match(cmd, m.end(), line_end)):
+            continue
+        w = m[1]
+        if w.startswith("$'"):
+            body, raw = ANSI_C_X.sub(ansi_c, w[2:-1]), True
+        elif w[0] == "'":
+            body, raw = w[1:-1], True
+        elif w[0] == '"':
+            body, raw = re.sub(r'\\(["\n])', lambda x: "" if x[1] == "\n" else x[1], w[1:-1]), False
+        else:
+            body, raw = re.sub(r"\\([^$`\\])", r"\1", w), False
+        out.append(cmd[pos:m.start()])
+        pos, eol = m.end(), line_end
+        pend.append("\n" + "\n".join(((OPEN_RAW if raw else OPEN), body, CLOSE)))
+    if pend:
+        out += [cmd[pos:eol]] + pend
+        pos = eol
+    return "".join(out) + cmd[pos:]
 
 
 def snap_to_end(b):
@@ -350,7 +492,8 @@ def unwrap_shell_c(text, rx):
 
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
-             strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False, strict=False, pure=False):
+             strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False, strict=False, pure=False,
+             bash=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -400,9 +543,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     `D[0]=`, `((D=0))`, `${D:=x}`, tên dính cờ (`read -aD`), lệnh viết có nháy hay `\\` (`r\\ead D`). Gán IFS (giá trị
     tách thành đích khác) hay gọi hàm đã định nghĩa (thân hàm gán gì cũng được) làm mọi biến thành không biết, và sau IFS
     không học biến nào nữa. Là một cách đọc thêm để hợp nhãn, không đổi cách đọc strict.
+    bash=True (dùng với strict): nhận heredoc và here-string như bash (keep_shell_heredocs(bash=True), port vibrant-pascal
+    970114a) thay cho HEREDOC_STRICT. Là một cách đọc thêm để hợp nhãn.
     """
     join = join and tool != "PowerShell"
-    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict)
+    body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
     if strict and scoped and not raw_marks:
         body = snap_to_end(body)
     if join:  # nối dòng như bash trước khi tách: bỏ `\` + xuống dòng, trừ khi `\` đó bị thoát (`\\`)
@@ -769,7 +914,7 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
 
 def reading_key(cmd, tool, combo, bodies):
     """Lớp của một tổ hợp tham số segments (combo: join, scoped, parent_env, comments, raw_marks, strict_assign,
-    empty_body, blank, exact, pipe_scope, strict, pure): hai tổ hợp cùng lớp cho cùng danh sách đoạn. bodies: bộ đệm chuỗi b của
+    empty_body, blank, exact, pipe_scope, strict, pure, bash): hai tổ hợp cùng lớp cho cùng danh sách đoạn. bodies: bộ đệm chuỗi b của
     một lệnh.
 
     Vòng tách đoạn của segments chỉ đọc chuỗi b (lệnh sau keep_shell_heredocs, nối dòng, gỡ thân -c: tính y như các bước
@@ -787,12 +932,13 @@ def reading_key(cmd, tool, combo, bodies):
     - strict đổi b (HEREDOC_STRICT, SHELL_C_BODY_STRICT, SNAP ở cuối lệnh có toán tử) và, ngoài b, cách che nháy
       (QUOTED_XB) cùng env (read, unset, eval…, gán trong ống, thân <<EOF): giữ nguyên trong khoá đệm b và trong lớp,
       không gộp.
-    - pure chỉ đổi env (ngoài b), nhưng theo đếm lệnh ghép, tên hàm, IFS trên cả lệnh: giữ nguyên trong lớp, không gộp."""
-    join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict, pure = combo
+    - pure chỉ đổi env (ngoài b), nhưng theo đếm lệnh ghép, tên hàm, IFS trên cả lệnh: giữ nguyên trong lớp, không gộp.
+    - bash đổi b (heredoc, here-string như bash): giữ nguyên trong khoá đệm b và trong lớp, không gộp."""
+    join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict, pure, bash = combo
     join = join and tool != "PowerShell"
-    k = (join, scoped, parent_env, raw_marks, empty_body, exact, strict)
+    k = (join, scoped, parent_env, raw_marks, empty_body, exact, strict, bash)
     if k not in bodies:
-        b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict)
+        b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
         if strict and scoped and not raw_marks:
             b = snap_to_end(b)
         if join:
@@ -804,12 +950,12 @@ def reading_key(cmd, tool, combo, bodies):
     scoped = scoped or not (marked or dollar or "sh" in b)
     return (b, scoped, exact, "#" in b and not exact and comments, scoped and SNAP in b and raw_marks,
             dollar and strict_assign, dollar and (OPEN in b or OPEN_RAW in b) and parent_env, dollar and OPEN in b and blank,
-            pipe_scope, strict, pure)
+            pipe_scope, strict, pure, bash)
 
 
 def reading_combos(cmd, tool="Bash"):
     """Mọi tổ hợp tham số segments (join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank,
-    exact, pipe_scope, strict, pure) mà suspicious_labels đọc rồi hợp nhãn, cách gần bản cũ trước."""
+    exact, pipe_scope, strict, pure, bash) mà suspicious_labels đọc rồi hợp nhãn, cách gần bản cũ trước."""
     # Đọc `\` cuối dòng theo cả hai cách như guard (hỏi thừa chứ không bỏ sót): nối dòng có thể dán dòng sau vào cd hay
     # thân heredoc làm lệnh xoá trông vô hại, nên chỉ được thêm nghi ngờ. Luôn xét cả hai: `\` cuối heredoc chưa đóng cũng bị nối.
     # Thân heredoc đưa vào shell cũng đọc ba cách: như 6f32d5a, phạm vi riêng (scoped), và phạm vi riêng mà thân <<EOF
@@ -837,29 +983,36 @@ def reading_combos(cmd, tool="Bash"):
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
     empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
-    combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False, False, False)
+    combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False, False, False,
+               False)
               for strict_assign in stricts for comments in (False, True)
               for scoped, parent_env in ((False, False), (True, False), (True, True))
               for raw_marks in (marks if scoped else (False,)) for empty_body in (empties if scoped else (True,))
               for join in joins]
     if re.search(r"<<-?\s*[A-Za-z_]", cmd):  # có heredoc không nháy: thân không đoán biến của shell cha (blank)
-        combos += [(join, True, True, True, False, False, True, True, False, False, False, False) for join in joins]
-    combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, False, False, False)
+        combos += [(join, True, True, True, False, False, True, True, False, False, False, False, False) for join in joins]
+    combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, False, False, False, False)
                for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
     # Cách đọc thêm của PR #8 (pipe_scope): như exact, nhưng khâu ống là shell con và đoạn sau `||` có thể không chạy.
     # `true && D=/srv/; x | D=/tmp/x/; rm -rf ${D}src` xoá /srv/src: cách đọc chặt bỏ cả phép gán sau `&&`, cách đọc lỏng
     # nhận phép gán trong ống. Thêm cách đọc rồi hợp nhãn nên không bớt nhãn của exact; chỉ đọc khi lệnh có `|`.
     if "|" in cmd:
-        combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, True, False, False)
+        combos += [(join, True, False, True, raw_marks, strict_assign, empty_body, False, True, True, False, False, False)
                    for strict_assign in stricts for raw_marks in marks for empty_body in empties for join in joins]
-    combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, False) for raw_marks in marks
+    combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, False, False) for raw_marks in marks
                for join in joins]
     # Cách đọc pure (strict, biến chỉ đổi theo phép gán thuần chắc chạy ở shell này) xét sau cùng, chỉ lấy hợp: nó làm biến
     # thành không biết ở chỗ strict giữ giá trị (`echo D=x`, `local`, `((D=0))`, lệnh ghép...). Không có `$` thì env không
     # vào đoạn nào: không đọc.
     if "$" in cmd:
-        combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, True) for raw_marks in marks
+        combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, True, False) for raw_marks in marks
                    for join in joins]
+    # Cách đọc bash (strict, nhận heredoc và here-string như bash: port vibrant-pascal 970114a) xét sau cùng, chỉ lấy hợp,
+    # với env của strict và của pure. "`<<` này có mở heredoc không, thân tới đâu" sai được theo cả hai hướng (coi là heredoc
+    # thì thân nuốt lệnh sau, không coi thì thân thành lệnh), mỗi cách sai ở bộ ca khác. Không có `<<` thì b như strict.
+    if "<<" in cmd:
+        combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, pure, True)
+                   for pure in ((False, True) if "$" in cmd else (False,)) for raw_marks in marks for join in joins]
     return combos
 
 
