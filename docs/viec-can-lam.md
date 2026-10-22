@@ -90,7 +90,7 @@ Không còn PR nào mở (21/10, sau PR #27).
 - **Xong khi:** ca Q (lấy lại từ 6a08ee9) xanh trên macos-latest.
 
 ### 4.3 Guard chậm quá timeout với lệnh có rất nhiều cd
-- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows).
+- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows). Từ PR sửa nháy giữa từ (4.10 cũ), mỗi cd có nháy giữa từ được đọc theo hai cách: 200 `cd "/tmp/d N"'x' &&` 1,7 → 2,7 giây, 9000 `cd` 63 → 73 giây (Linux).
 - **Xong khi:** có ca test-hooks dùng `hook_limit`, xanh trên 3 OS.
 
 ### 4.4 Lớp lỗi "guard cho qua khi I/O của shell hỏng" đã lọt hai lần
@@ -128,3 +128,7 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.9 Chưa có cách ghim một file kit ở bản cũ
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
 - **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.
+
+### 4.10 Guard chưa giải nháy lồng trong chuỗi `bash -c '…'` khi tìm thư mục của push
+- **Vì sao:** guard không hỏi, còn bash thật push từ repo ở nhánh main: `bash -c 'cd /x/M'\'' && git push'` (đường có `'\''` bên trong chuỗi `-c`), `sh -c '…'` tương tự. Verifier của PR sửa nháy giữa từ (22/10) tìm ra bằng ma trận ngẫu nhiên: 28–32 trên ~710 lệnh mà bash chạy ở main, bản trước cũng sót đúng các lệnh đó. Guard đọc cd trong `bash -c '…'` nhưng không bỏ lớp nháy của chuỗi `-c` trước khi đọc đường.
+- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, xanh trên 3 OS; ma trận so với bash thật (ba repo, symlink, nháy lồng trong `-c`) không còn sót; `scripts/guard-ask-floor` nâng theo.
