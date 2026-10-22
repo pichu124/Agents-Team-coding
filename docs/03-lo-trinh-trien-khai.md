@@ -46,7 +46,6 @@ Phần lớn đội nên ở cấp **1–2** trong vài tuần đầu. Cấp 1 l
 ## 3. Cài kit vào dự án của bạn
 
 ```bash
-# Khi kit chưa được merge vào main, thêm: -b claude/sharp-knuth-lpdhqz
 git clone https://github.com/pichu124/Agents-Team-coding.git /đường/dẫn/tới/Agents-Team-coding
 cd /đường/dẫn/tới/dự-án            # git repo của bạn, nên làm trên một branch mới
 git switch -c chore/agent-team
