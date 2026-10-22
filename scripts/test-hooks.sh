@@ -307,7 +307,7 @@ EOF
   if [ -n "$symm" ]; then
     expect_guard ask "cd \"$symm/link/..\" && git push"
     expect_guard ask "pushd \"$symm/link/..\"; git push"
-    # `..` có nháy hay `\` giữa từ: bash bỏ nháy rồi vẫn đi đường logic về repo ở main (4.10).
+    # `..` có nháy hay `\` giữa từ: bash bỏ nháy rồi vẫn đi đường logic về repo ở main (mục 4.10 cũ của docs/viec-can-lam.md).
     expect_guard ask "cd \"$symm/link/\"'..' && git push"
     expect_guard ask "cd \"$symm/link\"/'..' && git push"
     expect_guard ask "cd \"$symm/link/\".. && git push"
@@ -315,7 +315,7 @@ EOF
     expect_guard ask "pushd '$symm/link'/..; git push"
   fi
   # Giá trị trong nháy có từ hai dấu cách, hay từ ghép nhiều đoạn nháy (`"a b"/'x'`, `"a b/"x`): bash ghép thành một
-  # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (4.10).
+  # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (mục 4.10 cũ của docs/viec-can-lam.md).
   expect_guard ask "git --git-dir=\"$sp2/.git\" push"
   expect_guard ask "git -c x.y=1 --git-dir=\"$sp2/.git\" push"
   expect_guard ask "git --git-dir \"$sp2\"/'.git' push"
@@ -325,6 +325,12 @@ EOF
   expect_guard ask "cd -- '$tmp/sp ace plain/'x; git push"
   expect_guard ask "git --git-dir=\"$on_main/\".git push"
   expect_guard ask "cd \"$on_main\"/ && git push"
+  # Nháy đóng của một chuỗi đứng trước cd/-C thật: cách đọc từ ghép không được nuốt cd/-C đó (reviewer của PR sửa
+  # nháy giữa từ; cách đọc cũ vẫn chạy riêng).
+  expect_guard ask "echo \"cd x\"; cd \"$on_main\" && git push; echo \"ok\""
+  expect_guard ask "echo 'cd x'; cd \"$on_main\" && git push; echo 'ok'"
+  expect_guard ask "printf 'cd sub\\n'; cd \"$on_main\" && git push origin HEAD; printf 'ok\\n'"
+  expect_guard ask "echo \"git -C x\"; git -C \"$on_main\" push; echo \"y\""
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
