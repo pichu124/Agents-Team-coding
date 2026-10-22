@@ -1398,12 +1398,40 @@ for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" 
     t0 = time.time()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(time.time() - t0 < 1, f"cách đọc pure tuyến tính trên chuỗi ngoặc dài: {cmd[:12]!r}… mất {time.time() - t0:.1f} s")
-# Cách đọc bash dò here-string theo từng `<<<`: dòng dài có nhiều `<<<` không được làm nó bậc hai (reviewer đo 7,9–91 giây
-# trước khi sửa, nền 0,3–1 giây).
-for cmd in ("read D<<<x; " * 3000, "wc <<< x; " * 5000, 'grep a <<< "$x" && ' * 3000, "echo hi; " * 20000 + "<<< a " * 4000):
-    t0 = time.time()
-    a.suspicious_labels(cmd, a.SUSPICIOUS)
-    check(time.time() - t0 < 4, f"cách đọc bash tuyến tính trên nhiều here-string: {cmd[:14]!r}… mất {time.time() - t0:.1f} s")
+# Cách đọc bash dò here-string theo từng `<<<`: dòng dài có nhiều `<<<` không được làm nó bậc hai. 452a7c1 (here_strings
+# quét lại cả lệnh ở mỗi `<<<`): suspicious_labels mất 9–105 giây với các lệnh dưới, riêng cách đọc bash
+# (keep_shell_heredocs bash=True) 2,7–33 giây, gấp 4 độ dài thì chậm 11–18 lần. e77a51f (tuyến tính): cách đọc bash
+# 0,01–0,05 giây, gấp 4 độ dài chậm 3,6–4,5 lần (22/10/2026, 4 nhân, min 5 lần đo). Ngưỡng 4 giây trên cả suspicious_labels
+# đỏ oan trên runner Windows (`wc <<< x; ` 4,1 giây, máy 4 nhân 1,9 giây): các cách đọc khác còn chậm bậc hai trên `<<<`
+# (2.4 của docs/viec-can-lam.md), nên thời gian đó sát ngưỡng mà không nói gì về cách đọc bash. Vì thế đo riêng cách đọc
+# bash và assert tỉ lệ (không phụ thuộc tốc độ máy): dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Bậc hai thì lượt đo
+# nào cũng ~16, nên đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. Trần tuyệt đối để rộng: cách đọc bash dưới 1
+# giây (~20 lần e77a51f), cả suspicious_labels dưới 12 giây (~3 lần số đo Windows).
+def bash_reading_time(cmd, runs=5, limit=1):
+    best = float("inf")
+    for i in range(runs):
+        t0 = time.perf_counter()
+        a.keep_shell_heredocs(cmd, strict=True, bash=True)
+        best = min(best, time.perf_counter() - t0)
+        if best >= limit and i:  # hai lần đều quá trần (min): khỏi đo tiếp; một lần khựng thì đo tiếp
+            break
+    return best
+for make in (lambda k: "read D<<<x; " * 3000 * k, lambda k: "wc <<< x; " * 5000 * k,
+             lambda k: 'grep a <<< "$x" && ' * 3000 * k, lambda k: "echo hi; " * 20000 * k + "<<< a " * 4000 * k,
+             lambda k: "bash <<< x; " * 3000 * k):  # chuỗi đưa vào shell: nhánh đặt thân của here_strings
+    for _ in range(3):
+        t1 = bash_reading_time(make(1))
+        t4 = bash_reading_time(make(4), limit=8) if t1 < 1 else float("inf")
+        if t1 >= 1 or t4 < 8 * t1:
+            break
+    check(t1 < 1 and t4 < 8 * t1, f"cách đọc bash tuyến tính trên nhiều here-string: {make(1)[:14]!r}… mất {t1:.2f} s, "
+                                  f"gấp 4 độ dài mất {'%.2f s' % t4 if t1 < 1 else 'không đo'} "
+                                  f"(phải dưới 1 s và dưới 8 lần; tuyến tính ~4, bậc hai ~16)")
+    if t1 < 1 and t4 < 8 * t1:  # đã đỏ thì khỏi chạy cả suspicious_labels (bản bậc hai mất tới 105 giây)
+        t0 = time.perf_counter()
+        a.suspicious_labels(make(1), a.SUSPICIOUS)
+        dt = time.perf_counter() - t0
+        check(dt < 12, f"suspicious_labels trên nhiều here-string: {make(1)[:14]!r}… mất {dt:.1f} s (trần 12 s)")
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
 for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
