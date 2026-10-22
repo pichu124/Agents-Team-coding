@@ -497,6 +497,10 @@ call("s145", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src")
 call("s146", "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src")
 call("s147", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src")
 call("s148", "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
+# P2: here-string đưa vào shell: bash chạy chuỗi như lệnh (bash 5.2 xoá ./src, /tmp/w/.. tức /tmp, ./src).
+call("s149", "bash <<< 'rm -rf src'")
+call("s150", "D=/tmp/w; sh <<< \"rm -rf $D/..\"")
+call("s151", "cat <<< 'rm -rf src' | bash")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1305,7 +1309,8 @@ P3_MUST = ("true D=dist; rm -rf $D/src", "make PREFIX=/tmp/x install; rm -rf $PR
              "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF",
              "D=/; false && # c\nD=/tmp/x; rm -rf $D/src", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src",
              "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src",
-             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
+             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src",
+             "bash <<< 'rm -rf src'", "D=/tmp/w; sh <<< \"rm -rf $D/..\"", "cat <<< 'rm -rf src' | bash")
 for must in P3_MUST:
     check(must in A, f"phép gán không thuần hay có thể không chạy ở shell này không đặt biến: {must!r}")
 # Vô hại theo bash 5.2 (xoá trong /tmp/x): phép gán thuần, export, lệnh ghép và thân hàm đã đóng, phép gán trước `&&`,
@@ -1687,12 +1692,7 @@ check(not a.suspicious_labels("cd /tmp && rm -rf src", a.SUSPICIOUS), "cd vào t
 spec = importlib.util.spec_from_file_location("missed_vp", sys.argv[14])
 vp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vp)
-MISSED_VP_PENDING = {
-    38, 40, 41, *range(46, 55), *range(61, 71), 72, *range(83, 88), *range(91, 103),  # heredoc theo từ shell: tên lạ, `<<`
-    # dịch bit trong `$((`/`((`/`$[`, `<<` trong nháy/comment/sau `\`, `<<\EOF`, lệnh lồng trong thân dữ liệu không nháy
-    # Ca 55 (P2) và các ca P3 (10, 11, 12, 29, 30, 32, 35, 36, 76, 77, 79, 80–82, 88–90) nay đã nghi: các cách đọc của PR #18
-    # và cách đọc pure (biến chỉ đổi theo phép gán thuần) trong phép hợp
-}
+MISSED_VP_PENDING = set()  # P2 (heredoc như bash, cách đọc bash) và P3 (cách đọc pure) đã nghi mọi ca
 for i, (cmd, why) in enumerate(vp.MISSED_VP):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     if i in MISSED_VP_PENDING:
