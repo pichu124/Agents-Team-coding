@@ -52,6 +52,9 @@ work="$tmp/work"
 new_repo "$work" feat/x
 on_main="$tmp/main repo"
 new_repo "$on_main" main
+# Repo ở nhánh chính, đường dẫn có hai dấu cách.
+sp2="$tmp/sp ace plain/x"
+new_repo "$sp2" main
 # Repo ở nhánh chính, đường dẫn có chữ git và push.
 odd="$tmp/my git/github/pushy-main"
 new_repo "$odd" main
@@ -304,7 +307,24 @@ EOF
   if [ -n "$symm" ]; then
     expect_guard ask "cd \"$symm/link/..\" && git push"
     expect_guard ask "pushd \"$symm/link/..\"; git push"
+    # `..` có nháy hay `\` giữa từ: bash bỏ nháy rồi vẫn đi đường logic về repo ở main (4.10).
+    expect_guard ask "cd \"$symm/link/\"'..' && git push"
+    expect_guard ask "cd \"$symm/link\"/'..' && git push"
+    expect_guard ask "cd \"$symm/link/\".. && git push"
+    expect_guard ask "cd \"$symm/link/\"\\.\\. && git push"
+    expect_guard ask "pushd '$symm/link'/..; git push"
   fi
+  # Giá trị trong nháy có từ hai dấu cách, hay từ ghép nhiều đoạn nháy (`"a b"/'x'`, `"a b/"x`): bash ghép thành một
+  # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (4.10).
+  expect_guard ask "git --git-dir=\"$sp2/.git\" push"
+  expect_guard ask "git -c x.y=1 --git-dir=\"$sp2/.git\" push"
+  expect_guard ask "git --git-dir \"$sp2\"/'.git' push"
+  expect_guard ask "GIT_DIR=\"$sp2/.g\"it git push"
+  expect_guard ask "git -C \"$sp2\"/ push"
+  expect_guard ask "cd \"$tmp/sp ace plain/\"x && git push"
+  expect_guard ask "cd -- '$tmp/sp ace plain/'x; git push"
+  expect_guard ask "git --git-dir=\"$on_main/\".git push"
+  expect_guard ask "cd \"$on_main\"/ && git push"
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.

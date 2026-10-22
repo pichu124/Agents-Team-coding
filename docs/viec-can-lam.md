@@ -100,7 +100,6 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
-- `scripts/guard-ask-floor` còn 166, trong khi test-hooks đếm 177 ca phải hỏi trên Linux và macOS, 172 trên Windows (bỏ 5 ca symlink). Nâng sàn lên 172.
 - Guard hỏi thừa khi chuỗi `git push --force` hay `rm -rf /` chỉ là dữ liệu trong thân heredoc ghi ra file (`cat > gen.py <<'E'` ⏎ … ⏎ `E`), như lệnh so nhãn của verifier nhánh tích hợp audit ngày 21/10: session đứng 2,5 giờ chờ người duyệt. Không nới guard; cách tránh là ghi script bằng tool Write rồi mới chạy.
 - Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của PR #25 ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
@@ -129,10 +128,3 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.9 Chưa có cách ghim một file kit ở bản cũ
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
 - **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.
-
-### 4.10 Guard cho qua push lên main khi đường có nhiều dấu cách hay nháy giữa từ
-- **Vì sao:** guard không hỏi, còn bash thật push từ repo ở nhánh main. Lỗi có ở mọi bản, kể cả trước PR #22 (reviewer PR #22 tìm ra; tái hiện lại trên 083c8e9). Nên làm trước các việc khác của mục 4, vì đây là guard bỏ sót, không phải hỏi thừa.
-  - `git --git-dir="<repo main>/sp ace plain/x/.git" push`: regex `G` (`-[^[:space:]]+` cộng một đối số) không vượt được giá trị trong nháy có từ hai dấu cách trở lên, nên lệnh không vào cổng push. Một dấu cách thì vẫn hỏi. Đường Windows kiểu `C:\Users\John Smith\My Documents` có thể dính.
-  - `cd "<repo main>/link/"'..' && git push`, `cd "<repo main>/link"/'..' && git push`, `cd "<repo main>/link/".. && git push`, với `link` là symlink từ repo main vào thư mục con của một repo nhánh khác: bash đi đường logic về repo main; guard không nhận `..` có nháy giữa từ nên không đọc theo đường logic. Không nháy (`cd "<repo main>/link/.." && git push`) thì hỏi.
-- **Tái hiện:** dựng ba repo (main, nhánh khác có `sub/`, cwd ở nhánh thứ ba) và symlink như trên; chạy guard với JSON PreToolUse, so với bash thật chạy cùng lệnh sau khi đổi `git push` thành `git rev-parse --abbrev-ref HEAD`.
-- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, xanh trên 3 OS; `scripts/guard-ask-floor` nâng theo.
