@@ -490,6 +490,13 @@ call("s140", "D=../.. # a\n{ D=~; } | true && rm -rf node_modules/$D")
 call("s141", "D=../..; local D=/tmp/w; rm -rf node_modules/$D")
 call("s142", "export D=../..; { D=/tmp/w; } | true | rm -rf dist/$D")
 call("s143", "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF")
+# Reviewer của cách đọc pure: comment chen sau `&&`, `)` của mẫu case trong subshell, gọi hàm qua biến, hàm tên export
+# (bash 5.2 xoá //src ở cả năm lệnh).
+call("s144", "D=/; false && # c\nD=/tmp/x; rm -rf $D/src")
+call("s145", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src")
+call("s146", "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src")
+call("s147", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src")
+call("s148", "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1295,7 +1302,10 @@ P3_MUST = ("true D=dist; rm -rf $D/src", "make PREFIX=/tmp/x install; rm -rf $PR
              'D=/tmp/w; read -aD <<< /etc; rm -rf "$D"', "D=/tmp/w; unset D -f; rm -rf $D/a",
              "D=../.. # a\n{ D=~; } | true && rm -rf node_modules/$D", "D=../..; local D=/tmp/w; rm -rf node_modules/$D",
              "export D=../..; { D=/tmp/w; } | true | rm -rf dist/$D",
-             "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF")
+             "cat <<'EOF' | bash\nD=~; D=\"x /\"; D=/tmp/w & true; rm -rf /tmp/w/$D\nEOF",
+             "D=/; false && # c\nD=/tmp/x; rm -rf $D/src", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src",
+             "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src",
+             "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
 for must in P3_MUST:
     check(must in A, f"phép gán không thuần hay có thể không chạy ở shell này không đặt biến: {must!r}")
 # Vô hại theo bash 5.2 (xoá trong /tmp/x): phép gán thuần, export, lệnh ghép và thân hàm đã đóng, phép gán trước `&&`,
@@ -1369,6 +1379,13 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 for must in P3_MUST:
     check("xoá đệ quy" in a.suspicious_labels(must, a.SUSPICIOUS), f"P3: nhãn xoá đệ quy: {must!r}")
+# Cách đọc pure tìm định nghĩa hàm trên từng đoạn: chuỗi ngoặc dài không được làm regex quay lui bậc hai (reviewer đo
+# `"{"*40000 + " $D"` 18 giây trước khi sửa, nền 0,07 giây).
+import time
+for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" * 40000 + "() $D"):
+    t0 = time.time()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(time.time() - t0 < 1, f"cách đọc pure tuyến tính trên chuỗi ngoặc dài: {cmd[:12]!r}… mất {time.time() - t0:.1f} s")
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
 for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
