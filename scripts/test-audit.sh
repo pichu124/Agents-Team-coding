@@ -501,6 +501,11 @@ call("s148", "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src")
 call("s149", "bash <<< 'rm -rf src'")
 call("s150", "D=/tmp/w; sh <<< \"rm -rf $D/..\"")
 call("s151", "cat <<< 'rm -rf src' | bash")
+# Reviewer của cách đọc bash: `\$D` trong here-string nháy kép để shell con thay (bash xoá //src); `<<<` trong comment hay
+# trong nháy không mở here-string, nháy lẻ sau nó không nuốt lệnh sau (bash xoá /a).
+call("s152", "D=/tmp/w; bash <<< \"D=/; rm -rf \\$D/src\"")
+call("s153", "# bash <<< '\ncat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\n# '")
+call("s154", "echo \"bash <<< '\"; cat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\necho \"'\"")
 lines.append({"type": "assistant", "message": "chuỗi thay vì object"})
 lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": ["list"]}}]}})
 lines.append({"type": "system", "subtype": "stop_hook_summary", "hookInfos": ["chuỗi"], "hookErrors": [1]})
@@ -1310,7 +1315,9 @@ P3_MUST = ("true D=dist; rm -rf $D/src", "make PREFIX=/tmp/x install; rm -rf $PR
              "D=/; false && # c\nD=/tmp/x; rm -rf $D/src", "D=/; false &&\n\n# c\n\nD=/tmp/x\nrm -rf $D/src",
              "D=/; ( case a in a) :;; esac; D=/tmp/x; ); rm -rf $D/src", "f() { D=/; }; D=/tmp/x; F=f; $F; rm -rf $D/src",
              "export() { D=/; }; D=/tmp/w; export D=/tmp/x; rm -rf $D/src",
-             "bash <<< 'rm -rf src'", "D=/tmp/w; sh <<< \"rm -rf $D/..\"", "cat <<< 'rm -rf src' | bash")
+             "bash <<< 'rm -rf src'", "D=/tmp/w; sh <<< \"rm -rf $D/..\"", "cat <<< 'rm -rf src' | bash",
+             "D=/tmp/w; bash <<< \"D=/; rm -rf \\$D/src\"", "# bash <<< '\ncat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\n# '",
+             "echo \"bash <<< '\"; cat <<'E-X'\nD=/tmp/w\nE-X\nrm -rf $D/a\necho \"'\"")
 for must in P3_MUST:
     check(must in A, f"phép gán không thuần hay có thể không chạy ở shell này không đặt biến: {must!r}")
 # Vô hại theo bash 5.2 (xoá trong /tmp/x): phép gán thuần, export, lệnh ghép và thân hàm đã đóng, phép gán trước `&&`,
@@ -1391,6 +1398,12 @@ for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" 
     t0 = time.time()
     a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(time.time() - t0 < 1, f"cách đọc pure tuyến tính trên chuỗi ngoặc dài: {cmd[:12]!r}… mất {time.time() - t0:.1f} s")
+# Cách đọc bash dò here-string theo từng `<<<`: dòng dài có nhiều `<<<` không được làm nó bậc hai (reviewer đo 7,9–91 giây
+# trước khi sửa, nền 0,3–1 giây).
+for cmd in ("read D<<<x; " * 3000, "wc <<< x; " * 5000, 'grep a <<< "$x" && ' * 3000, "echo hi; " * 20000 + "<<< a " * 4000):
+    t0 = time.time()
+    a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(time.time() - t0 < 4, f"cách đọc bash tuyến tính trên nhiều here-string: {cmd[:14]!r}… mất {time.time() - t0:.1f} s")
 check(a.project_key("C:\\vnstock-trial") == "C--vnstock-trial", "tên thư mục phiên cho đường dẫn Windows")
 check(a.project_key("/home/user") == "-home-user", "tên thư mục phiên cho đường dẫn Linux")
 for cmd, want in (("rm -rf /tmp/x\\\nsrc", ["rm -rf /tmp/xsrc"]), ("echo a\\\\\nrm -rf src", ["echo a\\\\", "rm -rf src"])):
