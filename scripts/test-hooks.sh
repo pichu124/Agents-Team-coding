@@ -52,6 +52,8 @@ work="$tmp/work"
 new_repo "$work" feat/x
 on_main="$tmp/main repo"
 new_repo "$on_main" main
+# Repo ở nhánh chính có \ trong tên (x\m; Windows đọc là x/m).
+new_repo "$tmp/x\\m" main
 # Repo ở nhánh chính, đường dẫn có hai dấu cách.
 sp2="$tmp/sp ace plain/x"
 new_repo "$sp2" main
@@ -313,7 +315,21 @@ EOF
     expect_guard ask "cd \"$symm/link/\".. && git push"
     expect_guard ask "cd \"$symm/link/\"\\.\\. && git push"
     expect_guard ask "pushd '$symm/link'/..; git push"
+    expect_guard ask "sh -c 'cd '\\''$symm/link'\\''/.. && git push'"
   fi
+  # Thân của bash -c / sh -c: shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy, nên '\'' trong thân là một
+  # dấu nháy của lệnh con (4.10 của docs/viec-can-lam.md).
+  expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c 'cd \"$tmp/sp ace plain/\"'\\''x'\\'' && git push'"
+  expect_guard ask "bash -c \"cd \\\"$on_main\\\" && git push\""
+  expect_guard ask "bash -lc 'git -C '\\''$on_main'\\'' push'"
+  expect_guard ask "sh -c 'git --git-dir='\\''$sp2/.git'\\'' push'"
+  expect_guard ask "/bin/bash -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -o pipefail -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --norc -c -- 'cd '\\''$on_main'\\'' && git push'"
+  # PowerShell: \ là ký tự thường, "…\x\"m là …\x\m (reviewer của PR giải thân bash -c).
+  TOOL=PowerShell expect_guard ask "Set-Location \"$tmp/x\\\"m; git push"
+  TOOL=PowerShell expect_guard ask "git -C \"$tmp/x\\\"m push"
   # Giá trị trong nháy có từ hai dấu cách, hay từ ghép nhiều đoạn nháy (`"a b"/'x'`, `"a b/"x`): bash ghép thành một
   # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (mục 4.10 cũ của docs/viec-can-lam.md).
   expect_guard ask "git --git-dir=\"$sp2/.git\" push"
@@ -409,6 +425,21 @@ long_qinput() {
 }
 long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
+# 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
+# lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
+# thân có chữ push (thân được giải tới hết ngân sách).
+long_shc() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"npm run deploy \\\\\\n' "$work"
+  for _ in {1..250}; do
+    printf "bash -c 'c"
+    printf "'\\\\\\\\''c%.0s" {1..130}
+    printf '%s' "$1"
+    printf "' \\\\\\\\\\\\n"
+  done
+  printf 'true","description":"test"}}\n'
+}
+long_shc '' > "$tmp/long-shc.json"
+long_shc ' push' > "$tmp/long-shcp.json"
 # Claude Code dừng hook chạy quá timeout trong settings.json rồi cho lệnh chạy mà KHÔNG hỏi, nên guard
 # chạy với đúng giới hạn đó (cần perl; không có thì không giới hạn). macOS từng mất hàng phút ở đây.
 guard_timeout="$(awk '/guard-irreversible\.sh/ { f = 1 } f && match($0, /"timeout"[ \t]*:[ \t]*[0-9]+/) {
@@ -423,7 +454,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

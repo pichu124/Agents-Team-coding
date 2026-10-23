@@ -66,6 +66,89 @@ case "$cmd" in
     ;;
 esac
 
+# unquote_word <từ> <bash|ps>: bỏ nháy như shell đọc một từ ghép nhiều đoạn ("a b"/'..' là a b/..), kết quả
+# trong UQ. bash: \<ký tự> ngoài nháy là ký tự đó, trong nháy kép chỉ \\ \" \$ \` là escape ("C:\Users" giữ \);
+# ps: \ là ký tự thường. Trả 1 khi quá <tối đa đoạn> (mặc định 64): guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách
+# đọc cũ. Không dùng ${x//a/b} (xem join_lines), mỗi đoạn một phép so regex.
+unquote_word() {
+  local w="$1" n=0 max="${3:-64}" re_pl re_dqe='^"(([^"\\]|\\.)*)"(.*)$' re_dq='^"([^"]*)"()(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
+  local re_dqbs='^([^\\]*)\\(.?)(.*)$'
+  UQ=""
+  if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
+  while [ -n "$w" ]; do
+    n=$((n + 1))
+    [ "$n" -le "$max" ] || return 1
+    if [[ $w =~ $re_pl ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    elif { [ "$2" != ps ] && [[ $w =~ $re_dqe ]]; } || [[ $w =~ $re_dq ]]; then
+      # bash: nháy kép có \" bên trong; không khớp (nháy lẻ) thì đọc như PowerShell, tới " đầu tiên.
+      c="${BASH_REMATCH[1]}"
+      rest="${BASH_REMATCH[3]}"
+      # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
+      while [ "$2" != ps ] && [[ $c =~ $re_dqbs ]]; do
+        n=$((n + 1))
+        [ "$n" -le "$max" ] || return 1
+        case "${BASH_REMATCH[2]}" in
+          \\ | '$' | '`' | '"') UQ="$UQ${BASH_REMATCH[1]}${BASH_REMATCH[2]}" ;;
+          *) UQ="$UQ${BASH_REMATCH[1]}\\${BASH_REMATCH[2]}" ;;
+        esac
+        c="${BASH_REMATCH[3]}"
+      done
+      UQ="$UQ$c"
+      w="$rest"
+      continue
+    elif [[ $w =~ $re_sq ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    elif [ "$w" = '\' ]; then
+      UQ="$UQ\\"
+      return 0
+    elif [ "$2" != ps ] && [[ $w =~ $re_bs ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    else
+      return 2
+    fi
+    w="${BASH_REMATCH[2]}"
+  done
+  return 0
+}
+
+# Thân của bash -c / sh -c '…': shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy ('…'\''…', "…\"…"),
+# nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
+# luật) và thêm vào forms (cổng push). Chỉ giải thân có chữ push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
+# chép phần còn lại của từ (60 KB, 330 đoạn mất 6,5 giây ở UTF-8; Git Bash chậm hơn nhiều lần), nên thân quá 16 KB
+# hay 256 đoạn thì bỏ, tổng các thân quá 8 KB hay quá 256 thân thì dừng: lệnh có chữ push khi đó vào cổng push và
+# không biết thư mục, tức hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
+SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
+SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
+shc_unknown=""
+decode_shell_c() {
+  local i=0 m w budget=8192 count=0
+  set -f
+  IFS="$nl"
+  while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
+    for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
+      [[ $m =~ ($SHW)$ ]] || continue
+      w="${BASH_REMATCH[1]}"
+      # Chỉ cổng push cần đọc thân: thân không có chữ push thì khỏi bỏ nháy (Git Bash chậm hơn Linux nhiều lần).
+      case "$w" in *[Pp][Uu][Ss][Hh]*) ;; *) continue ;; esac
+      budget=$((budget - ${#w}))
+      count=$((count + 1))
+      [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
+      [ "${#w}" -le 16384 ] || { shc_unknown=1; continue; }
+      unquote_word "$w" bash 256
+      case $? in
+        0) [ "${#forms[@]}" -lt 16 ] && forms+=("$UQ") && cmd="$cmd$nl$UQ" ;;
+        1) shc_unknown=1 ;;
+      esac
+    done
+    i=$((i + 1))
+  done
+  IFS=$' \t\n'
+  set +f
+}
+
+decode_shell_c
+
 reason=""
 rule() {
   if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "$1"; then
@@ -152,50 +235,6 @@ last_arg() {
   LA="$t"
 }
 
-# unquote_word <từ> <bash|ps>: bỏ nháy như shell đọc một từ ghép nhiều đoạn ("a b"/'..' là a b/..), kết quả
-# trong UQ. bash: \<ký tự> ngoài nháy là ký tự đó, trong nháy kép chỉ \\ \" \$ \` là escape ("C:\Users" giữ \);
-# ps: \ là ký tự thường. Trả 1 khi quá 64 đoạn: guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách
-# đọc cũ. Không dùng ${x//a/b} (xem join_lines), mỗi đoạn một phép so regex.
-unquote_word() {
-  local w="$1" n=0 re_pl re_dq='^"([^"]*)"(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
-  local re_dqbs='^([^\\]*)\\(.?)(.*)$'
-  UQ=""
-  if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
-  while [ -n "$w" ]; do
-    n=$((n + 1))
-    [ "$n" -le 64 ] || return 1
-    if [[ $w =~ $re_pl ]]; then
-      UQ="$UQ${BASH_REMATCH[1]}"
-    elif [[ $w =~ $re_dq ]]; then
-      c="${BASH_REMATCH[1]}"
-      rest="${BASH_REMATCH[2]}"
-      # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
-      while [ "$2" != ps ] && [[ $c =~ $re_dqbs ]]; do
-        n=$((n + 1))
-        [ "$n" -le 64 ] || return 1
-        case "${BASH_REMATCH[2]}" in
-          \\ | '$' | '`' | '"') UQ="$UQ${BASH_REMATCH[1]}${BASH_REMATCH[2]}" ;;
-          *) UQ="$UQ${BASH_REMATCH[1]}\\${BASH_REMATCH[2]}" ;;
-        esac
-        c="${BASH_REMATCH[3]}"
-      done
-      UQ="$UQ$c"
-      w="$rest"
-      continue
-    elif [[ $w =~ $re_sq ]]; then
-      UQ="$UQ${BASH_REMATCH[1]}"
-    elif [ "$w" = '\' ]; then
-      UQ="$UQ\\"
-      return 0
-    elif [ "$2" != ps ] && [[ $w =~ $re_bs ]]; then
-      UQ="$UQ${BASH_REMATCH[1]}"
-    else
-      return 2
-    fi
-    w="${BASH_REMATCH[2]}"
-  done
-  return 0
-}
 
 # expand_dir <đích> <bash|ps>: bỏ nháy, thay $HOME, $PWD, $CLAUDE_PROJECT_DIR, $env:USERPROFILE, %USERPROFILE%.
 # Còn biến, lệnh lồng hay %VAR% thì không biết thư mục: trả mã 1. EO: đường theo cách cũ (chỉ bỏ nháy hai đầu,
@@ -241,7 +280,7 @@ subst_dir() {
 # MỌI thư mục lệnh có thể chạm tới: thư mục của phiên, đích của mọi cd/pushd/Set-Location (nối
 # tiếp nhau), đích của mọi -C, --git-dir, --work-tree, GIT_DIR= (tính từ từng thư mục trên).
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
-if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
+if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unknown" ] && text_grep "$cmd" -iq -- push; }; }; then
   base="${cwd:-.}"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
@@ -250,7 +289,7 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   # Thư mục gom vào mảng: nối chuỗi chép lại cả chuỗi mỗi lần, bậc hai theo số cd (4.3). Mảng không rỗng (bash < 4.4
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
-  unknown=""
+  unknown="$shc_unknown"
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
   # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
   # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
