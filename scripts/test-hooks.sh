@@ -313,7 +313,15 @@ EOF
     expect_guard ask "cd \"$symm/link/\".. && git push"
     expect_guard ask "cd \"$symm/link/\"\\.\\. && git push"
     expect_guard ask "pushd '$symm/link'/..; git push"
+    expect_guard ask "sh -c 'cd '\\''$symm/link'\\''/.. && git push'"
   fi
+  # Thân của bash -c / sh -c: shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy, nên '\'' trong thân là một
+  # dấu nháy của lệnh con (4.10 của docs/viec-can-lam.md).
+  expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c 'cd \"$tmp/sp ace plain/\"'\\''x'\\'' && git push'"
+  expect_guard ask "bash -c \"cd \\\"$on_main\\\" && git push\""
+  expect_guard ask "bash -lc 'git -C '\\''$on_main'\\'' push'"
+  expect_guard ask "sh -c 'git --git-dir='\\''$sp2/.git'\\'' push'"
   # Giá trị trong nháy có từ hai dấu cách, hay từ ghép nhiều đoạn nháy (`"a b"/'x'`, `"a b/"x`): bash ghép thành một
   # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (mục 4.10 cũ của docs/viec-can-lam.md).
   expect_guard ask "git --git-dir=\"$sp2/.git\" push"

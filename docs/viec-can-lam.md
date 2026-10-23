@@ -130,6 +130,6 @@ Không còn PR nào mở (21/10, sau PR #27).
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
 - **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.
 
-### 4.10 Guard chưa giải nháy lồng trong chuỗi `bash -c '…'` khi tìm thư mục của push
-- **Vì sao:** guard không hỏi, còn bash thật push từ repo ở nhánh main: `bash -c 'cd /x/M'\'' && git push'` (đường có `'\''` bên trong chuỗi `-c`), `sh -c '…'` tương tự. Verifier của PR sửa nháy giữa từ (22/10) tìm ra bằng ma trận ngẫu nhiên: 28–32 trên ~710 lệnh mà bash chạy ở main, bản trước cũng sót đúng các lệnh đó. Guard đọc cd trong `bash -c '…'` nhưng không bỏ lớp nháy của chuỗi `-c` trước khi đọc đường.
-- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, xanh trên 3 OS; ma trận so với bash thật (ba repo, symlink, nháy lồng trong `-c`) không còn sót; `scripts/guard-ask-floor` nâng theo.
+### 4.10 Guard không nhận chữ lệnh bị nháy xé đôi
+- **Vì sao:** bash bỏ nháy giữa từ trước khi chạy, nên `git pu'sh'`, `git "push" --for"ce"`, `r'm' -rf /`, `git reset --ha''rd` chạy y như bản không nháy; mọi luật của guard so regex trên văn bản gốc (chữ `push`, `rm`, `--force` liền nhau) nên không hỏi. Có ở mọi bản. Ghi lại khi làm việc giải thân `bash -c` (PR sau #33): `bash -c '…; git -C '\''M'\'' pu'\''sh'\'''` vẫn lọt vì chữ push bị xé.
+- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa (ví dụ thêm một dạng của lệnh đã bỏ nháy giữa từ vào `cmd` cho mọi luật, như thân `bash -c`); không chậm thêm đáng kể với lệnh dài (ca 190 KiB trong test-hooks).
