@@ -57,13 +57,16 @@ kit_repo=""
 cdup="$(git -C "$kit" rev-parse --show-cdup 2>/dev/null)" && [ -z "$cdup" ] && kit_repo=1
 
 # kit_had <f>: file <f> của repo đích trùng một bản đã commit của <f> trong lịch sử kit, kể cả bản chỉ merge commit
-# mới có (-m: diff của merge với từng parent; thiếu nó thì git log --raw bỏ qua merge). Băm hai cách, cách nào
+# mới có (-m: diff của merge với từng parent; thiếu nó thì git log --raw bỏ qua merge). log.diffMerges=separate đặt
+# lại nghĩa của -m (config off hay remerge của người dùng đè nó: bỏ merge, hay thêm blob giả); --full-history không
+# cắt lịch sử ở merge trùng một parent (lọc theo đường dẫn thì git chỉ đi theo parent đó). Băm hai cách, cách nào
 # trùng cũng được: qua filter eol của kit (--path; kit clone với core.autocrlf=true có file CRLF mà blob là LF) và
 # byte thô (--no-filters; lịch sử có blob CRLF thì filter lại đổi file sang LF). Git lỗi thì coi như không trùng.
 kit_had() {
   local blob hist opt
   [ -n "$kit_repo" ] || return 1
-  hist="$(git -C "$kit" log --format= --raw --no-abbrev --no-renames -m -- "$1" 2>/dev/null)" || return 1
+  hist="$(git -c log.diffMerges=separate -C "$kit" log --format= --raw --no-abbrev --no-renames -m --full-history \
+    -- "$1" 2>/dev/null)" || return 1
   for opt in --path="$1" --no-filters; do
     blob="$(git -C "$kit" hash-object "$opt" -- "$target/$1" 2>/dev/null)" || continue
     case "$hist" in *" $blob "*) return 0 ;; esac
