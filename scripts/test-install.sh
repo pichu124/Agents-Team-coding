@@ -362,12 +362,36 @@ text_grep abc -q b
 # printf '%s' abc | grep -q b
   # printf '%s' abc | grep -Eiq b
 EOF
-printf '%s\n' "cat <<'EOF' >/dev/null" "$msg" EOF >> "$lib"
+# Câu thông báo trong chuỗi nháy đơn (không chạy): hook không được có here-doc (ca NB).
+case "$msg" in *"'"*) bad "N: thông báo của lint không được có nháy đơn → $msg" ;; esac
+printf ": '%s'\n" "$msg" >> "$lib"
 out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
 assert "N: validate-kit không được báo ||, grep không pipe, pipe không quiet, comment, thông báo của lint → $out" [ $? -eq 0 ]
 cp "$tmp/lib.sh.orig" "$lib"
 (cd "$n" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
+
+# NB. Hook dùng here-doc, <<< hay <(...): bash đọc chúng qua file tạm hay /dev/fd, đĩa đầy hay TMPDIR không ghi được
+#     thì vòng đọc không chạy lần nào và guard cho qua (PR #21; mục 4.4 của docs/viec-can-lam.md). validate-kit
+#     đỏ, nêu file:dòng. Comment và < đơn (redirect, chữ trong regex) không bị báo.
+first=$(($(wc -l < "$lib") + 1))
+printf '%s\n' "while read -r x; do :; done <<'E'" E 'read -r x <<< "$y"' 'while read -r x; do :; done < <(printf x)' \
+  'cat <<-E' E 'diff <(printf a) /dev/null' >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "NB: validate-kit phải đỏ khi hook dùng here-doc, <<< hay <(...)" [ $? -ne 0 ]
+for i in 0 2 3 4 6; do
+  case "$out" in
+    *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
+    *) bad "NB: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
+  esac
+done
+assert "NB: chỉ báo đúng 5 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 5 ]
+cp "$tmp/lib.sh.orig" "$lib"
+printf '%s\n' '# không dùng <<< hay <(...), xem text_grep' '  # cat <<EOF' ': "$(cat < /dev/null)"' ": '[;&|)<>]'" \
+  'printf "%s" a >/dev/null 2>&1' >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+assert "NB: validate-kit không được báo comment, < đơn, <> trong regex → $out" [ $? -eq 0 ]
+cp "$tmp/lib.sh.orig" "$lib"
 
 # O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
 #    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
