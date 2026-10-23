@@ -106,7 +106,9 @@ if [ -f "$settings" ] && [ -n "$py" ]; then
 import json, sys
 kit = json.load(open(sys.argv[1], encoding="utf-8"))
 # utf-8-sig: chấp nhận BOM mà Notepad trên Windows hay thêm vào đầu file.
-cur = json.load(open(sys.argv[2], encoding="utf-8-sig"))
+raw = open(sys.argv[2], "rb").read()
+cur = json.loads(raw.decode("utf-8-sig"))
+before = json.loads(raw.decode("utf-8-sig"))
 perm = cur.setdefault("permissions", {})
 for key in ("allow", "deny"):
     rules = perm.setdefault(key, [])
@@ -131,7 +133,13 @@ for event, groups in kit["hooks"].items():
                 g["matcher"] = "|".join(have + [t for t in group["matcher"].split("|") if t not in have])
 out = {"$schema": cur.pop("$schema", kit.get("$schema"))}
 out.update(cur)
-with open(sys.argv[3], "w", encoding="utf-8") as fh:
+if out == before and not raw.startswith(b"\xef\xbb\xbf"):
+    # Không có gì để gộp: giữ nguyên byte (dòng kết thúc CRLF của kit clone với autocrlf=true, cách xuống dòng riêng),
+    # để cài lại không làm git diff hiện cả file. Có BOM thì vẫn ghi lại để bỏ BOM như trước.
+    open(sys.argv[3], "wb").write(raw)
+    sys.exit(0)
+# Ghi theo dòng kết thúc của đa số dòng trong file đang có (CRLF thì giữ CRLF).
+with open(sys.argv[3], "w", encoding="utf-8", newline="\r\n" if raw.count(b"\r\n") * 2 > raw.count(b"\n") else "\n") as fh:
     json.dump(out, fh, ensure_ascii=False, indent=2)
     fh.write("\n")
 PYEOF

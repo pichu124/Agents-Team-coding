@@ -933,6 +933,33 @@ assert "AJ: kit autocrlf=true, dự án chưa sửa thì cài lại không --for
 assert "AJ: $arch_p phải là bản mới của kit" cmp -s "$cw/$arch_p" "$ct/$arch_p"
 assert "AJ: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
 assert "AJ: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+# AJb. Cùng kit autocrlf=true: lần cài đầu chép settings.json nguyên văn (CRLF), cài lại gộp bằng Python từng ghi LF,
+#      git diff hiện cả file dù nội dung không đổi (mục 4.7 cũ). Cài, commit, cài lại: repo đích phải sạch.
+cs="$tmp/crlf settings target"
+new_repo "$cs"
+git -C "$cs" config core.autocrlf false # so đúng byte, cả trên runner Windows (autocrlf=true ở system)
+"$cw/scripts/install-kit.sh" "$cs" >/dev/null 2>&1
+commit_all "$cs" "cài kit"
+assert "AJb: điều kiện của ca: settings.json của kit phải có CRLF (\r)" has_cr "$cw/.claude/settings.json"
+run_kit "$cw" "$cs"
+rc=$?
+assert "AJb: cài lại phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AJb: cài lại kit không đổi thì repo đích phải sạch → $(git -C "$cs" status --porcelain)" [ -z "$(git -C "$cs" status --porcelain)" ]
+# Có thứ để gộp (dự án bỏ một luật deny của kit): ghi lại file nhưng giữ CRLF, không dòng nào chỉ có LF. Gộp cần
+# Python (installer cũng vậy).
+if [ -n "$py" ]; then
+  "$py" -c 'import json, sys
+p = sys.argv[1]; d = json.loads(open(p, "rb").read().decode("utf-8-sig")); d["permissions"]["deny"].pop()
+open(p, "w", encoding="utf-8", newline="\r\n").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")' "$cs/.claude/settings.json"
+  commit_all "$cs" "bỏ một luật deny"
+  run_kit "$cw" "$cs"
+  assert "AJb: gộp lại luật deny của kit → $(git -C "$cs" diff --stat)" [ -n "$(git -C "$cs" status --porcelain)" ]
+  lines="$(wc -l < "$cs/.claude/settings.json" | tr -d ' ')"
+  crlf="$(tr -cd '\r' < "$cs/.claude/settings.json" | wc -c | tr -d ' ')"
+  assert "AJb: gộp xong settings.json phải giữ CRLF ở mọi dòng ($crlf \\r trên $lines dòng)" [ "$crlf" = "$lines" ]
+  # Kit ghi settings.json đúng định dạng của bộ gộp (indent 2): gộp lại luật đã bỏ thì ra đúng từng byte bản của kit.
+  assert "AJb: gộp xong settings.json phải trùng bản (CRLF) của kit" cmp -s "$cw/.claude/settings.json" "$cs/.claude/settings.json"
+fi
 
 # AK. Git lỗi khi băm file của dự án (clean filter bắt buộc của kit lỗi): coi như không trùng bản nào, ✘ như ca C.
 cp "$ct/$arch_p" "$tmp/ct-arch"
