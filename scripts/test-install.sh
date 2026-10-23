@@ -954,9 +954,11 @@ open(p, "w", encoding="utf-8", newline="\r\n").write(json.dumps(d, ensure_ascii=
   commit_all "$cs" "bỏ một luật deny"
   run_kit "$cw" "$cs"
   assert "AJb: gộp lại luật deny của kit → $(git -C "$cs" diff --stat)" [ -n "$(git -C "$cs" status --porcelain)" ]
-  lf_only="$(tr -d '\r' < "$cs/.claude/settings.json" | wc -l | tr -d ' ')"
+  lines="$(wc -l < "$cs/.claude/settings.json" | tr -d ' ')"
   crlf="$(tr -cd '\r' < "$cs/.claude/settings.json" | wc -c | tr -d ' ')"
-  assert "AJb: gộp xong settings.json phải giữ CRLF ở mọi dòng ($crlf \\r trên $lf_only dòng)" [ "$crlf" = "$lf_only" ]
+  assert "AJb: gộp xong settings.json phải giữ CRLF ở mọi dòng ($crlf \\r trên $lines dòng)" [ "$crlf" = "$lines" ]
+  # Kit ghi settings.json đúng định dạng của bộ gộp (indent 2): gộp lại luật đã bỏ thì ra đúng từng byte bản của kit.
+  assert "AJb: gộp xong settings.json phải trùng bản (CRLF) của kit" cmp -s "$cw/.claude/settings.json" "$cs/.claude/settings.json"
 fi
 
 # AK. Git lỗi khi băm file của dự án (clean filter bắt buộc của kit lỗi): coi như không trùng bản nào, ✘ như ca C.
