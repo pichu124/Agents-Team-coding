@@ -426,16 +426,20 @@ long_qinput() {
 long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
-# lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp.
-{
+# lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
+# thân có chữ push (thân được giải tới hết ngân sách).
+long_shc() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"npm run deploy \\\\\\n' "$work"
   for _ in {1..250}; do
     printf "bash -c 'c"
     printf "'\\\\\\\\''c%.0s" {1..130}
+    printf '%s' "$1"
     printf "' \\\\\\\\\\\\n"
   done
   printf 'true","description":"test"}}\n'
-} > "$tmp/long-shc.json"
+}
+long_shc '' > "$tmp/long-shc.json"
+long_shc ' push' > "$tmp/long-shcp.json"
 # Claude Code dừng hook chạy quá timeout trong settings.json rồi cho lệnh chạy mà KHÔNG hỏi, nên guard
 # chạy với đúng giới hạn đó (cần perl; không có thì không giới hạn). macOS từng mất hàng phút ở đây.
 guard_timeout="$(awk '/guard-irreversible\.sh/ { f = 1 } f && match($0, /"timeout"[ \t]*:[ \t]*[0-9]+/) {
@@ -450,7 +454,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

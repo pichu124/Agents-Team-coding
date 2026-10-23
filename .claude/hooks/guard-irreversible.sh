@@ -114,21 +114,23 @@ unquote_word() {
 
 # Thân của bash -c / sh -c '…': shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy ('…'\''…', "…\"…"),
 # nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
-# luật) và thêm vào forms (cổng push); thân lồng thì giải tiếp, tối đa 16 dạng. Thân không giải (quá 256 đoạn hay
-# 16 KB: mỗi đoạn chép phần còn lại của từ, 60 KB và 330 đoạn mất 6,5 giây ở UTF-8; hay tổng các thân đã xét quá
-# 32 KB hay quá 256 thân: 250 thân 259 đoạn qua ba dạng nối dòng mất 23 giây, 15000 thân `x` mất 2,5 giây) thì lệnh có chữ push vào cổng push và không biết thư
-# mục: hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
+# luật) và thêm vào forms (cổng push). Chỉ giải thân có chữ push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
+# chép phần còn lại của từ (60 KB, 330 đoạn mất 6,5 giây ở UTF-8; Git Bash chậm hơn nhiều lần), nên thân quá 16 KB
+# hay 256 đoạn thì bỏ, tổng các thân quá 8 KB hay quá 256 thân thì dừng: lệnh có chữ push khi đó vào cổng push và
+# không biết thư mục, tức hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
 SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
 decode_shell_c() {
-  local i=0 m w budget=32768 count=0
+  local i=0 m w budget=8192 count=0
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
     for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
+      # Chỉ cổng push cần đọc thân: thân không có chữ push thì khỏi bỏ nháy (Git Bash chậm hơn Linux nhiều lần).
+      case "$w" in *[Pp][Uu][Ss][Hh]*) ;; *) continue ;; esac
       budget=$((budget - ${#w}))
       count=$((count + 1))
       [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
