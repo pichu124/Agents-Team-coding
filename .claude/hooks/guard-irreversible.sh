@@ -153,11 +153,12 @@ last_arg() {
 }
 
 # unquote_word <từ> <bash|ps>: bỏ nháy như shell đọc một từ ghép nhiều đoạn ("a b"/'..' là a b/..), kết quả
-# trong UQ. bash: \<ký tự> ngoài nháy là ký tự đó; ps: \ là ký tự thường. Trả 1 khi không chắc đường (nháy kép có
-# \, quá 64 đoạn): guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách đọc cũ. Không dùng ${x//a/b}
-# (xem join_lines), mỗi đoạn một phép so regex.
+# trong UQ. bash: \<ký tự> ngoài nháy là ký tự đó, trong nháy kép chỉ \\ \" \$ \` là escape ("C:\Users" giữ \);
+# ps: \ là ký tự thường. Trả 1 khi quá 64 đoạn: guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách
+# đọc cũ. Không dùng ${x//a/b} (xem join_lines), mỗi đoạn một phép so regex.
 unquote_word() {
-  local w="$1" n=0 re_pl re_dq='^"([^"]*)"(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$'
+  local w="$1" n=0 re_pl re_dq='^"([^"]*)"(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
+  local re_dqbs='^([^\\]*)\\(.?)(.*)$'
   UQ=""
   if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
   while [ -n "$w" ]; do
@@ -166,8 +167,21 @@ unquote_word() {
     if [[ $w =~ $re_pl ]]; then
       UQ="$UQ${BASH_REMATCH[1]}"
     elif [[ $w =~ $re_dq ]]; then
-      case "${BASH_REMATCH[1]}" in *'\'*) [ "$2" = ps ] || return 1 ;; esac
-      UQ="$UQ${BASH_REMATCH[1]}"
+      c="${BASH_REMATCH[1]}"
+      rest="${BASH_REMATCH[2]}"
+      # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
+      while [ "$2" != ps ] && [[ $c =~ $re_dqbs ]]; do
+        n=$((n + 1))
+        [ "$n" -le 64 ] || return 1
+        case "${BASH_REMATCH[2]}" in
+          \\ | '$' | '`' | '"') UQ="$UQ${BASH_REMATCH[1]}${BASH_REMATCH[2]}" ;;
+          *) UQ="$UQ${BASH_REMATCH[1]}\\${BASH_REMATCH[2]}" ;;
+        esac
+        c="${BASH_REMATCH[3]}"
+      done
+      UQ="$UQ$c"
+      w="$rest"
+      continue
     elif [[ $w =~ $re_sq ]]; then
       UQ="$UQ${BASH_REMATCH[1]}"
     elif [ "$w" = '\' ]; then
@@ -262,6 +276,8 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
       for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}"); do
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
+        # Lượt từ ghép chỉ thêm thư mục: từ quá PATH_MAX (4096) thì bỏ, trước mọi phép cắt chuỗi (bậc hai theo độ dài).
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
         expand_dir "$LA" "$um" || { unknown=1; continue; }
         # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
         # ghép thì ngược lại.
@@ -280,6 +296,7 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
         expand_dir "$LA" "$um" || { unknown=1; continue; }
         for c in "${cl[@]}"; do
           [ -n "$c" ] || continue
