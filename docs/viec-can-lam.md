@@ -94,10 +94,6 @@ Không còn PR nào mở (21/10, sau PR #27).
 - **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows). Từ PR sửa nháy giữa từ (4.10 cũ), mỗi cd có nháy giữa từ được đọc theo hai cách: 200 `cd "/tmp/d N"'x' &&` 1,7 → 2,7 giây, 9000 `cd` 63 → 73 giây (Linux).
 - **Xong khi:** có ca test-hooks dùng `hook_limit`, xanh trên 3 OS.
 
-### 4.4 Lớp lỗi "guard cho qua khi I/O của shell hỏng" đã lọt hai lần
-- **Vì sao:** PR #6 (SIGPIPE dưới pipefail) và PR #21 (bash không tạo được file tạm cho here-doc). Theo quy ước của repo, lỗi lặp lần hai thì chạy `/correct`.
-- **Xong khi:** `validate-kit.sh` có lint cấm here-doc, `<<<` và `<(...)` trong file hook, báo file:dòng; có dòng trong bảng Rule ↔ Thứ thực thi.
-
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.

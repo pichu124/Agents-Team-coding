@@ -70,4 +70,8 @@ proj="${CLAUDE_PROJECT_DIR:-}"
 if [ -n "$proj" ] && [ -f "$proj/.claude/hooks/$name.sh" ] && registered; then
   exit 0
 fi
-exec bash "$hook" <<<"$input"
+# Input qua pipe, không qua here-string: <<< đi qua file tạm (mọi chuỗi trên bash < 5.1, chuỗi lớn hơn pipe buffer
+# trên bash ≥ 5.1), đĩa đầy hay TMPDIR không ghi được thì redirect lỗi và hook không chạy. Mã thoát là của hook: hook
+# thoát mà không đọc hết stdin thì printf chết vì SIGPIPE, pipefail đọc thành 141 và che exit 2 của Stop gate.
+{ printf '%s' "$input" 2>/dev/null; } | bash "$hook"
+exit "${PIPESTATUS[1]}"

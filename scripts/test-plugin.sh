@@ -203,6 +203,27 @@ if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok; else bad "dự án đã đăng ký
 run post-edit-format "$plain" "{\"tool_input\":{\"file_path\":\"$plain/a.py\"}}"
 if [ "$rc" -eq 0 ]; then ok; else bad "post-edit-format qua plugin phải exit 0 (exit $rc)"; fi
 
+# 6b. Không tạo được file tạm (đĩa đầy, TMPDIR không ghi được): run-hook.sh vẫn chuyển input cho hook và giữ mã
+#     thoát của hook. Từng dùng `exec bash "$hook" <<<"$input"`: here-string đi qua file tạm (mọi chuỗi trên bash < 5.1,
+#     chuỗi lớn hơn pipe buffer trên bash ≥ 5.1), redirect lỗi thì exit 1 và Stop gate không chạy (reviewer PR #35).
+#     Giả lập bằng ulimit -f 0 (Git Bash không có thì chạy như thường). Hook gián điệp chỉ thoát 2, không ghi file;
+#     bản không đọc stdin kiểm SIGPIPE của vế ghi không che mã thoát của hook dưới pipefail.
+blk="$tmp/block plugin"
+mkdir -p "$blk/.claude/hooks"
+cp -R plugin "$blk/plugin"
+cp .claude/hooks/lib.sh "$blk/.claude/hooks/lib.sh"
+big="$(printf '{"hook_event_name":"Stop","session_id":"%0100000d"}' 0)"
+for body in 'cat >/dev/null; exit 2' 'exit 2'; do
+  for h in stop-gate post-edit-format; do printf '#!/usr/bin/env bash\n%s\n' "$body" > "$blk/.claude/hooks/$h.sh"; done
+  for inp in "$(event_input stop-gate)" "$big"; do
+    for h in stop-gate post-edit-format; do
+      out="$( (trap '' XFSZ; ulimit -f 0 2>/dev/null; printf '%s' "$inp" | CLAUDE_PROJECT_DIR="$plain" bash "$blk/plugin/run-hook.sh" "$h") 2>"$tmp/err")"
+      rc=$?
+      if [ "$rc" -eq 2 ]; then ok; else bad "không tạo được file tạm: $h của plugin phải chạy và giữ exit 2 ($body, input ${#inp} byte; exit $rc, err=$(cat "$tmp/err"))"; fi
+    done
+  done
+done
+
 # 7. claude CLI có sẵn (máy dev): manifest phải qua trình kiểm của Claude Code.
 if command -v claude >/dev/null 2>&1; then
   if claude plugin validate "$root" >"$tmp/validate" 2>&1; then ok; else bad "claude plugin validate đỏ: $(tail -n 5 "$tmp/validate")"; fi
