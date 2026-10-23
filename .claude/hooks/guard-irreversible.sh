@@ -71,7 +71,7 @@ esac
 # ps: \ là ký tự thường. Trả 1 khi quá <tối đa đoạn> (mặc định 64): guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách
 # đọc cũ. Không dùng ${x//a/b} (xem join_lines), mỗi đoạn một phép so regex.
 unquote_word() {
-  local w="$1" n=0 max="${3:-64}" re_pl re_dq='^"(([^"\\]|\\.)*)"(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
+  local w="$1" n=0 max="${3:-64}" re_pl re_dqe='^"(([^"\\]|\\.)*)"(.*)$' re_dq='^"([^"]*)"()(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
   local re_dqbs='^([^\\]*)\\(.?)(.*)$'
   UQ=""
   if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
@@ -80,7 +80,8 @@ unquote_word() {
     [ "$n" -le "$max" ] || return 1
     if [[ $w =~ $re_pl ]]; then
       UQ="$UQ${BASH_REMATCH[1]}"
-    elif [[ $w =~ $re_dq ]]; then
+    elif { [ "$2" != ps ] && [[ $w =~ $re_dqe ]]; } || [[ $w =~ $re_dq ]]; then
+      # bash: nháy kép có \" bên trong; không khớp (nháy lẻ) thì đọc như PowerShell, tới " đầu tiên.
       c="${BASH_REMATCH[1]}"
       rest="${BASH_REMATCH[3]}"
       # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
@@ -114,19 +115,22 @@ unquote_word() {
 # Thân của bash -c / sh -c '…': shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy ('…'\''…', "…\"…"),
 # nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
 # luật) và thêm vào forms (cổng push); thân lồng thì giải tiếp, tối đa 16 dạng. Thân không giải (quá 256 đoạn hay
-# 16 KB: mỗi đoạn chép phần còn lại của từ, 60 KB và 330 đoạn mất 6,5 giây ở UTF-8) thì lệnh có chữ push vào cổng
-# push và không biết thư mục: hỏi.
-SHC='(^|[;&|(`{[:space:]"'"'"'])(ba|da|z|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+'
+# 16 KB: mỗi đoạn chép phần còn lại của từ, 60 KB và 330 đoạn mất 6,5 giây ở UTF-8; hay tổng các thân đã xét quá
+# 32 KB: 250 thân 259 đoạn qua ba dạng nối dòng mất 23 giây) thì lệnh có chữ push vào cổng push và không biết thư
+# mục: hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
+SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
 decode_shell_c() {
-  local i=0 m w
+  local i=0 m w budget=32768
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
     for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
+      budget=$((budget - ${#w}))
+      [ "$budget" -ge 0 ] || { shc_unknown=1; break 2; }
       [ "${#w}" -le 16384 ] || { shc_unknown=1; continue; }
       unquote_word "$w" bash 256
       case $? in

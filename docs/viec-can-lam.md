@@ -133,3 +133,7 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.10 Guard không nhận chữ lệnh bị nháy xé đôi
 - **Vì sao:** bash bỏ nháy giữa từ trước khi chạy, nên `git pu'sh'`, `git "push" --for"ce"`, `r'm' -rf /`, `git reset --ha''rd` chạy y như bản không nháy; mọi luật của guard so regex trên văn bản gốc (chữ `push`, `rm`, `--force` liền nhau) nên không hỏi. Có ở mọi bản. Ghi lại khi làm việc giải thân `bash -c` (PR sau #33): `bash -c '…; git -C '\''M'\'' pu'\''sh'\'''` vẫn lọt vì chữ push bị xé.
 - **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa (ví dụ thêm một dạng của lệnh đã bỏ nháy giữa từ vào `cmd` cho mọi luật, như thân `bash -c`); không chậm thêm đáng kể với lệnh dài (ca 190 KiB trong test-hooks).
+
+### 4.11 Thân `bash -c` guard chưa đọc
+- **Vì sao:** guard giải thân `bash -c '…'` (một lớp nháy) để tìm thư mục của push, nhưng chưa đọc khi thân nhiều dòng (grep đọc từng dòng: `bash -c 'true⏎cd '\''M'\'' && git push'`) hay khi shell là biến (`$SHELL -c`, `"$SHELL" -c`). Thân quá 16 KB, quá 256 đoạn hay tổng các thân quá 32 KB thì không giải, và lệnh có chữ push bị hỏi (hỏi thừa). Reviewer của PR giải thân bash -c thử bằng bash thật: guard main cũng sót các lệnh này.
+- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, không chậm thêm đáng kể (ca `long-shc` của test-hooks).
