@@ -185,13 +185,18 @@ for sh in "${shell_files[@]}"; do
     err "$sh:$n: grep -q nhận stdin từ pipe, pipefail đọc SIGPIPE (141) của lệnh trước thành \"không khớp\". Dùng text_grep (lib.sh) hoặc [ -n \"\$(...)\" ]"
   done < <(grep -nE -- "$pipe_quiet_grep" "$sh" | grep -Ev '^[0-9]+:[[:space:]]*#')
 done
-# Hook không dùng here-doc, <<< hay <(...): bash đọc chúng qua file tạm hay /dev/fd, đĩa đầy hay TMPDIR không ghi
-# được thì vòng đọc không chạy lần nào và guard cho qua (PR #21). Duyệt chuỗi trong bộ nhớ (text_grep của lib.sh).
+# Hook không dùng here-doc, <<<, <(...) hay >(...): bash đi qua file tạm hay /dev/fd, đĩa đầy hay TMPDIR không ghi
+# được thì vòng đọc không chạy lần nào và guard cho qua (PR #21), hay hook của plugin không chạy (PR #35). Duyệt
+# chuỗi trong bộ nhớ (text_grep của lib.sh). Báo theo dòng: dịch bit $((a << 2)) cũng bị báo, viết bằng phép nhân.
+hook_files=()
 for h in $KIT_HOOKS; do
-  [ -f ".claude/hooks/$h" ] || continue
+  [ -f ".claude/hooks/$h" ] && hook_files+=(".claude/hooks/$h")
+done
+in_kit_repo && hook_files+=(plugin/run-hook.sh)
+for f in "${hook_files[@]}"; do
   while IFS=: read -r n _; do
-    err ".claude/hooks/$h:$n: hook dùng here-doc, <<< hay <(...): đĩa đầy hay TMPDIR không ghi được thì bash không đọc được, guard cho qua. Duyệt chuỗi trong bộ nhớ (text_grep của lib.sh, for với IFS là xuống dòng)"
-  done < <(grep -nE -- '<<|<\(' ".claude/hooks/$h" | grep -Ev '^[0-9]+:[[:space:]]*#')
+    err "$f:$n: hook dùng here-doc, <<<, <(...) hay >(...): đĩa đầy hay TMPDIR không ghi được thì bash không đọc được, hook không chạy hay guard cho qua. Duyệt chuỗi trong bộ nhớ (text_grep của lib.sh, for với IFS là xuống dòng), hay pipe"
+  done < <(grep -nE -- '<<|[<>]\(' "$f" | grep -Ev '^[0-9]+:[[:space:]]*#')
 done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -S warning "${shell_files[@]}" || err "shellcheck báo lỗi"

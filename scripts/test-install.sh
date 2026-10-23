@@ -376,16 +376,16 @@ assert "N: validate-kit phải xanh sau khi khôi phục" [ $? -eq 0 ]
 #     đỏ, nêu file:dòng. Comment và < đơn (redirect, chữ trong regex) không bị báo.
 first=$(($(wc -l < "$lib") + 1))
 printf '%s\n' "while read -r x; do :; done <<'E'" E 'read -r x <<< "$y"' 'while read -r x; do :; done < <(printf x)' \
-  'cat <<-E' E 'diff <(printf a) /dev/null' >> "$lib"
+  'cat <<-E' E 'diff <(printf a) /dev/null' 'printf x > >(cat)' >> "$lib"
 out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
 assert "NB: validate-kit phải đỏ khi hook dùng here-doc, <<< hay <(...)" [ $? -ne 0 ]
-for i in 0 2 3 4 6; do
+for i in 0 2 3 4 6 7; do
   case "$out" in
     *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
     *) bad "NB: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
   esac
 done
-assert "NB: chỉ báo đúng 5 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 5 ]
+assert "NB: chỉ báo đúng 6 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 6 ]
 cp "$tmp/lib.sh.orig" "$lib"
 printf '%s\n' '# không dùng <<< hay <(...), xem text_grep' '  # cat <<EOF' ': "$(cat < /dev/null)"' ": '[;&|)<>]'" \
   'printf "%s" a >/dev/null 2>&1' >> "$lib"
@@ -423,6 +423,17 @@ for f in $repo_only; do
   case "$out" in
     *"$f:$(wc -l < "$p/$f" | tr -d ' '): "*) ok ;;
     *) bad "O: ở repo kit phải báo $f:<dòng cuối> → $out" ;;
+  esac
+done
+# Hook của plugin (plugin/run-hook.sh, chỉ repo kit có) cũng không được dùng here-doc, <<< hay <(...) (ca NB): từng có
+# `exec bash "$hook" <<<"$input"`, đĩa đầy thì Stop gate của plugin không chạy (reviewer PR #35).
+printf '%s\n' 'cat <<< "$x"' 'printf x > >(cat)' >> "$p/plugin/run-hook.sh"
+last=$(wc -l < "$p/plugin/run-hook.sh" | tr -d ' ')
+out="$(cd "$p" && ./scripts/validate-kit.sh 2>&1)"
+for l in $((last - 1)) "$last"; do
+  case "$out" in
+    *"plugin/run-hook.sh:$l: hook dùng"*) ok ;;
+    *) bad "O: ở repo kit phải báo here-string, >(...) ở plugin/run-hook.sh:$l → $out" ;;
   esac
 done
 
