@@ -2582,8 +2582,8 @@ def finish(note):
 bash = shutil.which("bash")
 if os.name != "posix" or sys.platform.startswith(("cygwin", "msys")):
     finish("• audit: bỏ qua oracle bash (không chạy trên Windows)")
-if not bash or not shutil.which("sh"):
-    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc sh)")
+if not bash or not shutil.which("sh") or not shutil.which("cat"):
+    finish("• audit: bỏ qua oracle bash (thiếu bash, sh hoặc cat)")
 ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                      universal_newlines=True, timeout=30).stdout.strip()
 if not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
@@ -2638,15 +2638,20 @@ cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) 
 # xoá gì, chỉ ghi.
 STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
 # PATH chỉ có bash, sh, cat: tên lệnh che lọt qua phép thay `\brm\b` không tìm thấy rm hay git thật. `bash -l` đặt lại
-# PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. Dạng
-# đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy.
+# PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. dash
+# bỏ biến BASH_FUNC_* nên bash dưới một tầng sh mất hàm export: BASH_ENV (dash giữ) định nghĩa lại chúng cho mọi bash không
+# tương tác. Dạng đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy. Chưa chặn:
+# lệnh xoá khác rm (unlink, rmdir, mv, shred…) và đường tuyệt đối viết bằng glob (`/usr/bi?/r?`) sau khi PATH bị đặt lại;
+# ngữ pháp không sinh chúng, thêm vào ngữ pháp thì thêm hàm chặn ở đây.
 BIN = os.path.join(root, "bin")
 os.makedirs(BIN)
 for tool in ("bash", "sh", "cat"):
     os.symlink(shutil.which(tool), os.path.join(BIN, tool))
 BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
+with open(os.path.join(root, "chan.sh"), "w") as fh:
+    fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
 env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
-       "BASH_FUNC_git%%": BLOCK}
+       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh")}
 def setup(k):
     base = os.path.join(root, str(k))
     for sub in ("p/src", "tmp/w/s"):
@@ -2721,7 +2726,9 @@ zz = os.path.join(bases[0], "tmp", "w", "zz")
 for cmd in ("X=r; ${X}m -f /tmp/w/zz", "bash -lc 'X=r; ${X}m -f /tmp/w/zz'", "sh -c 'X=r; ${X}m -f /tmp/w/zz'",
             "X=g; ${X}it init -q /tmp/w/zz.d", "bash -lc 'X=g; ${X}it init -q /tmp/w/zz.d'",
             "sh -c 'X=g; ${X}it init -q /tmp/w/zz.d'", "PATH=/usr/bin:/bin; X=r; ${X}m -f /tmp/w/zz",
-            "PATH=/usr/bin:/bin; X=g; ${X}it init -q /tmp/w/zz.d"):
+            "PATH=/usr/bin:/bin; X=g; ${X}it init -q /tmp/w/zz.d",
+            "sh -c \"PATH=/usr/bin:/bin bash -lc 'X=r; \\${X}m -f /tmp/w/zz'\"",
+            "sh -c \"PATH=/usr/bin:/bin bash -c 'X=g; \\${X}it init -q /tmp/w/zz.d'\""):
     open(zz, "w").close()
     err, calls, _bad = run(bases[0], cmd)
     if err or calls or not os.path.exists(zz) or os.path.exists(zz + ".d"):
