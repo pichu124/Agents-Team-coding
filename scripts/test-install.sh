@@ -1024,7 +1024,8 @@ for dm in off remerge; do
   git -C "$mk" checkout -q "$mk_main"
   git -C "$mk" config log.diffMerges "$dm"
   run_kit "$mk" "$t"
-  assert "AMb: log.diffMerges=$dm, bản chỉ merge commit có: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+  rc=$?
+  assert "AMb: log.diffMerges=$dm, bản chỉ merge commit có: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
   assert "AMb: log.diffMerges=$dm: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$t/$arch_p"
   git -C "$mk" config --unset log.diffMerges
 done
@@ -1051,7 +1052,8 @@ git -C "$mk" checkout -q "$mk_main"
 git -C "$mk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false merge -q -s ours --no-commit Z >/dev/null 2>&1
 git -C "$mk" checkout Z -- "$arch_p"
 git -C "$mk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --no-edit
-assert "AMc: điều kiện của ca: merge phải trùng parent Z ở $arch_p" [ -z "$(git -C "$mk" diff HEAD^2 HEAD -- "$arch_p")" ]
+assert "AMc: điều kiện của ca: HEAD phải là merge của Z" [ "$(git -C "$mk" rev-parse HEAD^2 2>/dev/null)" = "$(git -C "$mk" rev-parse Z)" ]
+assert "AMc: điều kiện của ca: merge phải trùng parent Z ở $arch_p" git -C "$mk" diff --quiet HEAD^2 HEAD -- "$arch_p"
 echo "Dòng sau khi gộp Z." >> "$mk/$arch_p"
 commit_all "$mk" "sau Z"
 git -C "$mk" config log.diffMerges off
@@ -1060,7 +1062,8 @@ case "$(git -C "$mk" log --format= --raw --no-abbrev --no-renames -m -- "$arch_p
   *) ok ;;
 esac
 run_kit "$mk" "$tz"
-assert "AMc: bản trên main bị cắt khỏi lịch sử theo đường dẫn: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AMc: bản trên main bị cắt khỏi lịch sử theo đường dẫn: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AMc: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$tz/$arch_p"
 git -C "$mk" config --unset log.diffMerges
 
