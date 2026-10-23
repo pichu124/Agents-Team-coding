@@ -27,7 +27,7 @@ jobs:
           - os: windows-latest
             shell: bash # từ khoá bash trên Windows là Git Bash (lệnh bash trong PATH có thể là WSL)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150 # Windows đo 76–84 phút trên main (23/10), 90 phút từng cắt PR #37; treo thì không giữ runner tới 6 giờ
+    timeout-minutes: 150 # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -44,12 +44,8 @@ jobs:
       - name: validate-kit
         if: ${{ !cancelled() }}
         run: ./scripts/validate-kit.sh
-      - name: test-hooks
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-hooks.sh
-      - name: test-install
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-install.sh
+      # check.sh chạy test-hooks, test-audit, test-plugin và test-install (qua check.local.sh), chạy hết dù một bước đỏ
+      # rồi kể tên mọi bước đỏ: không chạy riêng lần nữa (Windows từng mất ~30 phút vì chạy trùng).
       - name: check.sh (KIT_SELFTEST=1)
         if: ${{ !cancelled() }}
         run: KIT_SELFTEST=1 ./scripts/check.sh

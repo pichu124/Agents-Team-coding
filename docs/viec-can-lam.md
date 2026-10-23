@@ -97,7 +97,6 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
 - `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
-- Job `portable` trên Windows mất 76–84 phút trên main (23/10) và từng chạm `timeout-minutes: 90` (PR #37; nay 150). Phần lớn là chạy trùng: các bước riêng `test-hooks.sh` (~13 phút) và `test-install.sh` (~20 phút) chạy lại y nguyên trong `KIT_SELFTEST=1 ./scripts/check.sh` (hooks ~13, install ~18, audit ~5 phút; log run 39733950786). Bỏ hai bước riêng (giữ check.sh) hay cho check.sh bỏ qua phần đã chạy sẽ rút khoảng 30 phút mà không bớt ca test.
 - Guard hỏi thừa khi chuỗi `git push --force` hay `rm -rf /` chỉ là dữ liệu trong thân heredoc ghi ra file (`cat > gen.py <<'E'` ⏎ … ⏎ `E`), như lệnh so nhãn của verifier nhánh tích hợp audit ngày 21/10: session đứng 2,5 giờ chờ người duyệt. Không nới guard; cách tránh là ghi script bằng tool Write rồi mới chạy.
 - Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của PR #25 ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
