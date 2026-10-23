@@ -81,7 +81,12 @@ E='([[:space:];&|)"\'"'"']|$)'
 # Giá trị option có thể nằm trong nháy và chứa dấu cách: git -C "C:/my repo" push.
 # Giá trị không nháy: đọc theo cả hai cách, \ là ký tự thường (PowerShell: C:\x\) hoặc là escape
 # (bash: my\ repo). Regex được chọn cách nào khớp, nên hỏi thừa chứ không bỏ sót.
-O='([[:space:]]+-[^[:space:]]+([[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'][^[:space:]]*|([^-[:space:]"'"'"'\\]|\\.)([^[:space:]\\]|\\.)*\\?))?)*' 
+# Một từ của shell có thể ghép nhiều đoạn nháy ("a b"/'x', --git-dir="a b/".git): QW là một đoạn. Option và giá
+# trị của nó đọc thêm theo cách đó (hợp với cách cũ), để giá trị có nhiều dấu cách trong nháy không chặn regex.
+QW='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'\\]|\\.)'
+OA='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'][^[:space:]]*|([^-[:space:]"'"'"'\\]|\\.)([^[:space:]\\]|\\.)*\\?)'
+OQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'\\]|\\.)'"$QW"'*\\?'
+O='([[:space:]]+-([^[:space:]"'"'"']|"[^"]*"|'"'"'[^'"'"']*'"'"'|["'"'"'])+([[:space:]]+('"$OA|$OQ"'))?)*'
 # Vị trí bắt đầu một lệnh (để `git rm` không bị coi là `rm`).
 B='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|time|xargs|exec|nohup|env)[[:space:]])[[:space:]]*((sudo|doas|wsl)[[:space:]]+)?'
 G="git${O}${S}+"
@@ -114,38 +119,109 @@ rule "terraform${O}${S}+(apply|destroy)|kubectl${O}${S}+(apply|delete|replace|ro
 rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn|bun)${S}+(run${S}+)?deploy|make${S}+deploy)${E}" "deploy"
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
 
-# resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc.
+# Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
+# cd ở mỗi cách đọc (4.3).
+# resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
   d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
   case "$d" in
-    \~ | \~/*) printf '%s\n' "$HOME${d#\~}" ;;
-    /* | [A-Za-z]:*) printf '%s\n' "$d" ;;
-    *) printf '%s\n' "$1/$d" ;;
+    . | ./) RD="$1" ;; # cd . ở lại thư mục đó: không nối /. (1500 lần `cd .` thành 1500 thư mục khác chữ, 4.3)
+    \~ | \~/*) RD="$HOME${d#\~}" ;;
+    /* | [A-Za-z]:*) RD="$d" ;;
+    *) RD="$1/$d" ;;
   esac
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
 # main\ repo); ARG_PS coi \ là ký tự thường (PowerShell: C:\vnstock\; git push). Xét cả hai.
 ARG_BS='("[^"]*"|'"'"'[^'"'"']*'"'"'|([^[:space:];&|\\]|\\.)+\\?|\\)'
 ARG_PS='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|]+)'
+# Từ ghép nhiều đoạn nháy ("a b"/'..', "a b/"x, "x/"\.\.) là một đường với bash. Đọc thành lượt RIÊNG, thêm vào hai
+# lượt trên: nháy đóng của một chuỗi đứng trước (echo "cd x"; cd M) làm cách đọc này nuốt cả cd thật phía sau, nên
+# không được thay cách đọc cũ.
+ARG_BSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
+ARG_PSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'])+'
 
-# last_arg <đoạn khớp> <regex đối số>: đối số cuối của đoạn, bỏ tiền tố -Path:, --git-dir=, GIT_DIR=...
+# last_arg <đoạn khớp> <regex đối số>: đối số cuối của đoạn, bỏ tiền tố -Path:, --git-dir=, GIT_DIR=... Kết quả trong LA.
 last_arg() {
   local t="" re="$2"
   [[ $1 =~ ($re)$ ]] && t="${BASH_REMATCH[1]}"
   shopt -s nocasematch
   [[ $t =~ ^(-(literal)?path:|--chdir=|--git-dir=|--work-tree=|git_dir=|git_work_tree=)(.+)$ ]] && t="${BASH_REMATCH[3]}"
   shopt -u nocasematch
-  printf '%s\n' "$t"
+  LA="$t"
 }
 
-# expand_dir <đích>: bỏ nháy, thay $HOME, $PWD, $CLAUDE_PROJECT_DIR, $env:USERPROFILE, %USERPROFILE%.
-# Còn biến, lệnh lồng hay
-# %VAR% thì không biết thư mục: trả mã 1.
+# unquote_word <từ> <bash|ps>: bỏ nháy như shell đọc một từ ghép nhiều đoạn ("a b"/'..' là a b/..), kết quả
+# trong UQ. bash: \<ký tự> ngoài nháy là ký tự đó, trong nháy kép chỉ \\ \" \$ \` là escape ("C:\Users" giữ \);
+# ps: \ là ký tự thường. Trả 1 khi quá 64 đoạn: guard hỏi. Trả 2 khi từ không đọc được (nháy lẻ): chỉ dùng cách
+# đọc cũ. Không dùng ${x//a/b} (xem join_lines), mỗi đoạn một phép so regex.
+unquote_word() {
+  local w="$1" n=0 re_pl re_dq='^"([^"]*)"(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
+  local re_dqbs='^([^\\]*)\\(.?)(.*)$'
+  UQ=""
+  if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
+  while [ -n "$w" ]; do
+    n=$((n + 1))
+    [ "$n" -le 64 ] || return 1
+    if [[ $w =~ $re_pl ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    elif [[ $w =~ $re_dq ]]; then
+      c="${BASH_REMATCH[1]}"
+      rest="${BASH_REMATCH[2]}"
+      # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
+      while [ "$2" != ps ] && [[ $c =~ $re_dqbs ]]; do
+        n=$((n + 1))
+        [ "$n" -le 64 ] || return 1
+        case "${BASH_REMATCH[2]}" in
+          \\ | '$' | '`' | '"') UQ="$UQ${BASH_REMATCH[1]}${BASH_REMATCH[2]}" ;;
+          *) UQ="$UQ${BASH_REMATCH[1]}\\${BASH_REMATCH[2]}" ;;
+        esac
+        c="${BASH_REMATCH[3]}"
+      done
+      UQ="$UQ$c"
+      w="$rest"
+      continue
+    elif [[ $w =~ $re_sq ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    elif [ "$w" = '\' ]; then
+      UQ="$UQ\\"
+      return 0
+    elif [ "$2" != ps ] && [[ $w =~ $re_bs ]]; then
+      UQ="$UQ${BASH_REMATCH[1]}"
+    else
+      return 2
+    fi
+    w="${BASH_REMATCH[2]}"
+  done
+  return 0
+}
+
+# expand_dir <đích> <bash|ps>: bỏ nháy, thay $HOME, $PWD, $CLAUDE_PROJECT_DIR, $env:USERPROFILE, %USERPROFILE%.
+# Còn biến, lệnh lồng hay %VAR% thì không biết thư mục: trả mã 1. EO: đường theo cách cũ (chỉ bỏ nháy hai đầu,
+# `\ ` là dấu cách); EN: đường đọc theo unquote_word, rỗng khi từ không đọc được (nháy lẻ). Cả hai đều được xét.
 expand_dir() {
-  local d="$1"
+  local d="$1" rc
+  EN=""
   d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
   [ "$tool" = PowerShell ] || d="${d//\\ / }"
+  subst_dir "$d" || return 1
+  EO="$SD"
+  # Đường quá PATH_MAX (4096) không cd được: khỏi đọc thêm (mỗi đoạn một lần chép phần còn lại của từ).
+  [ "${#1}" -le 4096 ] || return 0
+  unquote_word "$1" "$2"
+  rc=$?
+  [ "$rc" = 1 ] && return 1
+  if [ "$rc" = 0 ]; then
+    subst_dir "$UQ" || return 1
+    EN="$SD"
+  fi
+  return 0
+}
+
+# subst_dir <đường>: thay biến đã biết ở đầu đường (xem expand_dir), kết quả trong SD; còn biến thì trả 1.
+subst_dir() {
+  local d="$1"
   d="${d/#\$HOME/$HOME}"
   d="${d/#\$\{HOME\}/$HOME}"
   d="${d/#\$PWD/${cwd:-.}}"
@@ -157,7 +233,7 @@ expand_dir() {
   [[ $d =~ ^\$\{?env:(userprofile|home)\}?(.*)$ ]] && d="${USERPROFILE:-$HOME}${BASH_REMATCH[2]}"
   shopt -u nocasematch
   case "$d" in *'$'* | *'`'* | *%*%*) return 1 ;; esac
-  printf '%s\n' "$d"
+  SD="$d"
 }
 
 # Push khi có dính tới nhánh chính thì hỏi. Không đoán refspec hay lệnh nào chạy ở đâu (redirect,
@@ -171,7 +247,9 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
   CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|if|builtin|command|exec)[[:space:]])[[:space:]]*'
-  dirs="$base$nl"
+  # Thư mục gom vào mảng: nối chuỗi chép lại cả chuỗi mỗi lần, bậc hai theo số cd (4.3). Mảng không rỗng (bash < 4.4
+  # với set -u báo lỗi khi mở rộng mảng rỗng).
+  dl=("$base")
   unknown=""
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
   # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
@@ -179,30 +257,60 @@ if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "${G}push"; then
   # lọt qua.
   set -f
   IFS="$nl"
-  for a in "$ARG_BS" "$ARG_PS"; do
+  for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
+    um="bash"
+    q=""
+    [ "$a" = "$ARG_PS" ] && um="ps"
+    [ "$a" = "$ARG_BSQ" ] && q=1
+    [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
     CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
     for f in "${forms[@]}"; do
+      # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
+      if [ -n "$q" ]; then
+        case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
+      fi
       cur="$base"
-      cds="$base$nl"
+      cl=("$base")
       for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}"); do
         [ -n "$m" ] || continue
-        t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
-        cur="$(resolve_dir "$cur" "$t")"
-        cds="$cds$cur$nl"
+        last_arg "$m" "$a"
+        # Lượt từ ghép chỉ thêm thư mục: từ quá PATH_MAX (4096) thì bỏ, trước mọi phép cắt chuỗi (bậc hai theo độ dài).
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
+        expand_dir "$LA" "$um" || { unknown=1; continue; }
+        # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
+        # ghép thì ngược lại.
+        t="$EO"
+        x="$EN"
+        [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO"
+        if [ -n "$x" ] && [ "$x" != "$t" ]; then
+          resolve_dir "$cur" "$x"
+          dl+=("$RD")
+        fi
+        resolve_dir "$cur" "$t"
+        cur="$RD"
+        cl+=("$cur")
       done
-      dirs="$dirs$cds"
+      dl+=("${cl[@]}")
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
-        t="$(expand_dir "$(last_arg "$m" "$a")")" || { unknown=1; continue; }
-        for c in $cds; do
-          [ -n "$c" ] && dirs="$dirs$(resolve_dir "$c" "$t")$nl"
+        last_arg "$m" "$a"
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
+        expand_dir "$LA" "$um" || { unknown=1; continue; }
+        for c in "${cl[@]}"; do
+          [ -n "$c" ] || continue
+          resolve_dir "$c" "$EO"
+          dl+=("$RD")
+          if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
+            resolve_dir "$c" "$EN"
+            dl+=("$RD")
+          fi
         done
       done
     done
   done
-  dirs="$(printf '%s' "$dirs" | awk '!s[$0]++')"
+  dirs="$(printf '%s\n' "${dl[@]}" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
   for d in $dirs; do
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh

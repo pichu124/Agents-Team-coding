@@ -52,6 +52,9 @@ work="$tmp/work"
 new_repo "$work" feat/x
 on_main="$tmp/main repo"
 new_repo "$on_main" main
+# Repo ở nhánh chính, đường dẫn có hai dấu cách.
+sp2="$tmp/sp ace plain/x"
+new_repo "$sp2" main
 # Repo ở nhánh chính, đường dẫn có chữ git và push.
 odd="$tmp/my git/github/pushy-main"
 new_repo "$odd" main
@@ -304,7 +307,34 @@ EOF
   if [ -n "$symm" ]; then
     expect_guard ask "cd \"$symm/link/..\" && git push"
     expect_guard ask "pushd \"$symm/link/..\"; git push"
+    # `..` có nháy hay `\` giữa từ: bash bỏ nháy rồi vẫn đi đường logic về repo ở main (mục 4.10 cũ của docs/viec-can-lam.md).
+    expect_guard ask "cd \"$symm/link/\"'..' && git push"
+    expect_guard ask "cd \"$symm/link\"/'..' && git push"
+    expect_guard ask "cd \"$symm/link/\".. && git push"
+    expect_guard ask "cd \"$symm/link/\"\\.\\. && git push"
+    expect_guard ask "pushd '$symm/link'/..; git push"
   fi
+  # Giá trị trong nháy có từ hai dấu cách, hay từ ghép nhiều đoạn nháy (`"a b"/'x'`, `"a b/"x`): bash ghép thành một
+  # đường; regex option của git và đối số của cd/-C/--git-dir phải vượt qua cả từ (mục 4.10 cũ của docs/viec-can-lam.md).
+  expect_guard ask "git --git-dir=\"$sp2/.git\" push"
+  expect_guard ask "git -c x.y=1 --git-dir=\"$sp2/.git\" push"
+  expect_guard ask "git --git-dir \"$sp2\"/'.git' push"
+  expect_guard ask "GIT_DIR=\"$sp2/.g\"it git push"
+  expect_guard ask "git -C \"$sp2\"/ push"
+  expect_guard ask "cd \"$tmp/sp ace plain/\"x && git push"
+  expect_guard ask "cd -- '$tmp/sp ace plain/'x; git push"
+  expect_guard ask "git --git-dir=\"$on_main/\".git push"
+  expect_guard ask "cd \"$on_main\"/ && git push"
+  # Nháy đóng của một chuỗi đứng trước cd/-C thật: cách đọc từ ghép không được nuốt cd/-C đó (reviewer của PR sửa
+  # nháy giữa từ; cách đọc cũ vẫn chạy riêng).
+  expect_guard ask "echo \"cd x\"; cd \"$on_main\" && git push; echo \"ok\""
+  expect_guard ask "echo 'cd x'; cd \"$on_main\" && git push; echo 'ok'"
+  expect_guard ask "printf 'cd sub\\n'; cd \"$on_main\" && git push origin HEAD; printf 'ok\\n'"
+  expect_guard ask "echo \"git -C x\"; git -C \"$on_main\" push; echo \"y\""
+  # Trong nháy kép, bash chỉ coi \ trước \ $ ` " là escape: đường Windows trong nháy kép đọc được, không hỏi thừa.
+  expect_guard allow 'cd "C:\Users\me\proj" && git push origin feat/x'
+  expect_guard allow 'git -C "C:\Users\me\proj" push origin feat/x'
+  TOOL=PowerShell expect_guard allow 'cd "D:\a b"; git push origin feat/x'
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
@@ -370,6 +400,15 @@ long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
 long_input 'git push' "$on_main" > "$tmp/long-push.json"
 # Mọi dòng kết thúc bằng \ nối dòng: guard nối dòng trên cả lệnh (bash 3.2 từng mất ~50 giây với lệnh 15 KB).
 long_input 'npm run deploy' "$work" ' \\\\' > "$tmp/long-cont.json"
+# Từ ghép nháy rất dài ngay sau cd (hay sau "cd nằm trong một chuỗi): cách đọc từ ghép đọc trọn cả từ ~188 KB và
+# từng chép nó nhiều lần, 11 giây ở locale UTF-8 trong khi trước đó 0,4 giây (reviewer của PR sửa nháy giữa từ).
+long_qinput() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
+  printf 'a b %.0s' {1..47000}
+  printf '\\" ; git push","description":"test"}}\n'
+}
+long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
+long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # Claude Code dừng hook chạy quá timeout trong settings.json rồi cho lệnh chạy mà KHÔNG hỏi, nên guard
 # chạy với đúng giới hạn đó (cần perl; không có thì không giới hạn). macOS từng mất hàng phút ở đây.
 guard_timeout="$(awk '/guard-irreversible\.sh/ { f = 1 } f && match($0, /"timeout"[ \t]*:[ \t]*[0-9]+/) {
@@ -384,8 +423,9 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont; do
-    out="$(KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json")"
+  for f in long-deploy long-push long-cont long-qcd long-qecho; do
+    # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
+    out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
       *'"permissionDecision":"ask"'*) ok ;;
       *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
