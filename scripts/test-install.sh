@@ -1011,6 +1011,61 @@ assert "AM: bản chỉ merge commit có, dự án chưa sửa thì cài lại k
 assert "AM: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$mt/$arch_p"
 assert "AM: không được có dòng ✘ → $(cat "$tmp/err")" no_conflict_line
 assert "AM: phải báo ✔ cập nhật 1 file kit → $(cat "$tmp/out")" grep -qxF '✔ cập nhật 1 file kit mà dự án chưa sửa' "$tmp/out"
+# AMb. Như AM, nhưng git của kit đặt log.diffMerges=off hay remerge (config của người dùng): `-m` bị config đè, git
+#      log không đọc merge hay đọc thêm blob giả, bản D không được nhận (reviewer PR #25, mục 4.6 cũ). Cài ở D
+#      (commit merge X), kit đã tiến tới merge Y: cài lại không --force phải cập nhật.
+mk_x="$(git -C "$mk" rev-parse "$mk_main^1")"
+for dm in off remerge; do
+  t="$tmp/merge target $dm"
+  new_repo "$t"
+  git -C "$mk" checkout -q "$mk_x"
+  "$mk/scripts/install-kit.sh" "$t" >/dev/null 2>&1
+  commit_all "$t" "cài kit D"
+  git -C "$mk" checkout -q "$mk_main"
+  git -C "$mk" config log.diffMerges "$dm"
+  run_kit "$mk" "$t"
+  rc=$?
+  assert "AMb: log.diffMerges=$dm, bản chỉ merge commit có: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+  assert "AMb: log.diffMerges=$dm: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$t/$arch_p"
+  git -C "$mk" config --unset log.diffMerges
+done
+# AMc. Lọc theo đường dẫn, git log cắt bớt lịch sử: ở merge mà file trùng một parent, git chỉ đi theo parent đó.
+#      main sửa file (M1, dự án cài ở đây) rồi sửa tiếp (M2); nhánh Z sửa khác; main gộp Z lấy đúng bản Z (merge trùng
+#      parent Z) rồi sửa tiếp. Bản M1 có trong lịch sử kit nhưng git log -- <file> chỉ đi nhánh Z. Ở git 2.43 `-m` tắt
+#      việc cắt bớt, nhưng log.diffMerges=off đè `-m` và git lại cắt: cài lại (với config đó) phải cập nhật, không ✘
+#      (mục 4.6 cũ).
+git -C "$mk" branch Z
+awk 'NR == 2 { $0 = $0 " (M1)" } { print }' "$mk/$arch_p" > "$tmp/arch-M1"
+cp "$tmp/arch-M1" "$mk/$arch_p"
+commit_all "$mk" "M1"
+tz="$tmp/merge target M1"
+new_repo "$tz"
+"$mk/scripts/install-kit.sh" "$tz" >/dev/null 2>&1
+commit_all "$tz" "cài kit M1"
+echo "Dòng M2." >> "$mk/$arch_p"
+commit_all "$mk" "M2"
+git -C "$mk" checkout -q Z
+awk 'NR == 4 { $0 = $0 " (Z)" } { print }' "$mk/$arch_p" > "$tmp/arch-Z"
+cp "$tmp/arch-Z" "$mk/$arch_p"
+commit_all "$mk" "Z"
+git -C "$mk" checkout -q "$mk_main"
+git -C "$mk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false merge -q -s ours --no-commit Z >/dev/null 2>&1
+git -C "$mk" checkout Z -- "$arch_p"
+git -C "$mk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q --no-edit
+assert "AMc: điều kiện của ca: HEAD phải là merge của Z" [ "$(git -C "$mk" rev-parse HEAD^2 2>/dev/null)" = "$(git -C "$mk" rev-parse Z)" ]
+assert "AMc: điều kiện của ca: merge phải trùng parent Z ở $arch_p" git -C "$mk" diff --quiet HEAD^2 HEAD -- "$arch_p"
+echo "Dòng sau khi gộp Z." >> "$mk/$arch_p"
+commit_all "$mk" "sau Z"
+git -C "$mk" config log.diffMerges off
+case "$(git -C "$mk" log --format= --raw --no-abbrev --no-renames -m -- "$arch_p")" in
+  *" $(git -C "$tz" hash-object -- "$arch_p") "*) bad "AMc: điều kiện của ca: git log -m với log.diffMerges=off không được thấy bản M1" ;;
+  *) ok ;;
+esac
+run_kit "$mk" "$tz"
+rc=$?
+assert "AMc: bản trên main bị cắt khỏi lịch sử theo đường dẫn: cài lại không --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AMc: $arch_p phải là bản mới của kit" cmp -s "$mk/$arch_p" "$tz/$arch_p"
+git -C "$mk" config --unset log.diffMerges
 
 # AN. Clone trên Windows (Git for Windows mặc định core.autocrlf=true): agent và skill của kit là CRLF.
 #    Claude Code đọc được, nên validate-kit phải xanh, và vẫn bắt được lỗi frontmatter trong file CRLF.
