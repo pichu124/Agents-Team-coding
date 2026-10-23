@@ -116,13 +116,13 @@ unquote_word() {
 # nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
 # luật) và thêm vào forms (cổng push); thân lồng thì giải tiếp, tối đa 16 dạng. Thân không giải (quá 256 đoạn hay
 # 16 KB: mỗi đoạn chép phần còn lại của từ, 60 KB và 330 đoạn mất 6,5 giây ở UTF-8; hay tổng các thân đã xét quá
-# 32 KB: 250 thân 259 đoạn qua ba dạng nối dòng mất 23 giây) thì lệnh có chữ push vào cổng push và không biết thư
+# 32 KB hay quá 256 thân: 250 thân 259 đoạn qua ba dạng nối dòng mất 23 giây, 15000 thân `x` mất 2,5 giây) thì lệnh có chữ push vào cổng push và không biết thư
 # mục: hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
 SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
 decode_shell_c() {
-  local i=0 m w budget=32768
+  local i=0 m w budget=32768 count=0
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
@@ -130,7 +130,8 @@ decode_shell_c() {
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
       budget=$((budget - ${#w}))
-      [ "$budget" -ge 0 ] || { shc_unknown=1; break 2; }
+      count=$((count + 1))
+      [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
       [ "${#w}" -le 16384 ] || { shc_unknown=1; continue; }
       unquote_word "$w" bash 256
       case $? in
