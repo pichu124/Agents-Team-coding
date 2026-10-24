@@ -360,6 +360,14 @@ EOF
   expect_guard ask "echo \\';n'pm' run deploy"
   expect_guard ask "echo \\';r'm' -rf /"
   expect_guard ask "echo \"it's\";r'm' -rf ~"
+  # Reviewer vòng ba: token dừng ở `=` nên chỉ còn một nháy lẻ, và builtin/command bị xé.
+  expect_guard ask "git --git-dir'='\"$on_main/.git\" push"
+  expect_guard ask "git '--git-dir='\"$on_main/.git\" push"
+  expect_guard ask "export GIT_DIR'='\"$on_main/.git\"; git push"
+  expect_guard ask "export \"GIT_DIR=$on_main/.git\"; git push"
+  expect_guard ask "env 'GIT_DIR=$on_main/.git' git push"
+  expect_guard ask "buil'ti'n cd '$on_main' && git push"
+  expect_guard ask "comm\\and cd '$on_main' && git push"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
   c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
   expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"
@@ -460,6 +468,17 @@ long_qinput() {
   printf '\\" ; git push","description":"test"}}\n'
 }
 long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
+# Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
+long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
+long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
+# Dòng nối rất dài có nháy và `:` sau git push: luật refspec `:` chậm bậc hai với grep -Ei ở locale UTF-8, và dạng bỏ nháy
+# làm cmd dài gấp ba (reviewer của PR sửa nháy xé chữ: 253 KB mất 13,5 giây).
+long_colon() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd \\"%s\\" && git push origin feat/x \\\\' "$work" "$on_main"
+  printf "\\\\n'a'\\\\\"b\\\\\" line-%s \\\\\\\\" {1..11000}
+  printf '\\nx:y","description":"test"}}\n'
+}
+long_colon > "$tmp/long-colon.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
 # lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
@@ -490,7 +509,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

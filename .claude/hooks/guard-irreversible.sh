@@ -159,8 +159,9 @@ decode_shell_c
 # Hai dạng chỉ thêm chữ để khớp: hỏi thừa (echo 'pu'sh) chứ không bỏ sót những lệnh này. sed, tr chạy tuyến tính, không
 # dùng ${x//a/b} (xem join_lines). Cổng push không đọc thư mục từ hai dạng này (dx tách đường "a b", dq ghép nhầm nháy).
 # Thay vào đó, một token của lệnh gốc mà bỏ ' " \ $ thì thành từ khoá thư mục hay option của cd (c'd', -'C', '--', c\d,
-# "cd") làm thư mục của push thành chưa biết, tức hỏi. Một nháy lẻ ở đầu hay cuối token ('cd, "cd của thân bash -c) không
-# xé gì. Xét từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
+# "cd", buil'ti'n, --git-dir'=', "GIT_DIR=) làm thư mục của push thành chưa biết, tức hỏi. Riêng tên lệnh cd, một nháy lẻ
+# ở đầu hay cuối token ('cd, "cd của thân bash -c) không xé gì; token của option dừng ở `=` nên không có ngoại lệ đó. Xét
+# từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
 case "$cmd" in
   *[\"\'\\]*)
     dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
@@ -168,17 +169,20 @@ case "$cmd" in
     dx="$(printf '%s\n' "$cmd" | LC_ALL=C tr -d "\"'\\\\")"
     cmd="$cmd$nl$dq$nl$dx"
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
-      BEGIN { kw = "^(cd|chdir|pushd|sl|set-location|push-location|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"; q = "\047" }
-      { s = $0; gsub(/["\047\\$]/, "", s)
-        if (tolower(s) ~ kw && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"") { print "x"; exit } }')"
+      BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
+              kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
+              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$" }
+      { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
+        if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
     ;;
 esac
 
 reason=""
+# LC_ALL=C: mọi mẫu là ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB
+# mất 10 giây, quá timeout của hook).
 rule() {
-  if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "$1"; then
+  if [ -z "$reason" ] && LC_ALL=C text_grep "$cmd" -Eiq -- "$1"; then
     reason="$2"
   fi
 }
