@@ -2511,7 +2511,9 @@ fi
 # lỗi mà bản trước và bản này cùng có. Bước này chạy một bộ lệnh fuzz cố định bằng bash thật, `rm` thay bằng stub chỉ ghi
 # thư mục và đích, rồi đỏ khi bash xoá đích nằm ngoài thư mục tạm mà suspicious_labels trả []. An toàn: stub là đường dẫn
 # tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh có git, push, reset, clean,
-# Remove-Item hay `>` bị bỏ hẳn, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là /dev/null, có timeout.
+# Remove-Item hay `>` bị bỏ hẳn, PATH chỉ có bash, sh, cat, rm và git là hàm export báo lỗi, lệnh gọi gián tiếp hay che
+# tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là
+# /dev/null, có timeout.
 # Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2 và 5.3, sh là dash.
 # Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao
 # bỏ qua.
@@ -2580,8 +2582,8 @@ def finish(note):
 bash = shutil.which("bash")
 if os.name != "posix" or sys.platform.startswith(("cygwin", "msys")):
     finish("• audit: bỏ qua oracle bash (không chạy trên Windows)")
-if not bash or not shutil.which("sh"):
-    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc sh)")
+if not bash or not shutil.which("sh") or not shutil.which("cat"):
+    finish("• audit: bỏ qua oracle bash (thiếu bash, sh hoặc cat)")
 ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                      universal_newlines=True, timeout=30).stdout.strip()
 if not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
@@ -2626,14 +2628,30 @@ def line():
     return ("(" + s + ")" if rnd.random() < 0.1 else s) + rnd.choice(TAIL)
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)]
 FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
+# Văn bản chạy (sau khi bỏ nháy và `\`) không được gọi rm hay git, hay gọi lệnh gián tiếp: thay lệnh, eval, env, command, exec,
+# xargs, find, đường /bin/, gỡ hàm chặn (`unset -f`, enable, hash), glob (`/usr/bi?/r[m]` né cả tên lẫn /bin/).
+DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash)\b|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
 cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
 
 # Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A
 # đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không
 # xoá gì, chỉ ghi.
-STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$(dirname \"$0\")/log.$$\"\n"
-env = {"PATH": os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(p)),
-       "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C"}
+STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
+# PATH chỉ có bash, sh, cat: tên lệnh che lọt qua phép thay `\brm\b` không tìm thấy rm hay git thật. `bash -l` đặt lại
+# PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. dash
+# bỏ biến BASH_FUNC_* nên bash dưới một tầng sh mất hàm export: BASH_ENV (dash giữ) định nghĩa lại chúng cho mọi bash không
+# tương tác. Dạng đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy. Chưa chặn:
+# lệnh xoá khác rm (unlink, rmdir, mv, shred…) sau khi PATH bị đặt lại; ngữ pháp không sinh chúng, thêm vào ngữ pháp thì
+# thêm hàm chặn ở đây.
+BIN = os.path.join(root, "bin")
+os.makedirs(BIN)
+for tool in ("bash", "sh", "cat"):
+    os.symlink(shutil.which(tool), os.path.join(BIN, tool))
+BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
+with open(os.path.join(root, "chan.sh"), "w") as fh:
+    fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
+env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
+       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh")}
 def setup(k):
     base = os.path.join(root, str(k))
     for sub in ("p/src", "tmp/w/s"):
@@ -2651,8 +2669,9 @@ def run(base, cmd, rec=False):
     tạm của lần gọi có cờ đệ quy."""
     tmpd = os.path.join(base, "tmp")
     text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
-    if re.search(r"\brm\b", text.replace(root, "")) or FORBID.search(text.replace(root, "")):
-        return "văn bản chạy còn rm hay lệnh bị cấm", [], []
+    plain = re.sub(r"['\"\\\\]", "", text.replace(root, ""))  # bỏ nháy và `\`: `r\m`, `'r'm` thành rm
+    if FORBID.search(text.replace(root, "")) or DISGUISE.search(plain):
+        return "văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp", [], []
     for f in glob.glob(os.path.join(base, "log.*")):
         os.remove(f)
     p = subprocess.Popen([bash, "-c", text], cwd=os.path.join(base, "p"), env=env, stdin=subprocess.DEVNULL,
@@ -2690,6 +2709,37 @@ for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src"
     if err or not calls or bad != want:
         fails.append(f"oracle không dựng đúng: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, "
                      f"đích ngoài thư mục tạm {bad} (phải là {want})")
+# Tên lệnh bị che lọt qua phép thay `\brm\b` và chạy rm hay git thật: run() phải từ chối, không chạy. Đích nằm trong
+# /tmp/w/zz, không tồn tại, nên nếu lỡ chạy cũng không mất gì.
+for cmd in ("r\\m -rf /tmp/w/zz", "'r'm -rf /tmp/w/zz", '"r"m -rf /tmp/w/zz',
+            "$(echo rm) -rf /tmp/w/zz", "`echo rm` -rf /tmp/w/zz", "command rm -rf /tmp/w/zz", "env rm -rf /tmp/w/zz",
+            "eval 'rm -rf /tmp/w/zz'", "exec rm -rf /tmp/w/zz", "echo /tmp/w/zz | xargs rm -rf",
+            "find /tmp/w/zz -delete", "/bin/rm -rf /tmp/w/zz", "/usr/bin/rm -rf /tmp/w/zz", "g\\it status",
+            "'g'it status", "X=r; unset -f ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz",
+            "X=g; builtin unset -f ${X}it; PATH=/usr/bin:/bin; ${X}it init -q /tmp/w/zz.d", "/usr/bi?/r[m] -f /tmp/w/zz",
+            "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x"):
+    err, calls, _bad = run(bases[0], cmd)
+    if not err or calls:
+        fails.append(f"oracle chạy lệnh che tên lệnh thay vì từ chối: {cmd!r} (lỗi {err or 'không'}, stub ghi {calls})")
+# Tên ghép từ biến thì kiểm tĩnh không thấy (ngữ pháp có `${D}src`): chạy, nhưng rm và git thật không được chạm tới, kể cả
+# qua `bash -l` (đặt lại PATH: /etc/profile của Debian, giả lập bằng `PATH=…` vì máy chạy test có thể không đặt) hay sh.
+# File canh /tmp/w/zz phải còn, /tmp/w/zz.d (git init tạo) không được có.
+zz = os.path.join(bases[0], "tmp", "w", "zz")
+for cmd in ("X=r; ${X}m -f /tmp/w/zz", "bash -lc 'X=r; ${X}m -f /tmp/w/zz'", "sh -c 'X=r; ${X}m -f /tmp/w/zz'",
+            "X=g; ${X}it init -q /tmp/w/zz.d", "bash -lc 'X=g; ${X}it init -q /tmp/w/zz.d'",
+            "sh -c 'X=g; ${X}it init -q /tmp/w/zz.d'", "PATH=/usr/bin:/bin; X=r; ${X}m -f /tmp/w/zz",
+            "PATH=/usr/bin:/bin; X=g; ${X}it init -q /tmp/w/zz.d",
+            "sh -c \"PATH=/usr/bin:/bin bash -lc 'X=r; \\${X}m -f /tmp/w/zz'\"",
+            "sh -c \"PATH=/usr/bin:/bin bash -c 'X=g; \\${X}it init -q /tmp/w/zz.d'\""):
+    open(zz, "w").close()
+    err, calls, _bad = run(bases[0], cmd)
+    if err or calls or not os.path.exists(zz) or os.path.exists(zz + ".d"):
+        ran = "đã" if os.path.exists(zz + ".d") else "không"
+        fails.append(f"oracle với tên lệnh ghép từ biến: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, file canh "
+                     f"{'còn' if os.path.exists(zz) else 'bị xoá'}, git init {ran} chạy")
+    shutil.rmtree(zz + ".d", ignore_errors=True)
+    if os.path.exists(zz):
+        os.remove(zz)
 if fails:
     finish("")
 # Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
