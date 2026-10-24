@@ -368,6 +368,16 @@ EOF
   expect_guard ask "env 'GIT_DIR=$on_main/.git' git push"
   expect_guard ask "buil'ti'n cd '$on_main' && git push"
   expect_guard ask "comm\\and cd '$on_main' && git push"
+  # PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs), coi nháy cong là nháy và en dash là dấu -: luật chạy grep ở
+  # locale C (reviewer vòng bốn). Byte dựng bằng printf: bash 3.2 không có $'\u…'.
+  em="$(printf '\342\200\203')" ideo="$(printf '\343\200\200')" lq="$(printf '\342\200\230')" rq="$(printf '\342\200\231')"
+  ndash="$(printf '\342\200\223')"
+  TOOL=PowerShell expect_guard ask "git push${em}--force origin feat/x"
+  TOOL=PowerShell expect_guard ask "git push origin${ideo}+feat/x"
+  TOOL=PowerShell expect_guard ask "git reset${em}--hard"
+  TOOL=PowerShell expect_guard ask "npm${ideo}publish"
+  TOOL=PowerShell expect_guard ask "git pu${lq}sh${rq} --force origin feat/x"
+  TOOL=PowerShell expect_guard ask "Remove-Item ${ndash}Recurse C:\\"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
   c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
   expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"

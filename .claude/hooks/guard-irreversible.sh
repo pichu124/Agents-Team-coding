@@ -152,6 +152,19 @@ decode_shell_c() {
 
 decode_shell_c
 
+# PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs, NBSP, U+0085), coi nháy cong là nháy và en/em dash là dấu -,
+# còn luật chạy grep ở locale C (rule) nên [[:space:]] chỉ khớp khoảng trắng ASCII. Lệnh có byte ≥ 0x80 thì so thêm một
+# dạng đã đổi các ký tự đó sang ASCII; dạng bỏ nháy dưới đây làm tiếp trên dạng này. Byte dựng bằng printf (BSD sed không
+# hiểu \x), sed ở locale C chạy tuyến tính trên byte. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải \uXXXX, nên đổi
+# cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
+if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
+  uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g')"
+  uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
+  uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g'
+  un="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "$uni" -e "$uesc")"
+  [ "$un" = "$cmd" ] || cmd="$cmd$nl$un"
+fi
+
 # Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
 # chạy y như bản không nháy, còn mọi luật so trên chữ liền nhau. Mọi luật so thêm hai dạng:
 # - dq: bỏ `$` trước nháy, nháy quanh đoạn không có khoảng trắng và \ trước ký tự không phải khoảng trắng;
@@ -332,7 +345,8 @@ if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unk
   set -f
   IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
-    [ -n "$reason" ] && break
+    # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
+    [ -n "$reason$unknown" ] && break
     um="bash"
     q=""
     [ "$a" = "$ARG_PS" ] && um="ps"
