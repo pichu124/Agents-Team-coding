@@ -2629,8 +2629,8 @@ def line():
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)]
 FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
 # Văn bản chạy (sau khi bỏ nháy và `\`) không được gọi rm hay git, hay gọi lệnh gián tiếp: thay lệnh, eval, env, command, exec,
-# xargs, find, đường /bin/.
-DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find)\b|\$\(|`|/bin/")
+# xargs, find, đường /bin/, gỡ hàm chặn (`unset -f`, enable, hash), glob (`/usr/bi?/r[m]` né cả tên lẫn /bin/).
+DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash)\b|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
 cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
 
 # Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A
@@ -2641,8 +2641,8 @@ STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
 # PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. dash
 # bỏ biến BASH_FUNC_* nên bash dưới một tầng sh mất hàm export: BASH_ENV (dash giữ) định nghĩa lại chúng cho mọi bash không
 # tương tác. Dạng đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy. Chưa chặn:
-# lệnh xoá khác rm (unlink, rmdir, mv, shred…) và đường tuyệt đối viết bằng glob (`/usr/bi?/r?`) sau khi PATH bị đặt lại;
-# ngữ pháp không sinh chúng, thêm vào ngữ pháp thì thêm hàm chặn ở đây.
+# lệnh xoá khác rm (unlink, rmdir, mv, shred…) sau khi PATH bị đặt lại; ngữ pháp không sinh chúng, thêm vào ngữ pháp thì
+# thêm hàm chặn ở đây.
 BIN = os.path.join(root, "bin")
 os.makedirs(BIN)
 for tool in ("bash", "sh", "cat"):
@@ -2715,7 +2715,9 @@ for cmd in ("r\\m -rf /tmp/w/zz", "'r'm -rf /tmp/w/zz", '"r"m -rf /tmp/w/zz',
             "$(echo rm) -rf /tmp/w/zz", "`echo rm` -rf /tmp/w/zz", "command rm -rf /tmp/w/zz", "env rm -rf /tmp/w/zz",
             "eval 'rm -rf /tmp/w/zz'", "exec rm -rf /tmp/w/zz", "echo /tmp/w/zz | xargs rm -rf",
             "find /tmp/w/zz -delete", "/bin/rm -rf /tmp/w/zz", "/usr/bin/rm -rf /tmp/w/zz", "g\\it status",
-            "'g'it status"):
+            "'g'it status", "X=r; unset -f ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz",
+            "X=g; builtin unset -f ${X}it; PATH=/usr/bin:/bin; ${X}it init -q /tmp/w/zz.d", "/usr/bi?/r[m] -f /tmp/w/zz",
+            "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x"):
     err, calls, _bad = run(bases[0], cmd)
     if not err or calls:
         fails.append(f"oracle chạy lệnh che tên lệnh thay vì từ chối: {cmd!r} (lỗi {err or 'không'}, stub ghi {calls})")
