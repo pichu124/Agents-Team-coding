@@ -138,12 +138,14 @@ decode_shell_c() {
       [ "${#w}" -le 16384 ] || { shc_unknown=1; continue; }
       unquote_word "$w" bash 256
       case $? in
-        0) [ "${#forms[@]}" -lt 16 ] && forms+=("$UQ") && cmd="$cmd$nl$UQ" ;;
+        # Hết chỗ cho dạng mới thì thân không được đọc: thư mục của push là chưa biết, không bỏ trong im lặng.
+        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; else shc_unknown=1; fi ;;
         1) shc_unknown=1 ;;
       esac
     done
     i=$((i + 1))
   done
+  [ "$i" -ge "${#forms[@]}" ] || shc_unknown=1
   IFS=$' \t\n'
   set +f
 }
@@ -159,12 +161,15 @@ decode_shell_c
 dq=""
 case "$cmd" in
   *[\"\'\\]*)
-    dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g' \
-      -e 's/\\\([A-Za-z]\)/\1/g')"
+    dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
+      -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
     if [ "$dq" != "$cmd" ]; then
-      KW='(cd|chdir|pushd|sl|set-location|push-location|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)'
-      KW="(^|[^[:alnum:]_-])$KW([^[:alnum:]_-]|\$)"
-      [ "$(printf '%s\n' "$cmd" | grep -Eio -- "$KW")" = "$(printf '%s\n' "$dq" | grep -Eio -- "$KW")" ] || forms+=("$dq")
+      # So từng token (giữ nháy và \ trong token) là từ khoá thư mục hay option của cd: c'd', -'P', '--' là token khác ở
+      # hai bên. So chuỗi khớp có ký tự biên thì `cd;c'd'` cho cùng danh sách (grep -o nuốt `;`).
+      KW='cd|chdir|pushd|sl|set-location|push-location|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree'
+      KW="$KW|-p|-l|--|-passthru|-path|-literalpath"
+      [ "$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\-]+" | grep -Eix -- "$KW")" = \
+        "$(printf '%s\n' "$dq" | grep -Eo -- "[[:alnum:]_'\"\\\\-]+" | grep -Eix -- "$KW")" ] || forms+=("$dq")
       cmd="$cmd$nl$dq"
     fi
     ;;
@@ -311,6 +316,10 @@ if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unk
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
   unknown="$shc_unknown"
+  # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
+  # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
+  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
   # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
   # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
@@ -318,6 +327,7 @@ if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unk
   set -f
   IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
+    [ -n "$reason" ] && break
     um="bash"
     q=""
     [ "$a" = "$ARG_PS" ] && um="ps"

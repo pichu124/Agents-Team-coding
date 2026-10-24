@@ -87,7 +87,7 @@ Không còn PR nào mở (21/10, sau PR #27).
 - **Xong khi:** ca Q (lấy lại từ 6a08ee9) xanh trên macos-latest.
 
 ### 4.3 Guard chậm quá timeout với lệnh có rất nhiều cd
-- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows). Từ PR sửa nháy giữa từ (4.10 cũ), mỗi cd có nháy giữa từ được đọc theo hai cách: 200 `cd "/tmp/d N"'x' &&` 1,7 → 2,7 giây, 9000 `cd` 63 → 73 giây (Linux).
+- **Vì sao:** 1500 dòng `cd . && ls` rồi `git push` trong repo ở main mất khoảng 52 giây, quá timeout 10 giây của hook, nên Claude Code cho lệnh chạy mà không hỏi. Lỗi có sẵn, cả trên Linux. Rule trong CLAUDE.md (PR #22) ghi là "chưa phủ". Từ PR #22, mỗi thư mục có `..` được đọc thêm theo đường logic (thêm 4 fork, 2 exec): 200 lần `cd .. &&` mất 4,4 giây thay vì 3,2 giây trên Linux, nên trên Git Bash ngưỡng số `cd` vượt timeout thấp hơn khoảng 30–40% (ước lượng của reviewer PR #22, chưa đo trên Windows). Từ PR sửa nháy giữa từ (4.10 cũ), mỗi cd có nháy giữa từ được đọc theo hai cách: 200 `cd "/tmp/d N"'x' &&` 1,7 → 2,7 giây, 9000 `cd` 63 → 73 giây (Linux). Từ PR sửa chữ lệnh bị nháy xé đôi: thư mục của phiên ở nhánh chính thì hỏi ngay, trước khi duyệt cd (1500 `cd . && ls` 1,41 → 0,11 giây); ngoài nhánh chính, nháy xé một từ khoá thư mục (`c'd'`) làm cổng push đọc thêm một dạng: `cd M; 1000×cd "a b"; c'd' . && git push` 4,3 → 7,5 giây (Linux).
 - **Xong khi:** có ca test-hooks dùng `hook_limit`, xanh trên 3 OS.
 
 ### 4.5 Nhỏ
@@ -110,6 +110,11 @@ Không còn PR nào mở (21/10, sau PR #27).
 ### 4.9 Chưa có cách ghim một file kit ở bản cũ
 - **Vì sao:** installer coi file trùng một bản kit cũ là "dự án chưa sửa" và cập nhật nó. Dự án cố ý giữ bản cũ, hay `git revert` commit cập nhật kit, thì lần cài sau file lại lên bản mới. Hiện installer chỉ in tên file được cập nhật, và docs/04 dặn thêm một dòng comment riêng vào file để installer dừng ở file đó.
 - **Xong khi:** có cách ghim chính thức (ví dụ mục `kit-pinned:` trong `.claude/agent-team-kit.txt` mà installer tôn trọng) kèm test; hoặc người dùng quyết định giữ cách dặn thêm comment, và xoá mục này.
+
+### 4.10 Guard chưa nhận vài dạng chữ lệnh bị nháy hay `\` xé đôi
+- **Đã có:** guard so thêm một dạng đã bỏ nháy quanh đoạn không có khoảng trắng, `$` trước nháy và `\` trước ký tự không phải khoảng trắng (`git pu'sh'`, `r'm' -rf /`, `--ha''rd`, `c'd' M`, `cd -'P' M`, `-\-force`, `$'p'ush`), kể cả trong thân `bash -c`.
+- **Vì sao còn:** reviewer của PR sửa lớp này thử bằng bash thật, các lệnh sau vẫn lọt (main cũng lọt): tên shell bị xé nên thân không được giải (`ba'sh' -c 'cd '\''M'\'' && git push'`, `"bash" -c …`, `bash -'c' …`: decode_shell_c chạy trước dạng bỏ nháy, mà sed làm hỏng `'\''` của thân); `\` nối dòng giữa chữ (`git pu\` ⏎ `sh --force`, `r\` ⏎ `m -rf /`: bash xoá cả `\` lẫn xuống dòng, join_lines thay bằng dấu cách).
+- **Xong khi:** các lệnh trên là ca "phải hỏi" trong test-hooks, đỏ trước khi sửa, không chậm thêm đáng kể (ca `long-*` của test-hooks).
 
 ### 4.11 Thân `bash -c` guard chưa đọc
 - **Vì sao:** guard giải thân `bash -c '…'` (một lớp nháy) để tìm thư mục của push, nhưng chưa đọc khi thân nhiều dòng (grep đọc từng dòng: `bash -c 'true⏎cd '\''M'\'' && git push'`) hay khi shell là biến (`$SHELL -c`, `"$SHELL" -c`). Thân quá 16 KB, quá 256 đoạn hay tổng các thân quá 32 KB thì không giải, và lệnh có chữ push bị hỏi (hỏi thừa). Reviewer của PR giải thân bash -c thử bằng bash thật: guard main cũng sót các lệnh này.

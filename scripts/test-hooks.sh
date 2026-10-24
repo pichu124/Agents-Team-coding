@@ -318,7 +318,7 @@ EOF
     expect_guard ask "sh -c 'cd '\\''$symm/link'\\''/.. && git push'"
   fi
   # Thân của bash -c / sh -c: shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy, nên '\'' trong thân là một
-  # dấu nháy của lệnh con (mục 4.10 cũ thứ hai của docs/viec-can-lam.md).
+  # dấu nháy của lệnh con (mục 4.10 cũ của docs/viec-can-lam.md).
   expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -c 'cd \"$tmp/sp ace plain/\"'\\''x'\\'' && git push'"
   expect_guard ask "bash -c \"cd \\\"$on_main\\\" && git push\""
@@ -327,7 +327,7 @@ EOF
   expect_guard ask "/bin/bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -o pipefail -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash --norc -c -- 'cd '\\''$on_main'\\'' && git push'"
-  # Chữ lệnh bị nháy hay \ xé đôi: bash bỏ nháy giữa từ rồi chạy y như bản không nháy (mục 4.10 cũ thứ hai của docs/viec-can-lam.md).
+  # Chữ lệnh bị nháy hay \ xé đôi: bash bỏ nháy giữa từ rồi chạy y như bản không nháy (4.10 của docs/viec-can-lam.md).
   expect_guard ask "git pu'sh' --force origin feat/x"
   expect_guard ask "git \"push\" --for\"ce\" origin feat/x"
   expect_guard ask "git pu\\sh -f"
@@ -340,6 +340,20 @@ EOF
   expect_guard ask "git -C '$on_main' pu\"sh\""
   expect_guard ask "c'd' '$on_main' && git push"
   expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
+  # Reviewer của PR sửa nháy xé chữ: biến đổi bù nhau làm danh sách từ khoá như cũ, option của cd bị xé, $'…', \ trước
+  # ký tự không phải chữ cái.
+  expect_guard ask "cd;c'd' '$on_main' && git push"
+  expect_guard ask "echo -C;c'd' '$on_main' && git push"
+  expect_guard ask "cd -'P' '$on_main' && git push"
+  expect_guard ask "cd '--' '$on_main' && git push"
+  expect_guard ask "git \$'p'ush --force origin feat/x"
+  expect_guard ask "git push -\\-force origin feat/x"
+  expect_guard ask "git push origin \\+feat/x"
+  expect_guard ask "git push origin \\:feat/x"
+  expect_guard ask "rm -rf \\/*"
+  # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
+  c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
+  expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"
   # PowerShell: \ là ký tự thường, "…\x\"m là …\x\m (reviewer của PR giải thân bash -c).
   TOOL=PowerShell expect_guard ask "Set-Location \"$tmp/x\\\"m; git push"
   TOOL=PowerShell expect_guard ask "git -C \"$tmp/x\\\"m push"
