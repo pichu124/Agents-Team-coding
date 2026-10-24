@@ -351,6 +351,15 @@ EOF
   expect_guard ask "git push origin \\+feat/x"
   expect_guard ask "git push origin \\:feat/x"
   expect_guard ask "rm -rf \\/*"
+  # Reviewer vòng hai: `$` trước nháy làm mất một từ khoá ở dạng bỏ nháy (bù cho c'd'); nháy đã thoát làm sed ghép nhầm cặp.
+  expect_guard ask "echo cd\$'x'; c'd' '$on_main' && git push"
+  expect_guard ask "echo -C\$'y'; git -'C' '$on_main' push"
+  expect_guard ask "printf %s cd\$\"x\"; c\\d '$on_main' && git push"
+  expect_guard ask "echo \\';c'd' '$on_main' && git push"
+  expect_guard ask "echo \\\";c\"d\" '$on_main' && git push"
+  expect_guard ask "echo \\';n'pm' run deploy"
+  expect_guard ask "echo \\';r'm' -rf /"
+  expect_guard ask "echo \"it's\";r'm' -rf ~"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
   c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
   expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"

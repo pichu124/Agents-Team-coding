@@ -152,26 +152,27 @@ decode_shell_c() {
 
 decode_shell_c
 
-# Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`): bash bỏ nháy giữa từ rồi chạy y như
-# bản không nháy, còn mọi luật so trên chữ liền nhau. So thêm một dạng (mọi luật và cổng push) đã bỏ nháy quanh đoạn không
-# có khoảng trắng và \ trước chữ cái; đoạn nháy có khoảng trắng giữ nguyên để đường "a b" của -C hay cd không bị tách. Dạng
-# này chỉ thêm chữ để khớp và thêm thư mục để xét: hỏi thừa (echo 'pu'sh) chứ không bỏ sót. sed chạy tuyến tính, không dùng
-# ${x//a/b} (xem join_lines). Cổng push chỉ đọc thêm dạng này khi nháy chạm tới từ khoá thư mục (c'd', -'C'): mỗi dạng thêm
-# một lượt cho mọi cd, 200 `cd "a b"'x'` từ 0,6 lên 1,1 giây (4.3).
-dq=""
+# Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
+# chạy y như bản không nháy, còn mọi luật so trên chữ liền nhau. Mọi luật so thêm hai dạng:
+# - dq: bỏ `$` trước nháy, nháy quanh đoạn không có khoảng trắng và \ trước ký tự không phải khoảng trắng;
+# - dx: xoá hết ' " \ (sed ghép cặp nháy từ trái sang, không biết \' là nháy đã thoát: `echo \';r'm'` thành `rm'`).
+# Hai dạng chỉ thêm chữ để khớp: hỏi thừa (echo 'pu'sh) chứ không bỏ sót những lệnh này. sed, tr chạy tuyến tính, không
+# dùng ${x//a/b} (xem join_lines). Cổng push không đọc thư mục từ hai dạng này (dx tách đường "a b", dq ghép nhầm nháy).
+# Thay vào đó, một token của lệnh gốc mà bỏ ' " \ $ thì thành từ khoá thư mục hay option của cd (c'd', -'C', '--', c\d,
+# "cd") làm thư mục của push thành chưa biết, tức hỏi. Một nháy lẻ ở đầu hay cuối token ('cd, "cd của thân bash -c) không
+# xé gì. Xét từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
 case "$cmd" in
   *[\"\'\\]*)
     dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
       -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
-    if [ "$dq" != "$cmd" ]; then
-      # So từng token (giữ nháy và \ trong token) là từ khoá thư mục hay option của cd: c'd', -'P', '--' là token khác ở
-      # hai bên. So chuỗi khớp có ký tự biên thì `cd;c'd'` cho cùng danh sách (grep -o nuốt `;`).
-      KW='cd|chdir|pushd|sl|set-location|push-location|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree'
-      KW="$KW|-p|-l|--|-passthru|-path|-literalpath"
-      [ "$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\-]+" | grep -Eix -- "$KW")" = \
-        "$(printf '%s\n' "$dq" | grep -Eo -- "[[:alnum:]_'\"\\\\-]+" | grep -Eix -- "$KW")" ] || forms+=("$dq")
-      cmd="$cmd$nl$dq"
-    fi
+    dx="$(printf '%s\n' "$cmd" | LC_ALL=C tr -d "\"'\\\\")"
+    cmd="$cmd$nl$dq$nl$dx"
+    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
+      BEGIN { kw = "^(cd|chdir|pushd|sl|set-location|push-location|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
+              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"; q = "\047" }
+      { s = $0; gsub(/["\047\\$]/, "", s)
+        if (tolower(s) ~ kw && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"") { print "x"; exit } }')"
+    [ -z "$torn" ] || shc_unknown=1
     ;;
 esac
 
