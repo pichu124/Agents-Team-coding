@@ -318,7 +318,7 @@ EOF
     expect_guard ask "sh -c 'cd '\\''$symm/link'\\''/.. && git push'"
   fi
   # Thân của bash -c / sh -c: shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy, nên '\'' trong thân là một
-  # dấu nháy của lệnh con (4.10 của docs/viec-can-lam.md).
+  # dấu nháy của lệnh con (mục 4.10 cũ thứ hai của docs/viec-can-lam.md).
   expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -c 'cd \"$tmp/sp ace plain/\"'\\''x'\\'' && git push'"
   expect_guard ask "bash -c \"cd \\\"$on_main\\\" && git push\""
@@ -327,6 +327,19 @@ EOF
   expect_guard ask "/bin/bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -o pipefail -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash --norc -c -- 'cd '\\''$on_main'\\'' && git push'"
+  # Chữ lệnh bị nháy hay \ xé đôi: bash bỏ nháy giữa từ rồi chạy y như bản không nháy (mục 4.10 cũ thứ hai của docs/viec-can-lam.md).
+  expect_guard ask "git pu'sh' --force origin feat/x"
+  expect_guard ask "git \"push\" --for\"ce\" origin feat/x"
+  expect_guard ask "git pu\\sh -f"
+  expect_guard ask "r'm' -rf /"
+  expect_guard ask "\"rm\" -rf ~"
+  expect_guard ask "git reset --ha''rd"
+  expect_guard ask "git cl\"ea\"n -fd"
+  expect_guard ask "npm run dep'loy'"
+  expect_guard ask "git pu'sh'" "$on_main"
+  expect_guard ask "git -C '$on_main' pu\"sh\""
+  expect_guard ask "c'd' '$on_main' && git push"
+  expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
   # PowerShell: \ là ký tự thường, "…\x\"m là …\x\m (reviewer của PR giải thân bash -c).
   TOOL=PowerShell expect_guard ask "Set-Location \"$tmp/x\\\"m; git push"
   TOOL=PowerShell expect_guard ask "git -C \"$tmp/x\\\"m push"

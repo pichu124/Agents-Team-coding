@@ -114,7 +114,7 @@ unquote_word() {
 
 # Thân của bash -c / sh -c '…': shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy ('…'\''…', "…\"…"),
 # nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
-# luật) và thêm vào forms (cổng push). Chỉ giải thân có chữ push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
+# luật) và thêm vào forms (cổng push). Chỉ giải thân có các chữ của push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
 # chép phần còn lại của từ (60 KB, 330 đoạn mất 6,5 giây ở UTF-8; Git Bash chậm hơn nhiều lần), nên thân quá 16 KB
 # hay 256 đoạn thì bỏ, tổng các thân quá 8 KB hay quá 256 thân thì dừng: lệnh có chữ push khi đó vào cổng push và
 # không biết thư mục, tức hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
@@ -129,8 +129,9 @@ decode_shell_c() {
     for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
-      # Chỉ cổng push cần đọc thân: thân không có chữ push thì khỏi bỏ nháy (Git Bash chậm hơn Linux nhiều lần).
-      case "$w" in *[Pp][Uu][Ss][Hh]*) ;; *) continue ;; esac
+      # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
+      # nhiều lần). Không đòi bốn chữ liền nhau: nháy có thể xé đôi chữ (pu'\''sh'\'').
+      case "$w" in *[Pp]*[Uu]*[Ss]*[Hh]*) ;; *) continue ;; esac
       budget=$((budget - ${#w}))
       count=$((count + 1))
       [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
@@ -148,6 +149,26 @@ decode_shell_c() {
 }
 
 decode_shell_c
+
+# Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`): bash bỏ nháy giữa từ rồi chạy y như
+# bản không nháy, còn mọi luật so trên chữ liền nhau. So thêm một dạng (mọi luật và cổng push) đã bỏ nháy quanh đoạn không
+# có khoảng trắng và \ trước chữ cái; đoạn nháy có khoảng trắng giữ nguyên để đường "a b" của -C hay cd không bị tách. Dạng
+# này chỉ thêm chữ để khớp và thêm thư mục để xét: hỏi thừa (echo 'pu'sh) chứ không bỏ sót. sed chạy tuyến tính, không dùng
+# ${x//a/b} (xem join_lines). Cổng push chỉ đọc thêm dạng này khi nháy chạm tới từ khoá thư mục (c'd', -'C'): mỗi dạng thêm
+# một lượt cho mọi cd, 200 `cd "a b"'x'` từ 0,6 lên 1,1 giây (4.3).
+dq=""
+case "$cmd" in
+  *[\"\'\\]*)
+    dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g' \
+      -e 's/\\\([A-Za-z]\)/\1/g')"
+    if [ "$dq" != "$cmd" ]; then
+      KW='(cd|chdir|pushd|sl|set-location|push-location|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)'
+      KW="(^|[^[:alnum:]_-])$KW([^[:alnum:]_-]|\$)"
+      [ "$(printf '%s\n' "$cmd" | grep -Eio -- "$KW")" = "$(printf '%s\n' "$dq" | grep -Eio -- "$KW")" ] || forms+=("$dq")
+      cmd="$cmd$nl$dq"
+    fi
+    ;;
+esac
 
 reason=""
 rule() {
