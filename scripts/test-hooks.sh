@@ -378,6 +378,14 @@ EOF
   TOOL=PowerShell expect_guard ask "npm${ideo}publish"
   TOOL=PowerShell expect_guard ask "git pu${lq}sh${rq} --force origin feat/x"
   TOOL=PowerShell expect_guard ask "Remove-Item ${ndash}Recurse C:\\"
+  # Cổng push cũng đọc dạng đã đổi (reviewer vòng năm): thư mục sau khoảng trắng Unicode, trong nháy cong, sau en dash.
+  nbsp="$(printf '\302\240')"
+  TOOL=PowerShell expect_guard ask "git -C ${lq}$on_main${rq} push"
+  TOOL=PowerShell expect_guard ask "Push-Location${ideo}'$on_main'; git push"
+  TOOL=PowerShell expect_guard ask "Set-Location ${ndash}Path '$on_main'; git push"
+  TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
+  # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
+  expect_guard ask "git pu$(printf '\305\277')h -f"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
   c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
   expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"
@@ -489,6 +497,10 @@ long_colon() {
   printf '\\nx:y","description":"test"}}\n'
 }
 long_colon > "$tmp/long-colon.json"
+# Mỗi dòng có é, U+2003 và nháy cong, nối dòng bằng \: guard so thêm dạng đã đổi Unicode sang ASCII và hai dạng bỏ nháy.
+u_e="$(printf '\303\251')" u_em="$(printf '\342\200\203')" u_lq="$(printf '\342\200\230')" u_rq="$(printf '\342\200\231')"
+# Phần cuối dòng là định dạng của printf rồi thành chuỗi JSON: \\" là nháy kép, \\\\ là một dấu \ nối dòng.
+long_input 'npm run deploy' "$work" " echo '$u_e' "'\\"x\\"'" a${u_em}b ${u_lq}c${u_rq} "'\\\\' > "$tmp/long-uni.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
 # lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
@@ -519,7 +531,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

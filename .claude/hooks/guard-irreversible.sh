@@ -151,18 +151,24 @@ decode_shell_c() {
 }
 
 decode_shell_c
+# Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
+# độ dài của nó.
+cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
 
 # PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs, NBSP, U+0085), coi nháy cong là nháy và en/em dash là dấu -,
 # còn luật chạy grep ở locale C (rule) nên [[:space:]] chỉ khớp khoảng trắng ASCII. Lệnh có byte ≥ 0x80 thì so thêm một
-# dạng đã đổi các ký tự đó sang ASCII; dạng bỏ nháy dưới đây làm tiếp trên dạng này. Byte dựng bằng printf (BSD sed không
-# hiểu \x), sed ở locale C chạy tuyến tính trên byte. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải \uXXXX, nên đổi
-# cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
+# dạng đã đổi các ký tự đó sang ASCII; dạng bỏ nháy dưới đây làm trên dạng này thay cho lệnh gốc (nó đã gồm lệnh gốc). Byte dựng bằng printf (BSD sed không
+# hiểu \x), sed ở locale C chạy tuyến tính trên byte. ſ và ı đổi thành s và i: GNU grep ở locale UTF-8 gập chúng khi -i,
+# nên trước khi luật chạy ở locale C, `git puſh -f` vẫn được hỏi. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải
+# \uXXXX, nên đổi cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
+src="$cmd"
 if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
-  uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g')"
+  uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g;s/\305\277/s/g;s/\304\261/i/g')"
   uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
-  uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g'
+  uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g;s/\\u017[fF]/s/g;s/\\u0131/i/g'
   un="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "$uni" -e "$uesc")"
-  [ "$un" = "$cmd" ] || cmd="$cmd$nl$un"
+  # Cổng push đọc cả dạng này: `git -C ‘M’ push`, `Push-Location<U+3000>M`, `Set-Location –Path M`.
+  [ "$un" = "$cmd" ] || { src="$un"; cmd="$cmd$nl$un"; forms+=("$un"); }
 fi
 
 # Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
@@ -175,12 +181,11 @@ fi
 # "cd", buil'ti'n, --git-dir'=', "GIT_DIR=) làm thư mục của push thành chưa biết, tức hỏi. Riêng tên lệnh cd, một nháy lẻ
 # ở đầu hay cuối token ('cd, "cd của thân bash -c) không xé gì; token của option dừng ở `=` nên không có ngoại lệ đó. Xét
 # từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
-case "$cmd" in
+case "$src" in
   *[\"\'\\]*)
-    dq="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
+    dq="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
       -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
-    dx="$(printf '%s\n' "$cmd" | LC_ALL=C tr -d "\"'\\\\")"
-    cmd="$cmd$nl$dq$nl$dx"
+    dx="$(printf '%s\n' "$src" | LC_ALL=C tr -d "\"'\\\\")"
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
       BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
               kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
@@ -188,16 +193,21 @@ case "$cmd" in
       { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
         if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
+    cmd="$cmd$nl$dq$nl$dx"
     ;;
 esac
 
 reason=""
-# LC_ALL=C: mọi mẫu là ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB
-# mất 10 giây, quá timeout của hook).
+# rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy các dòng có khớp, rồi mới xét từng luật theo thứ
+# tự trên các dòng đó (cmd gồm nhiều dạng của lệnh, 24 lần quét cả cmd từng mất vài giây với lệnh dài). LC_ALL=C: mọi mẫu là
+# ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB mất 10 giây).
+rule_e=()
+rule_re=()
+rule_why=()
 rule() {
-  if [ -z "$reason" ] && LC_ALL=C text_grep "$cmd" -Eiq -- "$1"; then
-    reason="$2"
-  fi
+  rule_e+=(-e "$1")
+  rule_re+=("$1")
+  rule_why+=("$2")
 }
 
 S='[[:space:]]'
@@ -245,6 +255,17 @@ rule "twine${S}+upload|docker${O}${S}+push" "đẩy artifact lên registry"
 rule "terraform${O}${S}+(apply|destroy)|kubectl${O}${S}+(apply|delete|replace|rollout|scale|drain)|helm${O}${S}+(install|upgrade|uninstall|delete|rollback)" "thay đổi hạ tầng"
 rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn|bun)${S}+(run${S}+)?deploy|make${S}+deploy)${E}" "deploy"
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
+hits="$(LC_ALL=C text_grep "$cmd" -Ei "${rule_e[@]}")"
+if [ -n "$hits" ]; then
+  i=0
+  while [ "$i" -lt "${#rule_re[@]}" ]; do
+    if LC_ALL=C text_grep "$hits" -Eiq -- "${rule_re[$i]}"; then
+      reason="${rule_why[$i]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+fi
 
 # Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
 # cd ở mỗi cách đọc (4.3).
