@@ -121,7 +121,9 @@ unquote_word() {
 SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
-PUSH_LETTERS='[Pp].*[Uu].*[Ss].*[Hh]'
+# Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
+# 40 KB toàn chữ p mất 11 giây).
+PUSH_LETTERS='^[^Pp]*[Pp][^Uu]*[Uu][^Ss]*[Ss][^Hh]*[Hh]'
 decode_shell_c() {
   local i=0 m w budget=8192 count=0
   set -f

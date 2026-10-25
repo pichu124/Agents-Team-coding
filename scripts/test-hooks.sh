@@ -507,6 +507,10 @@ long_input 'true' "$work" " echo '$u_e' a${u_em}b gh pr merge I "'\\\\' 4000 > "
 # trên /bin/bash của macOS; Linux không thấy). Chạy guard bằng /bin/bash ở job portable của macOS.
 printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c '"'"'echo %s%s'"'"'; git push --force origin x","description":"test"}}\n' \
   "$work" "$(printf 'pu%.0s' {1..180})" "$(printf 's%.0s' {1..180})" > "$tmp/long-pushc.json"
+# Thân 40 KB toàn chữ p: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (11 giây; reviewer
+# vòng bảy).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c %s; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'p%.0s' $(seq 40000))" > "$tmp/long-pppp.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
 # lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
@@ -537,7 +541,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
