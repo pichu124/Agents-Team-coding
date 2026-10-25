@@ -121,6 +121,7 @@ unquote_word() {
 SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
+PUSH_LETTERS='[Pp].*[Uu].*[Ss].*[Hh]'
 decode_shell_c() {
   local i=0 m w budget=8192 count=0
   set -f
@@ -130,8 +131,9 @@ decode_shell_c() {
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
       # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
-      # nhiều lần). Không đòi bốn chữ liền nhau: nháy có thể xé đôi chữ (pu'\''sh'\'').
-      case "$w" in *[Pp]*[Uu]*[Ss]*[Hh]*) ;; *) continue ;; esac
+      # nhiều lần). Không đòi bốn chữ liền nhau: nháy có thể xé đôi chữ (pu'\''sh'\''). Regex, không dùng glob
+      # *[Pp]*[Uu]*[Ss]*[Hh]*: bash 3.2 khớp glob đó bậc bốn (thân 775 byte không có h mất 17 giây trên macOS).
+      [[ $w =~ $PUSH_LETTERS ]] || continue
       budget=$((budget - ${#w}))
       count=$((count + 1))
       [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
@@ -198,8 +200,8 @@ case "$src" in
 esac
 
 reason=""
-# rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy các dòng có khớp, rồi mới xét từng luật theo thứ
-# tự trên các dòng đó (cmd gồm nhiều dạng của lệnh, 24 lần quét cả cmd từng mất vài giây với lệnh dài). LC_ALL=C: mọi mẫu là
+# rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy dòng khớp đầu tiên, rồi mới xét từng luật theo
+# thứ tự trên dòng đó (cmd gồm nhiều dạng của lệnh, 24 lần quét cả cmd từng mất vài giây với lệnh dài). LC_ALL=C: mọi mẫu là
 # ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB mất 10 giây).
 rule_e=()
 rule_re=()
@@ -255,8 +257,11 @@ rule "twine${S}+upload|docker${O}${S}+push" "đẩy artifact lên registry"
 rule "terraform${O}${S}+(apply|destroy)|kubectl${O}${S}+(apply|delete|replace|rollout|scale|drain)|helm${O}${S}+(install|upgrade|uninstall|delete|rollback)" "thay đổi hạ tầng"
 rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn|bun)${S}+(run${S}+)?deploy|make${S}+deploy)${E}" "deploy"
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
-hits="$(LC_ALL=C text_grep "$cmd" -Ei "${rule_e[@]}")"
+# Chỉ lấy dòng khớp đầu tiên (-m 1): xét thứ tự luật trên mọi dòng khớp từng chậm gấp đôi main khi mọi dòng chỉ khớp luật
+# cuối. Lý do có thể khác bản cũ ở lệnh nhiều dòng, nhưng vẫn hỏi; không luật nào khớp riêng dòng đó thì vẫn hỏi.
+hits="$(LC_ALL=C text_grep "$cmd" -Ei -m 1 "${rule_e[@]}")"
 if [ -n "$hits" ]; then
+  reason="lệnh khớp một mẫu hành động không đảo ngược được"
   i=0
   while [ "$i" -lt "${#rule_re[@]}" ]; do
     if LC_ALL=C text_grep "$hits" -Eiq -- "${rule_re[$i]}"; then

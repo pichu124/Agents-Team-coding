@@ -467,11 +467,11 @@ done
 # Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
 # kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
 # JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
-# long_input <dòng đầu> <cwd> [cuối mỗi dòng, viết dạng JSON]: dòng đầu, rồi 12000 dòng `echo line-N`.
+# long_input <dòng đầu> <cwd> [cuối mỗi dòng, viết dạng JSON] [số dòng, mặc định 12000]: dòng đầu, rồi các dòng `echo line-N`.
 long_input() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
   # shellcheck disable=SC2059  # phần cuối dòng ghép vào định dạng
-  printf "${3:-}"'\\necho line-%s' {1..12000}
+  printf "${3:-}"'\\necho line-%s' $(seq "${4:-12000}")
   printf '","description":"test"}}\n'
 }
 long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
@@ -500,7 +500,13 @@ long_colon > "$tmp/long-colon.json"
 # Mỗi dòng có é, U+2003 và nháy cong, nối dòng bằng \: guard so thêm dạng đã đổi Unicode sang ASCII và hai dạng bỏ nháy.
 u_e="$(printf '\303\251')" u_em="$(printf '\342\200\203')" u_lq="$(printf '\342\200\230')" u_rq="$(printf '\342\200\231')"
 # Phần cuối dòng là định dạng của printf rồi thành chuỗi JSON: \\" là nháy kép, \\\\ là một dấu \ nối dòng.
-long_input 'npm run deploy' "$work" " echo '$u_e' "'\\"x\\"'" a${u_em}b ${u_lq}c${u_rq} "'\\\\' > "$tmp/long-uni.json"
+long_input 'npm run deploy' "$work" " echo '$u_e' "'\\"x\\"'" a${u_em}b ${u_lq}c${u_rq} "'\\\\' 4000 > "$tmp/long-uni.json"
+# Mọi dòng chỉ khớp luật cuối (gh pr merge): xét thứ tự luật trên cả các dòng khớp từng chậm gấp đôi main (reviewer vòng sáu).
+long_input 'true' "$work" " echo '$u_e' a${u_em}b gh pr merge I "'\\\\' 4000 > "$tmp/long-ghm.json"
+# Thân bash -c có pu…s… dài nhưng không có h: glob *[Pp]*[Uu]*[Ss]*[Hh]* chạy bậc bốn trên bash 3.2 (775 byte mất 17,7 giây
+# trên /bin/bash của macOS; Linux không thấy). Chạy guard bằng /bin/bash ở job portable của macOS.
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c '"'"'echo %s%s'"'"'; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'pu%.0s' {1..180})" "$(printf 's%.0s' {1..180})" > "$tmp/long-pushc.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
 # lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
@@ -531,7 +537,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
