@@ -1630,6 +1630,22 @@ check(not diff, f"heredocs() phải cho đúng các khớp của finditer: {len(
 check(hits >= 100 and tail >= 5000, f"lô vi sai phải có chuỗi nhiều heredoc ({hits}), `<<` sau `\\n` cuối ({tail})")
 for make in (lambda k: "<<A " * 2500 * k, lambda k: "wc <<< x; " * 2000 * k):
     linear("suspicious_labels trên dòng cuối nhiều `<<`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
+# QUOTED, QUOTED_6F32D5A, QUOTED_X: rx.sub thử lại nháy kép chưa đóng từ mỗi `\"` (ba09758: `'\\"'*20000` 6,7 giây).
+# quoted_sub phải cho đúng kết quả của rx.sub (gọi f cùng thứ tự, cùng khớp).
+Q_WORDS = ['"', '"', "\\", '\\"', "\\\\", "'", "#", "x", "$'", "\\\n", "<", "\\;", "é"]
+diff, unclosed = [], 0
+for _ in range(20000):
+    s = "".join(rnd.choice(Q_WORDS) + rnd.choice(["", "", " ", "\n", ";", "\t", "|"]) for _ in range(rnd.randint(1, 10)))
+    for rx in (a.QUOTED, a.QUOTED_6F32D5A, a.QUOTED_X):
+        old, new = [], []
+        if rx.sub(lambda m: old.append(m.span()) or "<%d>" % len(old), s) != \
+                a.quoted_sub(rx, lambda m: new.append(m.span()) or "<%d>" % len(new), s) or old != new:
+            diff.append(s)
+    runs = [a.DQ_RUN.match(s, i) for i, ch in enumerate(s) if ch == '"']
+    unclosed += any(s[m.end():m.end() + 1] != '"' and '"' in m[0][1:] for m in runs)  # chưa đóng, có `\"` bên trong
+check(not diff, f"quoted_sub phải cho đúng kết quả của rx.sub: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(unclosed >= 1000, f"lô vi sai phải có nháy kép chưa đóng chứa `\\\"` ({unclosed})")
+linear("suspicious_labels trên chuỗi `\\\"` dài", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), lambda k: '\\"' * 2500 * k)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /

@@ -232,6 +232,28 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
 # Nháy ANSI-C `$'…'` khớp trước cả hai: `\'` bên trong là nháy thoát, không đóng chuỗi (`echo $'it\'s'; rm -rf src 'x'`).
 QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.|" + QUOTED_X.pattern, re.MULTILINE)
+# quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
+# `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
+# giây). Mọi `"` trong phần đó là `\"` của lần quét đầu, nên lần quét từ chúng cùng nhịp với nó từ ký tự sau và cũng hỏng:
+# bỏ qua. Khớp của rx chỉ mở bằng `"`, `'` hay `#`.
+DQ_RUN = re.compile(r"\"(?:[^\"\\]|\\.)*")
+
+
+def quoted_sub(rx, f, text):
+    out, pos, dead = [], 0, 0
+    for c in re.finditer("[\"'#]", text):
+        at = c.start()
+        if at < pos or text[at] == '"' and at < dead:
+            continue
+        m = rx.match(text, at)
+        if m:
+            out += [text[pos:at], f(m)]
+            pos = m.end()
+        elif text[at] == '"':
+            dead = DQ_RUN.match(text, at).end()
+    return "".join(out) + text[pos:]
+
+
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
 # đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ trước cụm c: `-x`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`:
@@ -626,7 +648,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         quoted = QUOTED_PS_X if ps else QUOTED_XB if strict else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
-    marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(regions))
+    mask = (lambda p: quoted.sub(keep, p)) if ps or quoted is QUOTED_XB else (lambda p: quoted_sub(quoted, keep, p))
+    marked = body if shell_c else "".join(p if i % 2 else mask(p) for i, p in enumerate(regions))
     out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, [], False, False, None
     # Comment chạy tới xuống dòng kế: `;`, `&&`, `|` trong nó không ngắt lệnh, cd trong nó không chạy. comment: phần đang
     # xét nằm trong comment mở ở phần trước; csep: dấu ngắt thật ngay trước comment mở đầu phần (`true || # x`).
