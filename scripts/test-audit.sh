@@ -1570,11 +1570,18 @@ check(multi >= 25 and staged >= 20, f"lô vi sai phải đi qua dòng nhiều X 
 # gấp 4 độ dài thì chậm dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Lấy min 3 lần đo; bậc hai thì lượt nào cũng ~16, nên
 # đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. limit chỉ để khỏi đo lại lâu trên bản bậc hai.
 def best_time(f, x, runs=3, limit=1):
+    """Thời gian một lần gọi f(x), lấy min của `runs` mẫu. Mỗi mẫu lặp f tới khi đủ 50 ms: lần đo vài ms gọn trong một lát
+    lập lịch nên luôn sạch, còn lần đo 4n bị chen khi CPU bị tranh, tỉ lệ đỏ oan (reviewer PR #45: 8 tiến trình chiếm CPU)."""
     best = float("inf")
     for i in range(runs):
-        t0 = time.perf_counter()
-        f(x)
-        best = min(best, time.perf_counter() - t0)
+        n, t0 = 0, time.perf_counter()
+        while True:
+            f(x)
+            n += 1
+            el = time.perf_counter() - t0
+            if el >= 0.05:
+                break
+        best = min(best, el / n)
         if best >= limit and i:
             break
     return best
