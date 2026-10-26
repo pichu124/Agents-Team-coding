@@ -3080,6 +3080,7 @@ def run_chung(base, i):
 W = 2 * (os.cpu_count() or 1)
 bases = [setup(k) for k in range(W)]
 if not skip8:
+    nfail = len(fails)
     # Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
     for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
                       ("bash -lc 'rm -rf /tmp/w/x src'", ["<dự án>/src"])):
@@ -3118,7 +3119,7 @@ if not skip8:
         shutil.rmtree(zz + ".d", ignore_errors=True)
         if os.path.exists(zz):
             os.remove(zz)
-    if fails:
+    if len(fails) > nfail:  # khung hỏng: không chạy gì thêm
         finish("")
     # Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
     # lưới gọi là nguy, ở đây bash thật kiểm mô hình đó (rm đệ quy ngoài thư mục tạm đúng ở các lệnh ấy) và mục A báo đủ.
