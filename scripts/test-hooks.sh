@@ -471,6 +471,8 @@ EOF
   expect_guard ask '"$SHELL" -c '"\"cd '$on_main' && git push\""
   # shellcheck disable=SC2016
   expect_guard ask '${SHELL} -lc '"'git -C '\\''$on_main'\\'' push'"
+  # shellcheck disable=SC2016
+  expect_guard ask '${SHELL:-bash} -c '"'cd '\\''$on_main'\\'' && git push'"
   # Thân đóng trên cùng dòng thì vẫn đọc như cũ; shell là biến mà lệnh không có chữ push thì không hỏi.
   expect_guard allow "bash -c 'echo hi'$nl git push origin feat/x"
   # shellcheck disable=SC2016

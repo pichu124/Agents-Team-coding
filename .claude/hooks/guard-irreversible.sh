@@ -156,8 +156,8 @@ decode_shell_c() {
 
 decode_shell_c
 # Thân -c guard không giải được thì thư mục của push là chưa biết, tức hỏi (4.11 cũ): thân nhiều dòng (dòng mở thân bằng nháy
-# mà không đóng; grep đọc từng dòng) và shell là biến ($SHELL -c, "${SHELL}" -lc). Chỉ một lần grep ở locale C mỗi dạng.
-SHV='(^|[;&|(`{[:space:]])"?[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?"?([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c'
+# mà không đóng; grep đọc từng dòng) và shell là biến ($SHELL -c, "${SHELL}" -lc, ${SHELL:-bash} -c). Chỉ một lần grep ở locale C mỗi dạng.
+SHV='(^|[;&|(`{[:space:]])"?[$][{]?[A-Za-z_][A-Za-z0-9_]*([:]?[-=?+][^}[:space:]]*)?[}]?"?([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c'
 # Từ của thân đi qua các đoạn đã đóng ('…', "…", \x, chữ thường) rồi gặp nháy mở chưa đóng ở cuối dòng.
 SHO='([^'"'"'"[:space:]\\]|\\.|'"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*")*('"'"'[^'"'"']*|"([^"\\]|\\.)*)$'
 if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC$SHO" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
