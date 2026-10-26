@@ -1613,6 +1613,23 @@ check(not diff, f"shell_word phải khớp đúng những chuỗi SHELL_WORD cũ
 check(cut >= 500 and eol >= 200, f"lô vi sai phải đi qua tên shell sau `\\n|;&` ({cut}) và chuỗi kết thúc bằng `\\n` ({eol})")
 linear("suspicious_labels trên dòng nhiều tên shell trước heredoc", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
        lambda k: "bash " * 1250 * k + "; cat <<EOF")
+# HEREDOC, HEREDOC_6F32D5A: finditer thử cả `<<NAME` trên dòng cuối (không có `\n`), lookahead quét tới hết chuỗi mỗi lần
+# (ba09758: `"<<A "*5000` 0,7 giây, `"wc <<< x; "*8000` 4,4 giây). heredocs() bỏ các chỗ đó, phải cho đúng các khớp của
+# finditer (chỗ, nhóm).
+HD_WORDS = ["<<A", "<<-A", "<< A", "<<'A'", '<<"A', "<<<", "<<", "<", "A", "\tA", " A ", "x", "\\", "bash", "<<A\\", "1<<2"]
+diff, hits, tail = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(HD_WORDS) + rnd.choice(["", " ", "\n", "\n", "\t", "; "]) for _ in range(rnd.randint(1, 8)))
+    for rx in (a.HEREDOC, a.HEREDOC_6F32D5A):
+        old = [(m.span(), m.groupdict()) for m in rx.finditer(s)]
+        if old != [(m.span(), m.groupdict()) for m in a.heredocs(rx, s)]:
+            diff.append(s)
+        hits += len(old) > 1
+        tail += "<<" in s[s.rfind("\n") + 1:]
+check(not diff, f"heredocs() phải cho đúng các khớp của finditer: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(hits >= 100 and tail >= 5000, f"lô vi sai phải có chuỗi nhiều heredoc ({hits}), `<<` sau `\\n` cuối ({tail})")
+for make in (lambda k: "<<A " * 2500 * k, lambda k: "wc <<< x; " * 2000 * k):
+    linear("suspicious_labels trên dòng cuối nhiều `<<`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /

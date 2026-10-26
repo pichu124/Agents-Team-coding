@@ -131,6 +131,24 @@ _HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q
 _HD_BODY = r"(?P<body>.*?)(?:\n[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)"
 HEREDOC = re.compile(_HD_OPEN + r"(?:(?(cont)(?!))(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
 HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
+
+
+def heredocs(rx, cmd):
+    """rx.finditer(cmd) với rx là HEREDOC hay HEREDOC_6F32D5A. Dòng mở phải kết thúc bằng `\\n`, nên `<<` sau `\\n` cuối không mở
+    heredoc, mà finditer vẫn thử ở đó, lookahead quét tới hết chuỗi mỗi lần: bậc hai trên dòng cuối có nhiều `<<NAME`
+    (`"<<A "*5000`, `"wc <<< x; "*8000`). Ở `<<` trước đó, lần thử qua được tên thì lookahead thấy `\\n` và thân luôn khớp
+    (tới `\\Z` nếu không có dòng đóng), lần thử hỏng thì hỏng trước lookahead."""
+    last, pos = cmd.rfind("\n"), 0
+    while True:
+        at = cmd.find("<<", pos, max(last, 0))
+        if at < 0:
+            return
+        m = rx.match(cmd, at)
+        if m:
+            yield m
+        pos = m.end() if m else at + 1
+
+
 # segments(strict=True): thân rỗng khi dòng ngay sau dòng mở là dòng đóng (`cat <<'EOF'⏎EOF⏎rm -rf src`), đóng lỏng như
 # thân không rỗng (khoảng trắng hai bên, cả khi dòng mở có `\` lẻ cuối). Thân không rỗng kèm `\n` cuối (thành một đoạn
 # rỗng). Dòng mở ở cuối lệnh, không `\n`, khớp với thân rỗng. `<<` sau `<` là here-string `<<<`, không mở heredoc: HEREDOC
@@ -408,7 +426,13 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     if not (bash and scoped):
-        return (HEREDOC_STRICT if strict else HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
+        if strict:
+            return HEREDOC_STRICT.sub(sub, cmd)
+        out, pos = [], 0
+        for m in heredocs(HEREDOC if scoped and empty_body else HEREDOC_6F32D5A, cmd):
+            out += [cmd[pos:m.start()], sub(m)]
+            pos = m.end()
+        return "".join(out) + cmd[pos:]
     cmd = here_strings(cmd)
     out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
     tok = next(toks, None)
@@ -1007,7 +1031,7 @@ def reading_combos(cmd, tool="Bash"):
     joins = (True,) if tool == "PowerShell" else (False, True)
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
-    empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
+    empties = (True, False) if any(m["body"] is None for m in heredocs(HEREDOC, cmd)) else (True,)
     combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False, False, False,
                False)
               for strict_assign in stricts for comments in (False, True)
