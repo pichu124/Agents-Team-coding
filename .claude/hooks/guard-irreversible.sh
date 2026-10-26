@@ -114,13 +114,16 @@ unquote_word() {
 
 # Thân của bash -c / sh -c '…': shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy ('…'\''…', "…\"…"),
 # nên `bash -c 'git -C '\''M'\'' push'` không khớp mẫu nào trên văn bản gốc. Thân đã bỏ nháy được nối vào cmd (mọi
-# luật) và thêm vào forms (cổng push). Chỉ giải thân có chữ push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
+# luật) và thêm vào forms (cổng push). Chỉ giải thân có các chữ của push; thân lồng thì giải tiếp, tối đa 16 dạng. Mỗi đoạn
 # chép phần còn lại của từ (60 KB, 330 đoạn mất 6,5 giây ở UTF-8; Git Bash chậm hơn nhiều lần), nên thân quá 16 KB
 # hay 256 đoạn thì bỏ, tổng các thân quá 8 KB hay quá 256 thân thì dừng: lệnh có chữ push khi đó vào cổng push và
 # không biết thư mục, tức hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
 SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
 shc_unknown=""
+# Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
+# 40 KB toàn chữ p mất 11 giây).
+PUSH_LETTERS='^[^Pp]*[Pp][^Uu]*[Uu][^Ss]*[Ss][^Hh]*[Hh]'
 decode_shell_c() {
   local i=0 m w budget=8192 count=0
   set -f
@@ -129,31 +132,86 @@ decode_shell_c() {
     for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
-      # Chỉ cổng push cần đọc thân: thân không có chữ push thì khỏi bỏ nháy (Git Bash chậm hơn Linux nhiều lần).
-      case "$w" in *[Pp][Uu][Ss][Hh]*) ;; *) continue ;; esac
+      # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
+      # nhiều lần). Không đòi bốn chữ liền nhau: nháy có thể xé đôi chữ (pu'\''sh'\''). Regex, không dùng glob
+      # *[Pp]*[Uu]*[Ss]*[Hh]*: bash 3.2 khớp glob đó bậc bốn (thân 775 byte không có h mất 17 giây trên macOS).
+      [[ $w =~ $PUSH_LETTERS ]] || continue
       budget=$((budget - ${#w}))
       count=$((count + 1))
       [ "$budget" -ge 0 ] && [ "$count" -le 256 ] || { shc_unknown=1; break 2; }
       [ "${#w}" -le 16384 ] || { shc_unknown=1; continue; }
       unquote_word "$w" bash 256
       case $? in
-        0) [ "${#forms[@]}" -lt 16 ] && forms+=("$UQ") && cmd="$cmd$nl$UQ" ;;
+        # Hết chỗ cho dạng mới thì thân không được đọc: thư mục của push là chưa biết, không bỏ trong im lặng.
+        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; else shc_unknown=1; fi ;;
         1) shc_unknown=1 ;;
       esac
     done
     i=$((i + 1))
   done
+  [ "$i" -ge "${#forms[@]}" ] || shc_unknown=1
   IFS=$' \t\n'
   set +f
 }
 
 decode_shell_c
+# Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
+# độ dài của nó.
+cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
+
+# PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs, NBSP, U+0085), coi nháy cong là nháy và en/em dash là dấu -,
+# còn luật chạy grep ở locale C (rule) nên [[:space:]] chỉ khớp khoảng trắng ASCII. Lệnh có byte ≥ 0x80 thì so thêm một
+# dạng đã đổi các ký tự đó sang ASCII; dạng bỏ nháy dưới đây làm trên dạng này thay cho lệnh gốc (nó đã gồm lệnh gốc). Byte dựng bằng printf (BSD sed không
+# hiểu \x), sed ở locale C chạy tuyến tính trên byte. ſ và ı đổi thành s và i: GNU grep ở locale UTF-8 gập chúng khi -i,
+# nên trước khi luật chạy ở locale C, `git puſh -f` vẫn được hỏi. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải
+# \uXXXX, nên đổi cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
+src="$cmd"
+if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
+  uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g;s/\305\277/s/g;s/\304\261/i/g')"
+  uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
+  uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g;s/\\u017[fF]/s/g;s/\\u0131/i/g'
+  un="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "$uni" -e "$uesc")"
+  # Cổng push đọc cả dạng này: `git -C ‘M’ push`, `Push-Location<U+3000>M`, `Set-Location –Path M`.
+  [ "$un" = "$cmd" ] || { src="$un"; cmd="$cmd$nl$un"; forms+=("$un"); }
+fi
+
+# Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
+# chạy y như bản không nháy, còn mọi luật so trên chữ liền nhau. Mọi luật so thêm hai dạng:
+# - dq: bỏ `$` trước nháy, nháy quanh đoạn không có khoảng trắng và \ trước ký tự không phải khoảng trắng;
+# - dx: xoá hết ' " \ (sed ghép cặp nháy từ trái sang, không biết \' là nháy đã thoát: `echo \';r'm'` thành `rm'`).
+# Hai dạng chỉ thêm chữ để khớp: hỏi thừa (echo 'pu'sh) chứ không bỏ sót những lệnh này. sed, tr chạy tuyến tính, không
+# dùng ${x//a/b} (xem join_lines). Cổng push không đọc thư mục từ hai dạng này (dx tách đường "a b", dq ghép nhầm nháy).
+# Thay vào đó, một token của lệnh gốc mà bỏ ' " \ $ thì thành từ khoá thư mục hay option của cd (c'd', -'C', '--', c\d,
+# "cd", buil'ti'n, --git-dir'=', "GIT_DIR=) làm thư mục của push thành chưa biết, tức hỏi. Riêng tên lệnh cd, một nháy lẻ
+# ở đầu hay cuối token ('cd, "cd của thân bash -c) không xé gì; token của option dừng ở `=` nên không có ngoại lệ đó. Xét
+# từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
+case "$src" in
+  *[\"\'\\]*)
+    dq="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
+      -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
+    dx="$(printf '%s\n' "$src" | LC_ALL=C tr -d "\"'\\\\")"
+    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
+      BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
+              kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
+              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$" }
+      { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
+        if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
+    [ -z "$torn" ] || shc_unknown=1
+    cmd="$cmd$nl$dq$nl$dx"
+    ;;
+esac
 
 reason=""
+# rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy dòng khớp đầu tiên, rồi mới xét từng luật theo
+# thứ tự trên dòng đó (cmd gồm nhiều dạng của lệnh, 24 lần quét cả cmd từng mất vài giây với lệnh dài). LC_ALL=C: mọi mẫu là
+# ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB mất 10 giây).
+rule_e=()
+rule_re=()
+rule_why=()
 rule() {
-  if [ -z "$reason" ] && text_grep "$cmd" -Eiq -- "$1"; then
-    reason="$2"
-  fi
+  rule_e+=(-e "$1")
+  rule_re+=("$1")
+  rule_why+=("$2")
 }
 
 S='[[:space:]]'
@@ -201,6 +259,20 @@ rule "twine${S}+upload|docker${O}${S}+push" "đẩy artifact lên registry"
 rule "terraform${O}${S}+(apply|destroy)|kubectl${O}${S}+(apply|delete|replace|rollout|scale|drain)|helm${O}${S}+(install|upgrade|uninstall|delete|rollback)" "thay đổi hạ tầng"
 rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn|bun)${S}+(run${S}+)?deploy|make${S}+deploy)${E}" "deploy"
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
+# Chỉ lấy dòng khớp đầu tiên (-m 1): xét thứ tự luật trên mọi dòng khớp từng chậm gấp đôi main khi mọi dòng chỉ khớp luật
+# cuối. Lý do có thể khác bản cũ ở lệnh nhiều dòng, nhưng vẫn hỏi; không luật nào khớp riêng dòng đó thì vẫn hỏi.
+hits="$(LC_ALL=C text_grep "$cmd" -Ei -m 1 "${rule_e[@]}")"
+if [ -n "$hits" ]; then
+  reason="lệnh khớp một mẫu hành động không đảo ngược được"
+  i=0
+  while [ "$i" -lt "${#rule_re[@]}" ]; do
+    if LC_ALL=C text_grep "$hits" -Eiq -- "${rule_re[$i]}"; then
+      reason="${rule_why[$i]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+fi
 
 # Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
 # cd ở mỗi cách đọc (4.3).
@@ -280,7 +352,10 @@ subst_dir() {
 # MỌI thư mục lệnh có thể chạm tới: thư mục của phiên, đích của mọi cd/pushd/Set-Location (nối
 # tiếp nhau), đích của mọi -C, --git-dir, --work-tree, GIT_DIR= (tính từ từng thư mục trên).
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
-if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unknown" ] && text_grep "$cmd" -iq -- push; }; }; then
+# LC_ALL=C như rule(): cmd gồm các dạng bỏ nháy, mà grep -Ei ở locale UTF-8 chậm bậc hai trên dòng dài có nhiều chữ git
+# (`g\it -x` ×6000 thành `git -x git -x …` mất 11 giây). Mẫu là ASCII, dạng đã đổi Unicode sang ASCII nằm trong cmd.
+if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
+  { [ -n "$shc_unknown" ] && LC_ALL=C text_grep "$cmd" -iq -- push; }; }; then
   base="${cwd:-.}"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
@@ -290,6 +365,10 @@ if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unk
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
   unknown="$shc_unknown"
+  # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
+  # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
+  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
   # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
   # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
@@ -297,6 +376,8 @@ if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unk
   set -f
   IFS="$nl"
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
+    # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
+    [ -n "$reason$unknown" ] && break
     um="bash"
     q=""
     [ "$a" = "$ARG_PS" ] && um="ps"

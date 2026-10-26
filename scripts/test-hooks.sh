@@ -318,7 +318,7 @@ EOF
     expect_guard ask "sh -c 'cd '\\''$symm/link'\\''/.. && git push'"
   fi
   # Thân của bash -c / sh -c: shell con đọc lại chuỗi sau khi shell ngoài bỏ một lớp nháy, nên '\'' trong thân là một
-  # dấu nháy của lệnh con (4.10 của docs/viec-can-lam.md).
+  # dấu nháy của lệnh con (mục 4.10 cũ của docs/viec-can-lam.md).
   expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -c 'cd \"$tmp/sp ace plain/\"'\\''x'\\'' && git push'"
   expect_guard ask "bash -c \"cd \\\"$on_main\\\" && git push\""
@@ -327,6 +327,68 @@ EOF
   expect_guard ask "/bin/bash -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -o pipefail -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash --norc -c -- 'cd '\\''$on_main'\\'' && git push'"
+  # Chữ lệnh bị nháy hay \ xé đôi: bash bỏ nháy giữa từ rồi chạy y như bản không nháy (4.10 của docs/viec-can-lam.md).
+  expect_guard ask "git pu'sh' --force origin feat/x"
+  expect_guard ask "git \"push\" --for\"ce\" origin feat/x"
+  expect_guard ask "git pu\\sh -f"
+  expect_guard ask "r'm' -rf /"
+  expect_guard ask "\"rm\" -rf ~"
+  expect_guard ask "git reset --ha''rd"
+  expect_guard ask "git cl\"ea\"n -fd"
+  expect_guard ask "npm run dep'loy'"
+  expect_guard ask "git pu'sh'" "$on_main"
+  expect_guard ask "git -C '$on_main' pu\"sh\""
+  expect_guard ask "c'd' '$on_main' && git push"
+  expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
+  # Reviewer của PR sửa nháy xé chữ: biến đổi bù nhau làm danh sách từ khoá như cũ, option của cd bị xé, $'…', \ trước
+  # ký tự không phải chữ cái.
+  expect_guard ask "cd;c'd' '$on_main' && git push"
+  expect_guard ask "echo -C;c'd' '$on_main' && git push"
+  expect_guard ask "cd -'P' '$on_main' && git push"
+  expect_guard ask "cd '--' '$on_main' && git push"
+  expect_guard ask "git \$'p'ush --force origin feat/x"
+  expect_guard ask "git push -\\-force origin feat/x"
+  expect_guard ask "git push origin \\+feat/x"
+  expect_guard ask "git push origin \\:feat/x"
+  expect_guard ask "rm -rf \\/*"
+  # Reviewer vòng hai: `$` trước nháy làm mất một từ khoá ở dạng bỏ nháy (bù cho c'd'); nháy đã thoát làm sed ghép nhầm cặp.
+  expect_guard ask "echo cd\$'x'; c'd' '$on_main' && git push"
+  expect_guard ask "echo -C\$'y'; git -'C' '$on_main' push"
+  expect_guard ask "printf %s cd\$\"x\"; c\\d '$on_main' && git push"
+  expect_guard ask "echo \\';c'd' '$on_main' && git push"
+  expect_guard ask "echo \\\";c\"d\" '$on_main' && git push"
+  expect_guard ask "echo \\';n'pm' run deploy"
+  expect_guard ask "echo \\';r'm' -rf /"
+  expect_guard ask "echo \"it's\";r'm' -rf ~"
+  # Reviewer vòng ba: token dừng ở `=` nên chỉ còn một nháy lẻ, và builtin/command bị xé.
+  expect_guard ask "git --git-dir'='\"$on_main/.git\" push"
+  expect_guard ask "git '--git-dir='\"$on_main/.git\" push"
+  expect_guard ask "export GIT_DIR'='\"$on_main/.git\"; git push"
+  expect_guard ask "export \"GIT_DIR=$on_main/.git\"; git push"
+  expect_guard ask "env 'GIT_DIR=$on_main/.git' git push"
+  expect_guard ask "buil'ti'n cd '$on_main' && git push"
+  expect_guard ask "comm\\and cd '$on_main' && git push"
+  # PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs), coi nháy cong là nháy và en dash là dấu -: luật chạy grep ở
+  # locale C (reviewer vòng bốn). Byte dựng bằng printf: bash 3.2 không có $'\u…'.
+  em="$(printf '\342\200\203')" ideo="$(printf '\343\200\200')" lq="$(printf '\342\200\230')" rq="$(printf '\342\200\231')"
+  ndash="$(printf '\342\200\223')"
+  TOOL=PowerShell expect_guard ask "git push${em}--force origin feat/x"
+  TOOL=PowerShell expect_guard ask "git push origin${ideo}+feat/x"
+  TOOL=PowerShell expect_guard ask "git reset${em}--hard"
+  TOOL=PowerShell expect_guard ask "npm${ideo}publish"
+  TOOL=PowerShell expect_guard ask "git pu${lq}sh${rq} --force origin feat/x"
+  TOOL=PowerShell expect_guard ask "Remove-Item ${ndash}Recurse C:\\"
+  # Cổng push cũng đọc dạng đã đổi (reviewer vòng năm): thư mục sau khoảng trắng Unicode, trong nháy cong, sau en dash.
+  nbsp="$(printf '\302\240')"
+  TOOL=PowerShell expect_guard ask "git -C ${lq}$on_main${rq} push"
+  TOOL=PowerShell expect_guard ask "Push-Location${ideo}'$on_main'; git push"
+  TOOL=PowerShell expect_guard ask "Set-Location ${ndash}Path '$on_main'; git push"
+  TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
+  # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
+  expect_guard ask "git pu$(printf '\305\277')h -f"
+  # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
+  c=""; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do c="${c}bash -c 'npm run build && ls dist/*.sh'; "; done
+  expect_guard ask "${c}bash -c 'cd '\\''$on_main'\\'' && git push'"
   # PowerShell: \ là ký tự thường, "…\x\"m là …\x\m (reviewer của PR giải thân bash -c).
   TOOL=PowerShell expect_guard ask "Set-Location \"$tmp/x\\\"m; git push"
   TOOL=PowerShell expect_guard ask "git -C \"$tmp/x\\\"m push"
@@ -405,11 +467,11 @@ done
 # Lệnh ~180 KiB, hơn hai lần pipe buffer: grep đọc một lần (tối đa 64 KiB) rồi thoát, printf chỉ
 # kịp ghi thêm 64 KiB nữa, nên chắc chắn còn ghi dở. Dưới 128 KiB thì bỏ sót chỉ là may rủi.
 # JSON dựng thẳng bằng printf vào file: lệnh dài quá giới hạn đối số (Windows ~32K ký tự).
-# long_input <dòng đầu> <cwd> [cuối mỗi dòng, viết dạng JSON]: dòng đầu, rồi 12000 dòng `echo line-N`.
+# long_input <dòng đầu> <cwd> [cuối mỗi dòng, viết dạng JSON] [số dòng, mặc định 12000]: dòng đầu, rồi các dòng `echo line-N`.
 long_input() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s' "$2" "$1"
   # shellcheck disable=SC2059  # phần cuối dòng ghép vào định dạng
-  printf "${3:-}"'\\necho line-%s' {1..12000}
+  printf "${3:-}"'\\necho line-%s' $(seq "${4:-12000}")
   printf '","description":"test"}}\n'
 }
 long_input 'npm run deploy' "$work" > "$tmp/long-deploy.json"
@@ -424,6 +486,35 @@ long_qinput() {
   printf '\\" ; git push","description":"test"}}\n'
 }
 long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
+# Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
+long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
+long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
+# Dòng nối rất dài có nháy và `:` sau git push: luật refspec `:` chậm bậc hai với grep -Ei ở locale UTF-8, và dạng bỏ nháy
+# làm cmd dài gấp ba (reviewer của PR sửa nháy xé chữ: 253 KB mất 13,5 giây).
+long_colon() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd \\"%s\\" && git push origin feat/x \\\\' "$work" "$on_main"
+  printf "\\\\n'a'\\\\\"b\\\\\" line-%s \\\\\\\\" {1..11000}
+  printf '\\nx:y","description":"test"}}\n'
+}
+long_colon > "$tmp/long-colon.json"
+# Mỗi dòng có é, U+2003 và nháy cong, nối dòng bằng \: guard so thêm dạng đã đổi Unicode sang ASCII và hai dạng bỏ nháy.
+u_e="$(printf '\303\251')" u_em="$(printf '\342\200\203')" u_lq="$(printf '\342\200\230')" u_rq="$(printf '\342\200\231')"
+# Phần cuối dòng là định dạng của printf rồi thành chuỗi JSON: \\" là nháy kép, \\\\ là một dấu \ nối dòng.
+long_input 'npm run deploy' "$work" " echo '$u_e' "'\\"x\\"'" a${u_em}b ${u_lq}c${u_rq} "'\\\\' 4000 > "$tmp/long-uni.json"
+# Mọi dòng chỉ khớp luật cuối (gh pr merge): xét thứ tự luật trên cả các dòng khớp từng chậm gấp đôi main (reviewer vòng sáu).
+long_input 'true' "$work" " echo '$u_e' a${u_em}b gh pr merge I "'\\\\' 4000 > "$tmp/long-ghm.json"
+# Thân bash -c có pu…s… dài nhưng không có h: glob *[Pp]*[Uu]*[Ss]*[Hh]* chạy bậc bốn trên bash 3.2 (775 byte mất 17,7 giây
+# trên /bin/bash của macOS; Linux không thấy). Chạy guard bằng /bin/bash ở job portable của macOS.
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c '"'"'echo %s%s'"'"'; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'pu%.0s' {1..180})" "$(printf 's%.0s' {1..180})" > "$tmp/long-pushc.json"
+# Thân 40 KB toàn chữ p: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (11 giây; reviewer
+# vòng bảy).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c %s; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'p%.0s' $(seq 40000))" > "$tmp/long-pppp.json"
+# Thân quá ngân sách (hỏi vì thư mục chưa biết), rồi `g\it -x` ×6000: dạng bỏ nháy thành `git -x git -x …`, grep cổng push ở
+# locale UTF-8 chậm bậc hai trên dòng đó (11 giây; main 0,2 giây; reviewer vòng tám).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"bash -c '"'"'echo push %s'"'"'; %s-xpush","description":"test"}}\n' \
+  "$work" "$(printf 'a%.0s' $(seq 9000))" "$(printf 'g\\\\it -x %.0s' $(seq 6000))" > "$tmp/long-gitx.json"
 long_qinput 'echo \"cd x' "$on_main" > "$tmp/long-qecho.json"
 # 250 dòng `bash -c '<259 đoạn>' \` sau `npm run deploy \`: mỗi thân giải riêng thì dưới giới hạn, nhưng cộng lại (và
 # lặp ở ba dạng nối dòng) từng mất 23 giây (reviewer của PR giải thân bash -c). Guard phải hỏi deploy kịp, cả khi
@@ -454,7 +545,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
