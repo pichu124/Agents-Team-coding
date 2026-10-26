@@ -352,7 +352,10 @@ subst_dir() {
 # MỌI thư mục lệnh có thể chạm tới: thư mục của phiên, đích của mọi cd/pushd/Set-Location (nối
 # tiếp nhau), đích của mọi -C, --git-dir, --work-tree, GIT_DIR= (tính từ từng thư mục trên).
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
-if [ -z "$reason" ] && { text_grep "$cmd" -Eiq -- "${G}push" || { [ -n "$shc_unknown" ] && text_grep "$cmd" -iq -- push; }; }; then
+# LC_ALL=C như rule(): cmd gồm các dạng bỏ nháy, mà grep -Ei ở locale UTF-8 chậm bậc hai trên dòng dài có nhiều chữ git
+# (`g\it -x` ×6000 thành `git -x git -x …` mất 11 giây). Mẫu là ASCII, dạng đã đổi Unicode sang ASCII nằm trong cmd.
+if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
+  { [ -n "$shc_unknown" ] && LC_ALL=C text_grep "$cmd" -iq -- push; }; }; then
   base="${cwd:-.}"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
