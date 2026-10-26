@@ -183,6 +183,8 @@ git commit -m "Đổi tên" && git push origin
 EOF
   expect_guard ask "git -C \"$on_main\" push origin"
   expect_guard ask "cd \"$on_main\" && git push"
+  # cd tới thư mục không có thì lỗi, shell ở lại chỗ cũ: cd tương đối sau đó tính từ chỗ cũ (4.3).
+  expect_guard ask "cd \"$tmp/nope\"; cd \"main repo\"; git push" "$tmp"
   expect_guard allow "git push"
   expect_guard allow "git push -u origin HEAD 2>&1"
 
@@ -502,6 +504,17 @@ long_qinput() {
   printf '\\" ; git push","description":"test"}}\n'
 }
 long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
+# Rất nhiều cd (4.3 của docs/viec-can-lam.md), thư mục của phiên ở nhánh khác nên không có đường tắt: 1500 `cd "a b"` rồi
+# cd tới repo ở main. Mỗi cd tương đối thành một thư mục khác chữ (không tồn tại), mỗi thư mục từng tốn một subshell (17 giây).
+many_cd() {
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf '%s' "$1"
+  printf '%.0s' $(seq 1500)
+  for _ in $(seq 1500); do printf '%s' "$2"; done
+  printf 'cd \\"%s\\" && git push","description":"test"}}\n' "$on_main"
+}
+many_cd "" 'cd \"a b\"; ' > "$tmp/long-manycd.json"
+many_cd "" 'cd . && ls && ' > "$tmp/long-manydot.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -561,7 +574,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

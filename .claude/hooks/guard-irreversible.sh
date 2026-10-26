@@ -284,6 +284,15 @@ fi
 
 # Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
 # cd ở mỗi cách đọc (4.3).
+# gone <đường>: đường POSIX tuyệt đối, không có .., \ hay dạng C:, mà không phải thư mục (lúc này cd tới đó lỗi). [ -d ] là
+# builtin, không fork. Đường có .. (cd -L khác -P), có \ hay dạng C: (Git Bash) thì không kết luận: coi như có.
+gone() {
+  case "$1" in
+    *..* | *\\* | [A-Za-z]:*) return 1 ;;
+    /*) [ ! -d "$1" ] ;;
+    *) return 1 ;;
+  esac
+}
 # resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
@@ -414,9 +423,13 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO"
         if [ -n "$x" ] && [ "$x" != "$t" ]; then
           resolve_dir "$cur" "$x"
-          dl+=("$RD")
+          gone "$RD" || dl+=("$RD")
         fi
         resolve_dir "$cur" "$t"
+        # cd tới thư mục không có thì lỗi và shell ở lại chỗ cũ, như bash: không nối các cd sau vào nó (đường dài dần,
+        # bậc hai theo số cd, 4.3), và `cd nope; cd sub` được đọc đúng là <chỗ cũ>/sub. Thư mục lệnh tạo trước khi cd
+        # (mkdir a && cd a && cd ../m) thì lúc hook chạy cd -L/-P qua nó cũng lỗi, nên nối vào cũng không hỏi thêm được.
+        gone "$RD" && continue
         cur="$RD"
         cl+=("$cur")
       done
@@ -446,6 +459,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. Đọc theo cả hai
     # cách đi đường: -P (vật lý, như git -C) và -L (logic, như cd của shell). Hai cách chỉ khác nhau
     # khi đường có .. đi lùi ra từ một symlink; cách nào ở nhánh chính cũng hỏi.
+    gone "$d" && continue # cd tới đó lỗi: khỏi tốn một subshell (1500 `cd "a b"` từng mất 17 giây, 4.3)
     for o in -P -L; do
       case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
       branch="$(CDPATH='' cd "$o" -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
