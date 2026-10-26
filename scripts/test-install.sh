@@ -799,8 +799,8 @@ assert "AA: install phải exit 0" [ $? -eq 0 ]
 assert "AA: CLAUDE.md riêng chỉ nhắc /team-lead <task> thì không được cảnh báo về CLAUDE.md → $(cat "$tmp/err")" no_claude_warning
 assert "AA: không được sửa CLAUDE.md có sẵn" cmp -s "$tmp/own-tl-claude.orig" "$own_tl/CLAUDE.md"
 
-# AB. CLAUDE.md là symlink gãy: coi như chưa có, cp không ghi qua được thì báo ✘ và exit 1, không báo đã tạo.
-#     Đích nằm trong thư mục không có để cp của GNU lẫn BSD đều lỗi.
+# AB. CLAUDE.md là symlink gãy: installer báo ✘ và exit 1 trước khi đụng repo, không báo đã tạo. Có chủ ý cả khi
+#     thư mục của đích có sẵn: cp của BSD (macOS) từng ghi xuyên symlink, tạo file ở nơi nó trỏ tới (có thể ngoài repo).
 dang="$tmp/dangling claude"
 new_repo "$dang"
 if ln -s khong-co/khong-co.md "$dang/CLAUDE.md" 2>/dev/null && [ -L "$dang/CLAUDE.md" ]; then
