@@ -999,7 +999,7 @@ def fuzz_vp_c():
 PYEOF
 
 # Lưới của lớp lỗi "thay biến trong thân <<EOF không nháy đưa vào shell", dùng chung cho assert (theo mô hình, chạy mọi nơi)
-# và oracle bash của PR #8 (kiểm mô hình bằng bash thật). Reviewer chặn hai vòng liền, mỗi vòng một ví dụ của cùng lớp
+# và bước oracle bash (kiểm mô hình bằng bash thật). Reviewer chặn hai vòng liền, mỗi vòng một ví dụ của cùng lớp
 # (b06eb79 chỉ sửa biến là đích): lưới đi hết lớp thay vì theo ví dụ.
 grid="$tmp/heredoc_grid.py"
 cat > "$grid" <<'PYEOF'
@@ -1711,7 +1711,7 @@ for cmd in ("O=-rf; bash <<EOF; O=-f\necho it\\'s\nrm $O /x\necho 'x'\nEOF",    
             "O=-f; bash <<EOF\nO=-rf; rm \\$O /x\nEOF"):                              # `\$`, không mẹo nháy
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"thân <<EOF: biến là cờ hay tên lệnh: {cmd!r}: {got!r}")
-# Cả lớp đó (lưới dùng chung với oracle bash của PR #8, nơi bash thật kiểm mô hình của lưới): mọi lệnh nguy phải vào A.
+# Cả lớp đó (lưới dùng chung với bước oracle bash, nơi bash thật kiểm mô hình của lưới): mọi lệnh nguy phải vào A.
 spec = importlib.util.spec_from_file_location("heredoc_grid", sys.argv[16])
 hg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hg)
@@ -2506,37 +2506,65 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
 PYEOF
 fi
 
-# Oracle bash: đối chiếu mục A với chính bash. Lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã cần
-# hơn 10 commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…), và phép so nhãn ở trên không thấy
-# lỗi mà bản trước và bản này cùng có. Bước này chạy một bộ lệnh fuzz cố định bằng bash thật, `rm` thay bằng stub chỉ ghi
-# thư mục và đích, rồi đỏ khi bash xoá đích nằm ngoài thư mục tạm mà suspicious_labels trả []. An toàn: stub là đường dẫn
-# tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh có git, push, reset, clean,
-# Remove-Item hay `>` bị bỏ hẳn, PATH chỉ có bash, sh, cat, rm và git là hàm export báo lỗi, lệnh gọi gián tiếp hay che
-# tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, cwd là thư mục tạm ngoài mọi repo git, HOME không tồn tại, stdin là
-# /dev/null, có timeout.
-# Chỉ chạy trong repo kit (như phép so nhãn) và với bash 5+ ngoài Windows: KNOWN_MISSES lập trên bash 5.2 và 5.3, sh là dash.
-# Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao
-# bỏ qua.
-if [ ! -f scripts/install-kit.sh ]; then
-  printf '• audit: bỏ qua oracle bash (chỉ chạy trong repo kit)\n'
-else
-  base_test="" base_why="$skip$miss"
-  if [ -z "$base_why" ]; then
-    if git show "$ref:./scripts/test-audit.sh" >"$tmp/test-audit-base.sh" 2>/dev/null; then
-      base_test="$tmp/test-audit-base.sh" base_why="$ref ($why)"
-    else
-      base_why="không có scripts/test-audit.sh ở $ref"
-    fi
+# Oracle bash, một bước: đối chiếu mục A với chính bash. Phép so nhãn ở trên chỉ so với chính audit (bản trước, nhãn mong
+# đợi) nên không bắt được lỗi mà mọi bản cùng có; lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã
+# cần hơn 10 commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…; 1e9882a và 3 lần vá, 3dab000,
+# 5083855, 52233e5..9734b56). Bước này chạy ba lô lệnh tất định bằng bash thật trong một pool, `rm` thay bằng stub chỉ ghi
+# thư mục và đích, rồi đỏ khi bash xoá đích nguy hiểm mà mục A không báo:
+#   - lô chung: ngữ pháp CHỈ gồm thứ an toàn (blissful-dirac), nguy là xoá ngoài thư mục tạm/build, sàn ORACLE_FLOOR*;
+#   - lô PR8: fuzz cố định của PR #8 (bash -c có biến và lồng nhau, nháy lẻ trong comment, heredoc chưa đóng…);
+#   - lưới thân <<EOF ($grid), cùng cổng với lô PR8.
+# An toàn: stub là đường dẫn tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh
+# có git, push, reset, clean, Remove-Item hay `>` bị bỏ hẳn, PATH chỉ có bash, sh, cat, rm và git là hàm báo lỗi (export và
+# BASH_ENV), lệnh gọi gián tiếp hay che tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, HOME nằm trong sandbox (lô PR8:
+# không tồn tại), stdin là /dev/null, có timeout. Lô chung chạy cả trong dự án đã cài kit, với bash 3.2 và khi thư mục tạm
+# nằm trong repo git; lô PR8 và lưới chỉ chạy trong repo kit, với bash 5+ ngoài Windows và ngoài mọi repo git (KNOWN_MISSES
+# lập trên bash 5.2 và 5.3, sh là dash). Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES ∪ KNOWN_GAPS chỉ
+# được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao bỏ qua.
+base_test="" base_why="$skip$miss"
+if [ -z "$base_why" ]; then
+  if git show "$ref:./scripts/test-audit.sh" >"$tmp/test-audit-base.sh" 2>/dev/null; then
+    base_test="$tmp/test-audit-base.sh" base_why="$ref ($why)"
+  else
+    base_why="không có scripts/test-audit.sh ở $ref"
   fi
-  "$py" -I -B - "$tmp/oracle-pr8" "$base_test" "$base_why" "$grid" <<'PYEOF' || status=1
-import ast, glob, importlib.util, os, random, re, shutil, signal, subprocess, sys, time
-from concurrent.futures import ThreadPoolExecutor
+fi
+"$py" -I -B - "$tmp/oracle" "$base_test" "$base_why" "$grid" <<'PYEOF' || status=1
+import ast, glob, importlib.util, json, os, queue, random, re, shutil, signal, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
-root, base_test, base_why, grid_file = sys.argv[1:5]
+sbx, base_test, base_why, grid_file = sys.argv[1:5]
 # Lệnh bash xoá đích ngoài thư mục tạm mà mục A vẫn bỏ sót, có từ trước bước này: (lệnh, "lý do"). Sửa được ca nào thì xoá
 # ca đó (bước này đỏ khi một ca đã hết sót mà còn nằm đây). Chỉ được giảm: thêm ca so với bản trước là đỏ, ca sót mới phải sửa.
 KNOWN_MISSES = [
+]
+# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng ORACLE_FLOOR. Đo
+# trên bash 5.2 ở ngữ pháp gốc (trước lô thêm): 2655/4294 lệnh, trong đó 165 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với
+# cd nhiều tham số, còn bash 3.2 (/bin/bash của macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là
+# 2655 - 165 = 2490, làm tròn xuống. Số so với sàn này đếm cả lô thêm (cả hai: 3615/5677 lệnh), nên bỏ lô thêm vẫn qua sàn.
+# ORACLE_FLOOR_EXTRA canh riêng lệnh do chính hàm lst thứ hai sinh (EXTRA, không qua lst_base): đo 586, trong đó 12 có cd
+# nhiều tham số và 62 có `|&` (bash 3.2 chưa có: lỗi cú pháp, rm không chạy), sàn là 586 - 12 - 62 = 512, làm tròn xuống.
+# Bỏ lô thêm hay bỏ hàm lst thứ hai (lô thêm vẫn có 953 lệnh nguy hiểm, mọi lệnh qua lst_base) thì EXTRA rỗng. CHỈ ĐƯỢC
+# NÂNG các sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
+# sửa phân tích lệnh trong audit-agent.py.
+# Lô var_trap2 (port blissful-dirac 78e474a) đo trên bash 5.2: tổng 4612/7090 lệnh nguy hiểm (364 có cd nhiều tham số hay
+# `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
+# cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
+ORACLE_FLOOR = 2600
+ORACLE_FLOOR_EXTRA = 500
+ORACLE_FLOOR_TRAP2 = 450
+N = 4500  # khoảng 12 giây trên 4 CPU
+# KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
+# cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
+# đỏ.
+KNOWN_GAPS = [
+"nháy lẻ cặp không thoát, chuỗi trải nhiều dòng (ngữ pháp chỉ có nháy trọn cặp trên một dòng, `\\'` và nháy trong comment)",
+"heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)",
+"bash -c; ssh, source, `. /dev/stdin` đọc heredoc",
+"`&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)",
+"biến môi trường kế thừa (bash chạy với env chỉ có HOME, PATH, LC_ALL và hàm chặn rm, git)",
+"delimiter heredoc không phải `[A-Za-z_]\\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF",
 ]
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
@@ -2545,27 +2573,33 @@ spec.loader.exec_module(a)
 fails = []
 known = dict(KNOWN_MISSES)
 ratchet = f"bỏ qua: {base_why}"
-# Dòng đầu của bước này. Oracle bash của blissful-dirac (bước kế) cũng mở bằng "# Oracle bash:" mà không có KNOWN_MISSES.
-MARK = "# Oracle bash: đối chiếu mục A với chính bash."
+# Danh sách nào bản trước gán ở cột 0 thì canh danh sách đó, không dựa vào một dòng comment (sửa comment từng làm
+# KNOWN_GAPS mất canh mà không ai thấy). Bản hai bước cũ chỉ gán KNOWN_MISSES (KNOWN_GAPS nằm trong comment): lần chuyển
+# tiếp đó canh mỗi KNOWN_MISSES.
 if base_test:
     text = open(base_test, encoding="utf-8").read()
     before = None
-    if MARK not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
+    names = [n for n in ("KNOWN_MISSES", "KNOWN_GAPS") if re.search(rf"^{n}\s*=", text, re.M)]
+    if not names:
         ratchet = f"bản ở {base_why} chưa có bước oracle"
-    else:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được, kể
-        # cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
+    elif names == ["KNOWN_GAPS"]:
+        fails.append(f"bản ở {base_why} gán KNOWN_GAPS mà không gán KNOWN_MISSES ở cột 0: không đọc được")
+        names = []
+    if names:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được,
+        # kể cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
         try:
             i = text.index("\nKNOWN_MISSES")
             i = text.index("\n", text.rindex("<<'PYEOF'", 0, i)) + 1
-            node = next(n.value for n in ast.parse(text[i:text.index("\nPYEOF\n", i)]).body if isinstance(n, ast.Assign)
-                        and [getattr(t, "id", "") for t in n.targets] == ["KNOWN_MISSES"])
-            before = {c for c, _why in ast.literal_eval(node)}
-            ratchet = f"so với bản ở {base_why}"
+            body = ast.parse(text[i:text.index("\nPYEOF\n", i)]).body
+            vals = [ast.literal_eval(next(n.value for n in body if isinstance(n, ast.Assign)
+                                          and [getattr(t, "id", "") for t in n.targets] == [name])) for name in names]
+            before = {c for c, _why in vals[0]} | set(vals[1] if len(vals) > 1 else [])
+            ratchet = f"so với bản ở {base_why}" + ("" if len(names) > 1 else "; KNOWN_GAPS bỏ qua: bản trước chưa gán nó")
         except Exception as exc:
-            fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
-    added = [] if before is None else [c for c in known if c not in before]
+            fails.append(f"không đọc được {' và '.join(names)} của bản ở {base_why}: {exc!r}")
+    added = [] if before is None else [c for c in list(known) + (KNOWN_GAPS if len(names) > 1 else []) if c not in before]
     if added:
-        fails.append(f"KNOWN_MISSES chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
+        fails.append(f"KNOWN_MISSES ∪ KNOWN_GAPS chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
                      + "; ".join(repr(c) for c in added) + ". Sửa audit-agent.py cho ca đó, đừng ghi thêm.")
 for c in known:
     labels = a.suspicious_labels(c, a.SUSPICIOUS)
@@ -2579,26 +2613,38 @@ def finish(note):
         print(note)
     sys.exit(1 if fails else 0)
 
+# Cổng chung (mọi lô).
+if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
+    finish(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
 bash = shutil.which("bash")
-if os.name != "posix" or sys.platform.startswith(("cygwin", "msys")):
-    finish("• audit: bỏ qua oracle bash (không chạy trên Windows)")
-if not bash or not shutil.which("sh") or not shutil.which("cat"):
-    finish("• audit: bỏ qua oracle bash (thiếu bash, sh hoặc cat)")
+if not bash or not shutil.which("cat"):
+    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc cat)")
 ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                      universal_newlines=True, timeout=30).stdout.strip()
-if not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
-    finish(f"• audit: bỏ qua oracle bash (cần bash 5+, máy có bash {ver or '?'})")
-os.makedirs(root)
-root = os.path.realpath(root)
-if not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
-    finish(f"• audit: bỏ qua oracle bash (đường thư mục tạm có ký tự lạ: {root!r})")
-d = root
-while True:
-    if os.path.exists(os.path.join(d, ".git")):
-        finish(f"• audit: bỏ qua oracle bash (thư mục tạm {root} nằm trong repo git {d})")
-    if os.path.dirname(d) == d:
-        break
-    d = os.path.dirname(d)
+os.makedirs(sbx)
+root = os.path.realpath(sbx)
+# Cổng riêng của lô PR8 và lưới: không đạt thì chỉ hai lô đó bị bỏ qua.
+skip8 = ""
+if not os.path.isfile("scripts/install-kit.sh"):
+    skip8 = "chỉ chạy trong repo kit"
+elif sys.platform.startswith(("cygwin", "msys")):
+    skip8 = "không chạy trên Windows"
+elif not shutil.which("sh"):
+    skip8 = "thiếu sh"
+elif not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
+    skip8 = f"cần bash 5+, máy có bash {ver or '?'}"
+elif not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
+    skip8 = f"đường thư mục tạm có ký tự lạ: {root!r}"
+else:
+    d = root
+    while not skip8:
+        if os.path.exists(os.path.join(d, ".git")):
+            skip8 = f"thư mục tạm {root} nằm trong repo git {d}"
+        if os.path.dirname(d) == d:
+            break
+        d = os.path.dirname(d)
+if skip8:
+    print(f"• audit: oracle bash: bỏ qua lô PR8 và lưới thân <<EOF ({skip8})")
 
 # Bộ sinh cố định: 1–4 dòng, mỗi dòng 1–3 lệnh nối bằng && ; || |, lệnh cuối là lõi `rm -rf <đích>` hay một thân -c. Cấu
 # trúc từng làm phân tích đọc sai: nối dòng, comment có `'` lẻ, heredoc đưa vào shell hay làm dữ liệu, bash -c có biến và lồng
@@ -2631,218 +2677,16 @@ FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
 # Văn bản chạy (sau khi bỏ nháy và `\`) không được gọi rm hay git, hay gọi lệnh gián tiếp: thay lệnh, eval, env, command, exec,
 # xargs, find, đường /bin/, gỡ hàm chặn (`unset -f`, enable, hash), glob (`/usr/bi?/r[m]` né cả tên lẫn /bin/).
 DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash)\b|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
-cmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
+fcmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
 
-# Mỗi luồng một chỗ chạy: p là thư mục dự án giả (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A
-# đọc `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Không
-# xoá gì, chỉ ghi.
-STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
-# PATH chỉ có bash, sh, cat: tên lệnh che lọt qua phép thay `\brm\b` không tìm thấy rm hay git thật. `bash -l` đặt lại
-# PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. dash
-# bỏ biến BASH_FUNC_* nên bash dưới một tầng sh mất hàm export: BASH_ENV (dash giữ) định nghĩa lại chúng cho mọi bash không
-# tương tác. Dạng đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy. Chưa chặn:
-# lệnh xoá khác rm (unlink, rmdir, mv, shred…) sau khi PATH bị đặt lại; ngữ pháp không sinh chúng, thêm vào ngữ pháp thì
-# thêm hàm chặn ở đây.
-BIN = os.path.join(root, "bin")
-os.makedirs(BIN)
-for tool in ("bash", "sh", "cat"):
-    os.symlink(shutil.which(tool), os.path.join(BIN, tool))
-BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
-with open(os.path.join(root, "chan.sh"), "w") as fh:
-    fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
-env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
-       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh")}
-def setup(k):
-    base = os.path.join(root, str(k))
-    for sub in ("p/src", "tmp/w/s"):
-        os.makedirs(os.path.join(base, sub))
-    with open(os.path.join(base, "stub"), "w") as fh:
-        fh.write(STUB)
-    os.chmod(os.path.join(base, "stub"), 0o755)
-    return base
-def rm_targets(args):
-    """Đích của rm như GNU rm đọc: trước `--` đầu tiên, token mở bằng `-` (trừ `-` trơn) là cờ, ở đâu cũng vậy."""
-    end = args.index("--") if "--" in args else len(args)
-    return [t for t in args[:end] if t and (t == "-" or not t.startswith("-"))] + [t for t in args[end + 1:] if t]
-def run(base, cmd, rec=False):
-    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd. rec: chỉ tính đích ngoài thư mục
-    tạm của lần gọi có cờ đệ quy."""
-    tmpd = os.path.join(base, "tmp")
-    text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
-    plain = re.sub(r"['\"\\\\]", "", text.replace(root, ""))  # bỏ nháy và `\`: `r\m`, `'r'm` thành rm
-    if FORBID.search(text.replace(root, "")) or DISGUISE.search(plain):
-        return "văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp", [], []
-    for f in glob.glob(os.path.join(base, "log.*")):
-        os.remove(f)
-    p = subprocess.Popen([bash, "-c", text], cwd=os.path.join(base, "p"), env=env, stdin=subprocess.DEVNULL,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
-    err = ""
-    try:
-        p.communicate(timeout=30)  # đọc tới EOF: chờ cả job nền còn giữ stdout (`a && cd x & rm …`)
-    except subprocess.TimeoutExpired:
-        err = "quá 30 giây"
-    try:
-        os.killpg(p.pid, signal.SIGKILL)  # tiến trình nào còn sót trong nhóm không được ghi lẫn sang lệnh sau
-    except ProcessLookupError:
-        pass
-    p.wait()
-    p.stdout.close()
-    calls, bad = [], []
-    for f in sorted(glob.glob(os.path.join(base, "log.*"))):
-        with open(f, "rb") as fh:
-            pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
-        deep = not rec or any(re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*|--recursive", t) for t in args)
-        for t in rm_targets(args):
-            calls.append((pwd, t))
-            r = os.path.normpath(os.path.join(pwd, t))
-            if deep and r != tmpd and not r.startswith(tmpd + "/"):
-                rel = os.path.relpath(r, os.path.join(base, "p"))
-                bad.append(r if rel.startswith("../../..") else "<dự án>/" + rel if rel != "." else "<dự án>")
-    return err, calls, bad
-
-W = min(8, 2 * (os.cpu_count() or 1))
-bases = [setup(k) for k in range(W)]
-# Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
-for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
-                  ("bash -lc 'rm -rf /tmp/w/x src'", ["<dự án>/src"])):
-    err, calls, bad = run(bases[0], cmd)
-    if err or not calls or bad != want:
-        fails.append(f"oracle không dựng đúng: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, "
-                     f"đích ngoài thư mục tạm {bad} (phải là {want})")
-# Tên lệnh bị che lọt qua phép thay `\brm\b` và chạy rm hay git thật: run() phải từ chối, không chạy. Đích nằm trong
-# /tmp/w/zz, không tồn tại, nên nếu lỡ chạy cũng không mất gì.
-for cmd in ("r\\m -rf /tmp/w/zz", "'r'm -rf /tmp/w/zz", '"r"m -rf /tmp/w/zz',
-            "$(echo rm) -rf /tmp/w/zz", "`echo rm` -rf /tmp/w/zz", "command rm -rf /tmp/w/zz", "env rm -rf /tmp/w/zz",
-            "eval 'rm -rf /tmp/w/zz'", "exec rm -rf /tmp/w/zz", "echo /tmp/w/zz | xargs rm -rf",
-            "find /tmp/w/zz -delete", "/bin/rm -rf /tmp/w/zz", "/usr/bin/rm -rf /tmp/w/zz", "g\\it status",
-            "'g'it status", "X=r; unset -f ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz",
-            "X=g; builtin unset -f ${X}it; PATH=/usr/bin:/bin; ${X}it init -q /tmp/w/zz.d", "/usr/bi?/r[m] -f /tmp/w/zz",
-            "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x"):
-    err, calls, _bad = run(bases[0], cmd)
-    if not err or calls:
-        fails.append(f"oracle chạy lệnh che tên lệnh thay vì từ chối: {cmd!r} (lỗi {err or 'không'}, stub ghi {calls})")
-# Tên ghép từ biến thì kiểm tĩnh không thấy (ngữ pháp có `${D}src`): chạy, nhưng rm và git thật không được chạm tới, kể cả
-# qua `bash -l` (đặt lại PATH: /etc/profile của Debian, giả lập bằng `PATH=…` vì máy chạy test có thể không đặt) hay sh.
-# File canh /tmp/w/zz phải còn, /tmp/w/zz.d (git init tạo) không được có.
-zz = os.path.join(bases[0], "tmp", "w", "zz")
-for cmd in ("X=r; ${X}m -f /tmp/w/zz", "bash -lc 'X=r; ${X}m -f /tmp/w/zz'", "sh -c 'X=r; ${X}m -f /tmp/w/zz'",
-            "X=g; ${X}it init -q /tmp/w/zz.d", "bash -lc 'X=g; ${X}it init -q /tmp/w/zz.d'",
-            "sh -c 'X=g; ${X}it init -q /tmp/w/zz.d'", "PATH=/usr/bin:/bin; X=r; ${X}m -f /tmp/w/zz",
-            "PATH=/usr/bin:/bin; X=g; ${X}it init -q /tmp/w/zz.d",
-            "sh -c \"PATH=/usr/bin:/bin bash -lc 'X=r; \\${X}m -f /tmp/w/zz'\"",
-            "sh -c \"PATH=/usr/bin:/bin bash -c 'X=g; \\${X}it init -q /tmp/w/zz.d'\""):
-    open(zz, "w").close()
-    err, calls, _bad = run(bases[0], cmd)
-    if err or calls or not os.path.exists(zz) or os.path.exists(zz + ".d"):
-        ran = "đã" if os.path.exists(zz + ".d") else "không"
-        fails.append(f"oracle với tên lệnh ghép từ biến: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, file canh "
-                     f"{'còn' if os.path.exists(zz) else 'bị xoá'}, git init {ran} chạy")
-    shutil.rmtree(zz + ".d", ignore_errors=True)
-    if os.path.exists(zz):
-        os.remove(zz)
-if fails:
-    finish("")
-# Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
-# lưới gọi là nguy, ở đây bash thật kiểm mô hình đó (rm đệ quy ngoài thư mục tạm đúng ở các lệnh ấy) và mục A báo đủ.
-spec = importlib.util.spec_from_file_location("heredoc_grid", grid_file)
-hg = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(hg)
-grid = hg.heredoc_grid()
-with ThreadPoolExecutor(W) as ex:
-    res = [r for rs in ex.map(lambda k: [(c,) + run(bases[k], c) for c in cmds[k::W]], range(W)) for r in rs]
-    gres = [r for rs in ex.map(lambda k: [(c, d, why) + run(bases[k], c, rec=True) for c, d, why in grid[k::W]],
-                                range(W)) for r in rs]
-shutil.rmtree(root, ignore_errors=True)
-model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d]
-if model:
-    fails.append(f"lưới thân <<EOF: bash thật khác mô hình của lưới ở {len(model)}/{len(grid)} lệnh (sửa heredoc_grid):\n"
-                 + "\n".join(f"  {why}: {c!r}: bash xoá đệ quy {bad or 'không gì'}" for why, c, bad in model[:5]))
-gmiss = sorted((len(c), why, c) for c, _d, why, err, _calls, bad in gres
-               if not err and bad and "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS))
-fails += [f"{c!r}: {err}" for c, _d, _why, err, _calls, _bad in gres if err]
-if gmiss:
-    fails.append(f"lưới thân <<EOF: mục A bỏ sót {len(gmiss)} lệnh mà bash xoá đệ quy ngoài thư mục tạm:\n"
-                 + "\n".join(f"  {why}: {c!r}" for _n, why, c in gmiss[:10]))
-misses, danger, hit = [], 0, set()
-for c, err, _calls, bad in res:
-    if err:
-        fails.append(f"{c!r}: {err}")
-    if not bad:
-        continue
-    danger += 1
-    if a.suspicious_labels(c, a.SUSPICIOUS):
-        continue
-    if c in known:
-        hit.add(c)
-    else:
-        misses.append((len(c), c, sorted(set(bad))))
-if danger < len(cmds) // 4:  # bộ sinh hay stub hỏng thì phép so vô nghĩa
-    fails.append(f"chỉ {danger}/{len(cmds)} lệnh xoá đích ngoài thư mục tạm: bộ sinh hay stub hỏng")
-if misses:
-    fails.append(f"mục A bỏ sót {len(misses)} lệnh mà bash xoá đích ngoài thư mục tạm (ngắn nhất trước):\n"
-                 + "\n".join(f"  {c!r}: bash xoá {', '.join(bad)}" for _n, c, bad in sorted(misses)[:10])
-                 + "\n  Sửa cách segments()/suspicious_labels đọc cấu trúc đó (thêm một cách đọc rồi lấy hợp, như exact hay "
-                 "nối dòng). Không ghi thêm vào KNOWN_MISSES: danh sách chỉ được giảm.")
-gone = [c for c in known if c not in hit and not a.suspicious_labels(c, a.SUSPICIOUS)]
-for c in gone:  # mục A vẫn không báo, mà bash ở máy này không xoá gì ngoài thư mục tạm (sh khác dash?): chỉ ghi chú
-    print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
-finish("" if fails else f"✔ audit: oracle bash: {len(cmds)} lệnh fuzz chạy bằng bash {ver} thật (rm thay bằng stub), "
-       f"{danger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong KNOWN_MISSES "
-       f"(chỉ được giảm: {ratchet}); lưới thân <<EOF: {len(grid)} lệnh khớp mô hình, mục A báo đủ "
-       f"{sum(1 for g in gres if g[5])} lệnh nguy ({time.monotonic() - t0:.0f} giây)")
-PYEOF
-fi
-# Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
-# Phân tích lệnh của mục A từng đọc khác bash thật hơn mười lần (1e9882a và 3 lần vá, 3dab000, 5083855, 52233e5..9734b56,
-# reviewer chặn nhiều vòng). Bước này sinh lệnh tất định từ một ngữ pháp CHỈ gồm thứ an toàn, chạy bằng bash thật với rm giả
-# (`fakerm` ghi $PWD và đích vào log, không xoá gì; PATH chỉ có bash và cat; env tối giản; stdin /dev/null), rồi đòi mục A
-# báo mọi lệnh mà bash thật xoá ngoài thư mục tạm/build.
-"$py" -I -B - "$tmp/oracle" <<'PYEOF' || status=1
-import importlib.util, os, random, re, shlex, shutil, subprocess, sys, time
-from concurrent.futures import ThreadPoolExecutor
-for s in (sys.stdout, sys.stderr):
-    s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
-sbx = sys.argv[1]
-# Số lệnh nguy hiểm (bash thật xoá ngoài thư mục tạm/build) mà ngữ pháp dưới sinh ra phải ít nhất bằng ORACLE_FLOOR. Đo
-# trên bash 5.2 ở ngữ pháp gốc (trước lô thêm): 2655/4294 lệnh, trong đó 165 lệnh có cd nhiều tham số. bash 5.2 báo lỗi với
-# cd nhiều tham số, còn bash 3.2 (/bin/bash của macOS) vào tham số đầu, nên các lệnh đó có thể hết nguy hiểm: sàn là
-# 2655 - 165 = 2490, làm tròn xuống. Số so với sàn này đếm cả lô thêm (cả hai: 3615/5677 lệnh), nên bỏ lô thêm vẫn qua sàn.
-# ORACLE_FLOOR_EXTRA canh riêng lệnh do chính hàm lst thứ hai sinh (EXTRA, không qua lst_base): đo 586, trong đó 12 có cd
-# nhiều tham số và 62 có `|&` (bash 3.2 chưa có: lỗi cú pháp, rm không chạy), sàn là 586 - 12 - 62 = 512, làm tròn xuống.
-# Bỏ lô thêm hay bỏ hàm lst thứ hai (lô thêm vẫn có 953 lệnh nguy hiểm, mọi lệnh qua lst_base) thì EXTRA rỗng. CHỈ ĐƯỢC
-# NÂNG các sàn. Hạ sàn, bớt N, bỏ cấu trúc hay đổi trọng số làm ít lệnh nguy hiểm đi là bớt test cho dễ: ca bỏ sót thì
-# sửa phân tích lệnh trong audit-agent.py.
-# Lô var_trap2 (port blissful-dirac 78e474a) đo trên bash 5.2: tổng 4612/7090 lệnh nguy hiểm (364 có cd nhiều tham số hay
-# `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
-# cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
-ORACLE_FLOOR = 2600
-ORACLE_FLOOR_EXTRA = 500
-ORACLE_FLOOR_TRAP2 = 450
-N = 4500  # khoảng 12 giây trên 4 CPU
-# KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
-# cấu trúc tương ứng vào ngữ pháp cùng lúc.
-#   - nháy lẻ cặp không thoát, chuỗi trải nhiều dòng (ngữ pháp chỉ có nháy trọn cặp trên một dòng, `\'` và nháy trong comment)
-#   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
-#   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
-#   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
-#   - biến môi trường kế thừa (bash chạy với env chỉ có HOME và PATH)
-#   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
-if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
-    print(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
-    sys.exit(0)
-spec = importlib.util.spec_from_file_location("audit_oracle", "scripts/audit-agent.py")
-au = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(au)
-t0 = time.time()
-# Sandbox nằm dưới thư mục tạm của hệ thống, nên audit coi MỌI đường tuyệt đối trong đó là thư mục tạm. Vì thế đường tuyệt
-# đối duy nhất trong ngữ pháp là REAL (thư mục tạm có thật) và GONE (không tồn tại, chỉ làm đích cd: cd lỗi).
-REAL, GONE, PROJ, HOME, BIN, LOG = (os.path.join(sbx, n) for n in ("tmpw", "khongco", "proj", "home", "bin", "log"))
-for d in (REAL + "/src", REAL + "/dist", HOME, BIN, LOG) + tuple(PROJ + "/" + n for n in ("src", "dist", "node_modules", "build")):
+# Sandbox của lô chung nằm dưới thư mục tạm của hệ thống, nên audit coi MỌI đường tuyệt đối trong đó là thư mục tạm. Vì thế
+# đường tuyệt đối duy nhất trong ngữ pháp là REAL (thư mục tạm có thật) và GONE (không tồn tại, chỉ làm đích cd: cd lỗi).
+# Nhãn của audit phụ thuộc đường trong văn bản lệnh, nên đường là $tmp/oracle như khi lô chung còn là bước riêng.
+REAL, GONE, PROJ, HOME = (os.path.join(sbx, n) for n in ("tmpw", "khongco", "proj", "home"))
+for d in (REAL + "/src", REAL + "/dist", HOME) + tuple(PROJ + "/" + n for n in ("src", "dist", "node_modules", "build")):
     os.makedirs(d, exist_ok=True)
-for tool in ("bash", "cat"):
-    os.symlink(shutil.which(tool), os.path.join(BIN, tool))
 
-RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là `fakerm`
+RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là đường tới stub
 rnd = random.Random(7)
 pick = rnd.choice
 CD_T = [REAL] * 6 + [GONE] * 3 + ["dist", "node_modules", "src", "..", "/", "~", "-"]
@@ -3123,18 +2967,7 @@ cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
 # pid của `jobs -p` (pid không phải con thì builtin trả về ngay) và trả 0 như wait không đối số.
-PRELUDE = r"""fakerm() {
-  local a e=
-  printf 'C\t%s\n' "$PWD" >> LOG
-  for a in "$@"; do
-    if [ -z "$e" ]; then
-      if [ "$a" = -- ]; then e=1; continue; fi
-      case $a in -?*) continue;; esac
-    fi
-    printf 'T\t%s\t%s\n' "$PWD" "$a" >> LOG
-  done
-}
-cd() { builtin cd "$@" >/dev/null; }
+PRELUDE = r"""cd() { builtin cd "$@" >/dev/null; }
 pushd() { builtin pushd "$@" >/dev/null; }
 popd() { builtin popd "$@" >/dev/null; }
 echo() { builtin echo "$@" >/dev/null; }
@@ -3146,29 +2979,199 @@ wait() {
   fi
   builtin wait "$@"
 }
-export -f fakerm cd pushd popd echo wait
+export -f cd pushd popd echo wait
 """
 
-
-def run(i):
-    log = os.path.join(LOG, "%d.log" % i)
-    open(log, "w").close()
-    script = os.path.join(LOG, "%d.sh" % i)
-    with open(script, "w") as f:
-        f.write(PRELUDE.replace("LOG", shlex.quote(log)) + render(cmds[i], "fakerm") + "\n")
+# Chỗ chạy: p là thư mục dự án giả của lô PR8 (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A đọc
+# `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Lô chung chạy
+# ở PROJ nhưng dùng stub của chỗ. Mỗi lúc một chỗ chỉ một luồng dùng. Không xoá gì, chỉ ghi. Không dùng hàm export làm rm giả:
+# dash bỏ BASH_FUNC_*, nên mọi lớp sh sẽ không thấy nó. Mọi stub tạo xong trước khi mở pool (tạo trong luồng thì exec của
+# luồng khác có thể gặp ETXTBSY, vì fd ghi stub bị fork kế thừa).
+STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
+# PATH chỉ có bash, sh, cat: tên lệnh che lọt qua phép thay `\brm\b` không tìm thấy rm hay git thật. `bash -l` đặt lại
+# PATH theo /etc/profile, nên rm và git còn là hàm export (thắng PATH, cả ở login shell): gọi tới là lỗi, không xoá gì. dash
+# bỏ biến BASH_FUNC_* nên bash dưới một tầng sh mất hàm export: BASH_ENV (dash giữ) định nghĩa lại chúng cho mọi bash không
+# tương tác. Dạng đi vòng hàm và PATH (`command rm`, `/bin/rm`, `env rm`…) thì run() từ chối trước khi chạy. Chưa chặn:
+# lệnh xoá khác rm (unlink, rmdir, mv, shred…) sau khi PATH bị đặt lại; ngữ pháp không sinh chúng, thêm vào ngữ pháp thì
+# thêm hàm chặn ở đây.
+BIN = os.path.join(root, "bin")
+os.makedirs(BIN)
+for tool in ("bash", "sh", "cat"):
+    if shutil.which(tool):
+        os.symlink(shutil.which(tool), os.path.join(BIN, tool))
+BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
+with open(os.path.join(root, "chan.sh"), "w") as fh:
+    fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
+env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
+       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh")}
+env_chung = dict(env, HOME=HOME)  # lô chung có `cd ~`, `~/x`: HOME phải có thật
+def setup(k):
+    base = os.path.join(root, str(k))
+    for sub in ("p/src", "tmp/w/s"):
+        os.makedirs(os.path.join(base, sub))
+    with open(os.path.join(base, "stub"), "w") as fh:
+        fh.write(STUB)
+    os.chmod(os.path.join(base, "stub"), 0o755)
+    return base
+def rm_targets(args):
+    """Đích của rm như GNU rm đọc: trước `--` đầu tiên, token mở bằng `-` (trừ `-` trơn) là cờ, ở đâu cũng vậy."""
+    end = args.index("--") if "--" in args else len(args)
+    return [t for t in args[:end] if t and (t == "-" or not t.startswith("-"))] + [t for t in args[end + 1:] if t]
+def targets_chung(args):
+    """Đích như rm giả cũ của lô chung đọc: trước `--` đầu tiên bỏ token dạng `-?*`; giữ đích rỗng."""
+    end = args.index("--") if "--" in args else len(args)
+    return [t for t in args[:end] if t == "-" or not t.startswith("-")] + args[end + 1:]
+def spawn(base, text, cwd, env, timeout):
+    """(quá giờ, stdout và stderr, [(thư mục, đối số)] mỗi lần gọi stub) khi bash chạy text."""
+    for f in glob.glob(os.path.join(base, "log.*")):
+        os.remove(f)
+    p = subprocess.Popen([bash, "-c", text], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    out, to = b"", False
     try:
-        r = subprocess.run([os.path.join(BIN, "bash"), script], cwd=PROJ, env={"HOME": HOME, "PATH": BIN},
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
-        err, to = r.stderr.decode("utf-8", "replace"), False
+        out = p.communicate(timeout=timeout)[0]  # đọc tới EOF: chờ cả job nền còn giữ stdout (`a && cd x & rm …`)
     except subprocess.TimeoutExpired:
-        err, to = "", True
-    with open(log) as f:
-        calls = [ln.rstrip("\n").split("\t")[1:] for ln in f if ln.startswith("T\t")]
-    return calls, err, to
+        to = True
+    try:
+        os.killpg(p.pid, signal.SIGKILL)  # tiến trình nào còn sót trong nhóm không được ghi lẫn sang lệnh sau
+    except (ProcessLookupError, PermissionError):  # macOS trả EPERM thay ESRCH khi cả nhóm chỉ còn zombie chưa thu
+        pass
+    p.wait()
+    p.stdout.close()
+    logs = []
+    for f in sorted(glob.glob(os.path.join(base, "log.*"))):
+        with open(f, "rb") as fh:
+            pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
+        logs.append((pwd, args))
+    return to, out.decode("utf-8", "replace"), logs
+def run(base, cmd, rec=False):
+    """(lỗi, các lần gọi stub [(thư mục, đích)], đích ngoài thư mục tạm) khi bash chạy cmd của lô PR8. rec: chỉ tính đích
+    ngoài thư mục tạm của lần gọi có cờ đệ quy."""
+    tmpd = os.path.join(base, "tmp")
+    text = re.sub(r"(/tmp/)|\brm\b", lambda m: tmpd + "/" if m[1] else os.path.join(base, "stub"), cmd)
+    plain = re.sub(r"['\"\\\\]", "", text.replace(root, ""))  # bỏ nháy và `\`: `r\m`, `'r'm` thành rm
+    if FORBID.search(text.replace(root, "")) or DISGUISE.search(plain):
+        return "văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp", [], []
+    to, _out, logs = spawn(base, text, os.path.join(base, "p"), env, 30)
+    calls, bad = [], []
+    for pwd, args in logs:
+        deep = not rec or any(re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*|--recursive", t) for t in args)
+        for t in rm_targets(args):
+            calls.append((pwd, t))
+            r = os.path.normpath(os.path.join(pwd, t))
+            if deep and r != tmpd and not r.startswith(tmpd + "/"):
+                rel = os.path.relpath(r, os.path.join(base, "p"))
+                bad.append(r if rel.startswith("../../..") else "<dự án>/" + rel if rel != "." else "<dự án>")
+    return "quá 30 giây" if to else "", calls, bad
+def run_chung(base, i):
+    """(các lần gọi stub [(thư mục, đích)], stdout và stderr, quá giờ, bị từ chối) khi bash chạy lệnh thứ i của lô chung.
+    FORBID/DISGUISE soát văn bản đã bỏ đường sandbox và ba mảnh của ngữ pháp (`pushd` khớp push, `$(` là thay lệnh): phần
+    còn lại của lệnh không được gọi gì khác."""
+    text = render(cmds[i], os.path.join(base, "stub"))
+    plain = text.replace(root, "").replace(sbx, "")  # root trước: trên macOS sbx (/var/…) có thể là chuỗi con của root
+    for frag in ("pushd", "true $( ", "echo $( "):
+        plain = plain.replace(frag, "")
+    if FORBID.search(plain) or DISGUISE.search(re.sub(r"['\"\\\\]", "", plain)):
+        return [], "", False, True
+    to, out, logs = spawn(base, PRELUDE + text + "\n", PROJ, env_chung, 10)
+    return [(pwd, t) for pwd, args in logs for t in targets_chung(args)], out, to, False
 
+W = min(8, 2 * (os.cpu_count() or 1))  # mỗi chỗ chạy một tiến trình Python phụ (~18 MB): cpu_count của host có thể lớn
+bases = [setup(k) for k in range(W)]
+if not skip8:
+    nfail = len(fails)
+    # Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
+    for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
+                      ("bash -lc 'rm -rf /tmp/w/x src'", ["<dự án>/src"])):
+        err, calls, bad = run(bases[0], cmd)
+        if err or not calls or bad != want:
+            fails.append(f"oracle không dựng đúng: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, "
+                         f"đích ngoài thư mục tạm {bad} (phải là {want})")
+    # Tên lệnh bị che lọt qua phép thay `\brm\b` và chạy rm hay git thật: run() phải từ chối, không chạy. Đích nằm trong
+    # /tmp/w/zz, không tồn tại, nên nếu lỡ chạy cũng không mất gì.
+    for cmd in ("r\\m -rf /tmp/w/zz", "'r'm -rf /tmp/w/zz", '"r"m -rf /tmp/w/zz',
+                "$(echo rm) -rf /tmp/w/zz", "`echo rm` -rf /tmp/w/zz", "command rm -rf /tmp/w/zz", "env rm -rf /tmp/w/zz",
+                "eval 'rm -rf /tmp/w/zz'", "exec rm -rf /tmp/w/zz", "echo /tmp/w/zz | xargs rm -rf",
+                "find /tmp/w/zz -delete", "/bin/rm -rf /tmp/w/zz", "/usr/bin/rm -rf /tmp/w/zz", "g\\it status",
+                "'g'it status", "X=r; unset -f ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz",
+                "X=g; builtin unset -f ${X}it; PATH=/usr/bin:/bin; ${X}it init -q /tmp/w/zz.d", "/usr/bi?/r[m] -f /tmp/w/zz",
+                "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x"):
+        err, calls, _bad = run(bases[0], cmd)
+        if not err or calls:
+            fails.append(f"oracle chạy lệnh che tên lệnh thay vì từ chối: {cmd!r} (lỗi {err or 'không'}, stub ghi {calls})")
+    # Tên ghép từ biến thì kiểm tĩnh không thấy (ngữ pháp có `${D}src`): chạy, nhưng rm và git thật không được chạm tới, kể cả
+    # qua `bash -l` (đặt lại PATH: /etc/profile của Debian, giả lập bằng `PATH=…` vì máy chạy test có thể không đặt) hay sh.
+    # File canh /tmp/w/zz phải còn, /tmp/w/zz.d (git init tạo) không được có.
+    zz = os.path.join(bases[0], "tmp", "w", "zz")
+    for cmd in ("X=r; ${X}m -f /tmp/w/zz", "bash -lc 'X=r; ${X}m -f /tmp/w/zz'", "sh -c 'X=r; ${X}m -f /tmp/w/zz'",
+                "X=g; ${X}it init -q /tmp/w/zz.d", "bash -lc 'X=g; ${X}it init -q /tmp/w/zz.d'",
+                "sh -c 'X=g; ${X}it init -q /tmp/w/zz.d'", "PATH=/usr/bin:/bin; X=r; ${X}m -f /tmp/w/zz",
+                "PATH=/usr/bin:/bin; X=g; ${X}it init -q /tmp/w/zz.d",
+                "sh -c \"PATH=/usr/bin:/bin bash -lc 'X=r; \\${X}m -f /tmp/w/zz'\"",
+                "sh -c \"PATH=/usr/bin:/bin bash -c 'X=g; \\${X}it init -q /tmp/w/zz.d'\""):
+        open(zz, "w").close()
+        err, calls, _bad = run(bases[0], cmd)
+        if err or calls or not os.path.exists(zz) or os.path.exists(zz + ".d"):
+            ran = "đã" if os.path.exists(zz + ".d") else "không"
+            fails.append(f"oracle với tên lệnh ghép từ biến: {cmd!r}: lỗi {err or 'không'}, stub ghi {calls}, file canh "
+                         f"{'còn' if os.path.exists(zz) else 'bị xoá'}, git init {ran} chạy")
+        shutil.rmtree(zz + ".d", ignore_errors=True)
+        if os.path.exists(zz):
+            os.remove(zz)
+    if len(fails) > nfail:  # khung hỏng: không chạy gì thêm
+        finish("")
+    # Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
+    # lưới gọi là nguy, ở đây bash thật kiểm mô hình đó (rm đệ quy ngoài thư mục tạm đúng ở các lệnh ấy) và mục A báo đủ.
+    spec = importlib.util.spec_from_file_location("heredoc_grid", grid_file)
+    hg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hg)
+    grid = hg.heredoc_grid()
+else:
+    fcmds, grid = [], []
 
-with ThreadPoolExecutor(max_workers=(os.cpu_count() or 2) * 2) as ex:
-    results = list(ex.map(run, range(len(cmds))))
+# Một pool chạy mọi lô. Nhãn (suspicious_labels) của lệnh nguy tính ngay khi lệnh chạy xong, ở tiến trình Python phụ của chỗ
+# chạy: tính ở luồng chính thì GIL làm nó thành đường găng (khoảng 37 giây trên 4 CPU, bash chỉ cần 22 giây). Tiến trình phụ
+# đọc lệnh, trả nhãn, mỗi dòng một JSON.
+LABELER = r"""import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
+a = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(a)
+for line in sys.stdin:
+    print(json.dumps(a.suspicious_labels(json.loads(line), a.SUSPICIOUS)), flush=True)
+"""
+slots = queue.Queue()
+helpers = [subprocess.Popen([sys.executable, "-I", "-B", "-c", LABELER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            universal_newlines=True) for _ in bases]
+for slot in zip(bases, helpers):
+    slots.put(slot)
+def ask(helper, c):
+    helper.stdin.write(json.dumps(c) + "\n")
+    helper.stdin.flush()
+    line = helper.stdout.readline()
+    if not line:
+        raise RuntimeError(f"tiến trình gắn nhãn chết ở lệnh {c!r}")
+    return json.loads(line)
+def job(lot, k):
+    """(kết quả chạy, lệnh mục A đọc, nhãn hay None khi lệnh không nguy)."""
+    base, helper = slots.get()
+    try:
+        if lot == "chung":
+            r, c = run_chung(base, k), render(cmds[k], "rm")
+            need = any(dangerous(pwd, t) for pwd, t in r[0])
+        elif lot == "fuzz":
+            r, c = run(base, fcmds[k]), fcmds[k]
+            need = bool(r[2])
+        else:
+            r, c = run(base, grid[k][0], rec=True), grid[k][0]
+            need = bool(r[2]) and not r[0]
+        return r, c, ask(helper, c) if need else None
+    finally:
+        slots.put((base, helper))
+lab = {}
+def labels(c):
+    if c not in lab:
+        lab[c] = a.suspicious_labels(c, a.SUSPICIOUS)
+    return lab[c]
 rreal, rsbx = os.path.realpath(REAL), os.path.realpath(sbx)
 
 
@@ -3177,8 +3180,9 @@ def inside(p, d):
 
 
 def dangerous(pwd, t):
-    """Nguy hiểm trừ khi đích thật nằm trong REAL hay có thành phần dist/node_modules/build sau sandbox (audit coi tên đó
-    vô hại ở mọi chỗ: đó là luật của audit, không phải lỗi đọc lệnh). Dự án giả, src, HOME, cha dự án, /, /src: nguy hiểm."""
+    """Lô chung: nguy hiểm trừ khi đích thật nằm trong REAL hay có thành phần dist/node_modules/build sau sandbox (audit coi
+    tên đó vô hại ở mọi chỗ: đó là luật của audit, không phải lỗi đọc lệnh). Dự án giả, src, HOME, cha dự án, /, /src: nguy
+    hiểm."""
     p = os.path.realpath(os.path.join(pwd, t))
     if inside(p, rreal):
         return False
@@ -3186,59 +3190,125 @@ def dangerous(pwd, t):
     return not set(parts.split(os.sep)) & {"dist", "node_modules", "build"}
 
 
-danger, miss, timeouts = 0, [], []
+tasks = [("chung", i) for i in range(len(cmds))] + [("fuzz", k) for k in range(len(fcmds))] + [
+    ("luoi", k) for k in range(len(grid))]
+results, res, gres = [None] * len(cmds), [None] * len(fcmds), [None] * len(grid)
+with ThreadPoolExecutor(W) as ex:
+    futs = {ex.submit(job, lot, k): (lot, k) for lot, k in tasks}
+    for fut in as_completed(futs):
+        lot, k = futs[fut]
+        r, c, got = fut.result()
+        if got is not None:
+            lab[c] = got
+        if lot == "chung":
+            results[k] = r
+        elif lot == "fuzz":
+            res[k] = (c,) + r
+        else:
+            gres[k] = tuple(grid[k]) + r
+for h in helpers:
+    h.stdin.close()
+    h.wait()
+shutil.rmtree(root, ignore_errors=True)
+el = time.monotonic() - t0
+
+# Lô PR8 và lưới.
+model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d]
+if model:
+    fails.append(f"lưới thân <<EOF: bash thật khác mô hình của lưới ở {len(model)}/{len(grid)} lệnh (sửa heredoc_grid):\n"
+                 + "\n".join(f"  {why}: {c!r}: bash xoá đệ quy {bad or 'không gì'}" for why, c, bad in model[:5]))
+gmiss = sorted((len(c), why, c) for c, _d, why, err, _calls, bad in gres
+               if not err and bad and "xoá đệ quy" not in labels(c))
+fails += [f"{c!r}: {err}" for c, _d, _why, err, _calls, _bad in gres if err]
+if gmiss:
+    fails.append(f"lưới thân <<EOF: mục A bỏ sót {len(gmiss)} lệnh mà bash xoá đệ quy ngoài thư mục tạm:\n"
+                 + "\n".join(f"  {why}: {c!r}" for _n, why, c in gmiss[:10]))
+misses, fdanger, hit = [], 0, set()
+for c, err, _calls, bad in res:
+    if err:
+        fails.append(f"{c!r}: {err}")
+    if not bad:
+        continue
+    fdanger += 1
+    if labels(c):
+        continue
+    if c in known:
+        hit.add(c)
+    else:
+        misses.append((len(c), c, sorted(set(bad))))
+if not skip8 and fdanger < len(fcmds) // 4:  # bộ sinh hay stub hỏng thì phép so vô nghĩa
+    fails.append(f"chỉ {fdanger}/{len(fcmds)} lệnh xoá đích ngoài thư mục tạm: bộ sinh hay stub hỏng")
+if misses:
+    fails.append(f"mục A bỏ sót {len(misses)} lệnh mà bash xoá đích ngoài thư mục tạm (ngắn nhất trước):\n"
+                 + "\n".join(f"  {c!r}: bash xoá {', '.join(bad)}" for _n, c, bad in sorted(misses)[:10])
+                 + "\n  Sửa cách segments()/suspicious_labels đọc cấu trúc đó (thêm một cách đọc rồi lấy hợp, như exact hay "
+                 "nối dòng). Không ghi thêm vào KNOWN_MISSES: danh sách chỉ được giảm.")
+if not skip8:
+    for c in known:  # mục A vẫn không báo, mà bash ở máy này không xoá gì ngoài thư mục tạm (sh khác dash?): chỉ ghi chú
+        if c not in hit and not labels(c):
+            print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
+
+# Lô chung.
+danger, miss, timeouts, refused = 0, [], [], []
 danger_extra = danger_trap2 = 0
-for i, (calls, err, to) in enumerate(results):
+for i, (calls, err, to, no) in enumerate(results):
     c = render(cmds[i], "rm")
     if to:
         timeouts.append(c)
+    if no:
+        refused.append(c)
     bad = [(pwd, t) for pwd, t in calls if dangerous(pwd, t)]
     if not bad:
         continue
     danger += 1
     danger_extra += cmds[i] in EXTRA
     danger_trap2 += cmds[i] in TRAP2
-    if "xoá đệ quy" not in au.suspicious_labels(c, au.SUSPICIOUS, "Bash"):
+    if "xoá đệ quy" not in labels(c):
         miss.append((len(c), c, bad, err))
-el = time.time() - t0
-fail = False
 short = lambda s: s.replace(sbx, "$SBX")
+out = []  # dòng ✘ của lô chung, in sau dòng ✘ của lô PR8
 for c in timeouts[:5]:
-    print(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}", file=sys.stderr)
-    fail = True
+    out.append(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}")
+for c in refused[:5]:
+    out.append(f"✘ audit: oracle bash: văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp, không chạy: "
+               f"{short(c)!r}")
 if miss:
-    fail = True
-    print(f"✘ audit: mục A bỏ sót {len(miss)}/{danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ($SBX={sbx}, cwd "
-          "$SBX/proj, $SBX/tmpw là thư mục tạm có thật), ngắn nhất trước:", file=sys.stderr)
+    out.append(f"✘ audit: mục A bỏ sót {len(miss)}/{danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ($SBX={sbx}, cwd "
+               "$SBX/proj, $SBX/tmpw là thư mục tạm có thật), ngắn nhất trước:")
     for _n, c, bad, err in sorted(miss)[:None if os.environ.get("AUDIT_LOST_ALL") else 10]:
-        print(f"  {short(c)!r}", file=sys.stderr)
+        out.append(f"  {short(c)!r}")
         for pwd, t in bad[:3]:
-            print(f"    bash: PWD={short(pwd)} đích={short(t)}", file=sys.stderr)
+            out.append(f"    bash: PWD={short(pwd)} đích={short(t)}")
         if err.strip():
-            print("    stderr: " + short(err.strip())[:300].replace("\n", "\n            "), file=sys.stderr)
-    print("  Sửa phân tích lệnh trong audit-agent.py (segments, benign_delete) cho tới khi mục A báo các lệnh này, và thêm "
-          "ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp, trừ khi đó là lỗ có việc riêng: khi đó ghi vào "
-          "KNOWN_GAPS. AUDIT_LOST_ALL=1 in đủ.", file=sys.stderr)
+            out.append("    stderr: " + short(err.strip())[:300].replace("\n", "\n            "))
+    out.append("  Sửa phân tích lệnh trong audit-agent.py (segments, benign_delete) cho tới khi mục A báo các lệnh này, và "
+               "thêm ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp và đừng ghi thêm vào KNOWN_GAPS hay "
+               "KNOWN_MISSES: hai danh sách chỉ được giảm. AUDIT_LOST_ALL=1 in đủ.")
 if danger < ORACLE_FLOOR:
-    fail = True
-    print(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa bị "
-          "thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ sàn.",
-          file=sys.stderr)
+    out.append(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa "
+               "bị thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ "
+               "sàn.")
 if danger_extra < ORACLE_FLOOR_EXTRA:
-    fail = True
-    print(f"✘ audit: lệnh thêm của oracle bash (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
-          f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
-          "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.", file=sys.stderr)
+    out.append(f"✘ audit: lệnh thêm của oracle bash (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
+               f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác "
+               "đi. Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
 if danger_trap2 < ORACLE_FLOOR_TRAP2:
-    fail = True
-    print(f"✘ audit: bẫy biến của lô thêm thứ hai (var_trap2) chỉ có {danger_trap2} lệnh nguy hiểm, dưới sàn "
-          f"ORACLE_FLOOR_TRAP2={ORACLE_FLOOR_TRAP2}. Lô hay hàm var_trap2 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
-          "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.", file=sys.stderr)
-if fail:
+    out.append(f"✘ audit: bẫy biến của lô thêm thứ hai (var_trap2) chỉ có {danger_trap2} lệnh nguy hiểm, dưới sàn "
+               f"ORACLE_FLOOR_TRAP2={ORACLE_FLOOR_TRAP2}. Lô hay hàm var_trap2 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
+               "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
+for f in fails:
+    print("✘ audit: oracle bash:", f, file=sys.stderr)
+for line in out:
+    print(line, file=sys.stderr)
+if fails or out:
     sys.exit(1)
-print(f"✔ audit: oracle bash: mục A báo đủ {danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, "
-      f"sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn "
-      f"{ORACLE_FLOOR_TRAP2}; {el:.1f}s)")
+pr8 = "" if skip8 else (
+    f"; lô PR8: {len(fcmds)} lệnh fuzz, {fdanger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong "
+    f"KNOWN_MISSES; lưới thân <<EOF: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
+print(f"✔ audit: oracle bash: {len(tasks)} lệnh chạy bằng bash {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
+      f"{danger} lệnh xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ "
+      f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
+      f"KNOWN_GAPS chỉ được giảm: {ratchet} ({el:.0f} giây)")
 PYEOF
 rm -rf "$tmp/oracle"
 
