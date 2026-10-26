@@ -133,11 +133,11 @@ HEREDOC = re.compile(_HD_OPEN + r"(?:(?(cont)(?!))(?(dash)\t*)(?P=name)(?:\n|$)|
 HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
 
 
+# heredocs(rx, cmd) là rx.finditer(cmd) với rx là HEREDOC hay HEREDOC_6F32D5A. Dòng mở phải kết thúc bằng `\n`, nên `<<` sau
+# `\n` cuối không mở heredoc, mà finditer vẫn thử ở đó, lookahead quét tới hết chuỗi mỗi lần: bậc hai trên dòng cuối có nhiều
+# `<<NAME` (`"<<A "*5000`, `"wc <<< x; "*8000`). Ở `<<` trước đó, lần thử qua được tên thì lookahead thấy `\n` và thân luôn
+# khớp (tới `\Z` nếu không có dòng đóng), lần thử hỏng thì hỏng trước lookahead.
 def heredocs(rx, cmd):
-    """rx.finditer(cmd) với rx là HEREDOC hay HEREDOC_6F32D5A. Dòng mở phải kết thúc bằng `\\n`, nên `<<` sau `\\n` cuối không mở
-    heredoc, mà finditer vẫn thử ở đó, lookahead quét tới hết chuỗi mỗi lần: bậc hai trên dòng cuối có nhiều `<<NAME`
-    (`"<<A "*5000`, `"wc <<< x; "*8000`). Ở `<<` trước đó, lần thử qua được tên thì lookahead thấy `\\n` và thân luôn khớp
-    (tới `\\Z` nếu không có dòng đóng), lần thử hỏng thì hỏng trước lookahead."""
     last, pos = cmd.rfind("\n"), 0
     while True:
         at = cmd.find("<<", pos, max(last, 0))
@@ -686,6 +686,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         nonlocal lst
         if lst is d:
             lst = dict(d)
+
     # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), gồm
     # env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân, env tại toán tử, và env của shell con (kid:
     # env tại toán tử cộng gán tạm của lệnh nhận thân, rồi theo phép gán trong thân).
