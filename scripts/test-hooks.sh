@@ -508,13 +508,11 @@ long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
 # cd tới repo ở main. Mỗi cd tương đối thành một thư mục khác chữ (không tồn tại), mỗi thư mục từng tốn một subshell (17 giây).
 many_cd() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
-  printf '%s' "$1"
-  printf '%.0s' $(seq 1500)
-  for _ in $(seq 1500); do printf '%s' "$2"; done
+  for _ in $(seq 1500); do printf '%s' "$1"; done
   printf 'cd \\"%s\\" && git push","description":"test"}}\n' "$on_main"
 }
-many_cd "" 'cd \"a b\"; ' > "$tmp/long-manycd.json"
-many_cd "" 'cd . && ls && ' > "$tmp/long-manydot.json"
+many_cd 'cd \"a b\"; ' > "$tmp/long-manycd.json"
+many_cd 'cd . && ls && ' > "$tmp/long-manydot.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
