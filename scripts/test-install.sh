@@ -317,6 +317,35 @@ assert "M: cài lại lên bản cũ CRLF phải exit 0" [ $? -eq 0 ]
 assert "M: CRLF bản cũ: phần của kit phải đúng một bản template mới" kit_part_ok "$m/.claude/rules/agent-team.md"
 assert "M: CRLF bản cũ: phải giữ mục riêng nguyên văn" own_part_is "$m/.claude/rules/agent-team.md" "$crlf_kept_x"
 
+# MA. Phần riêng có byte không phải UTF-8 (Latin-1 é = \351), installer chạy ở locale UTF-8: trên macOS từng dừng
+#     (ca Q của PR #22, mục 4.2 của docs/viec-can-lam.md). Phải exit 0 và giữ phần riêng nguyên byte, có dấu hay bản cũ.
+utf8_loc=""
+for l8 in en_US.UTF-8 C.UTF-8 en_US.utf8 C.utf8; do
+  [ "$(LC_ALL="$l8" locale charmap 2>/dev/null)" = UTF-8 ] && utf8_loc="$l8" && break
+done
+if [ -n "$utf8_loc" ]; then
+  ma="$tmp/latin1"
+  rules_repo "$ma"
+  own_l1="$tmp/own-latin1.md"
+  printf '## Riêng Z\n- caf\351\n' > "$own_l1"
+  cat "$tpl" "$own_l1" > "$ma/.claude/rules/agent-team.md"
+  LC_ALL="$utf8_loc" run_install "$ma"
+  rc=$?
+  assert "MA: cài lại khi phần riêng có byte Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+  assert "MA: Latin-1 có dấu: phần của kit phải đúng template mới" kit_part_ok "$ma/.claude/rules/agent-team.md"
+  assert "MA: Latin-1 có dấu: dưới dấu phải còn nguyên byte" own_part_is "$ma/.claude/rules/agent-team.md" "$own_l1"
+  { echo; cat "$own_l1"; } > "$tmp/sep-own-latin1.md"
+  cat "$old_tpl" "$tmp/sep-own-latin1.md" > "$ma/.claude/rules/agent-team.md"
+  LC_ALL="$utf8_loc" run_install "$ma" --force
+  rc=$?
+  assert "MA: cài lại lên bản cũ có Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+  assert "MA: Latin-1 bản cũ: phần của kit phải đúng template mới" kit_part_ok "$ma/.claude/rules/agent-team.md"
+  assert "MA: Latin-1 bản cũ: phải giữ mục riêng nguyên byte" own_part_is "$ma/.claude/rules/agent-team.md" \
+    "$tmp/sep-own-latin1.md"
+else
+  printf '⚠ install: bỏ qua ca MA (không có locale UTF-8 trên máy này)\n'
+fi
+
 # N. grep có cờ quiet nhận stdin từ pipe trong file shell của kit: validate-kit đỏ, nêu file:dòng và cách sửa.
 #    Dòng vi phạm dựng bằng $bar để chính file này không vi phạm. Dòng code của lint nằm trong
 #    validate-kit.sh đã cài, nên lần chạy xanh cũng là bằng chứng lint không tự báo mình.
