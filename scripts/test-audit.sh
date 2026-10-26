@@ -1646,6 +1646,37 @@ for _ in range(20000):
 check(not diff, f"quoted_sub phải cho đúng kết quả của rx.sub: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
 check(unclosed >= 1000, f"lô vi sai phải có nháy kép chưa đóng chứa `\\\"` ({unclosed})")
 linear("suspicious_labels trên chuỗi `\\\"` dài", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), lambda k: '\\"' * 2500 * k)
+# expand của ba09758 duyệt cả env ở mỗi đoạn có `$` (vài nghìn phép gán rồi vài nghìn `echo $x`: 12 giây). Bản mới chỉ thay
+# một lượt khi thứ tự không đổi kết quả: phải cho đúng kết quả của vòng cũ (giữ nguyên văn ở đây), với env thứ tự ngẫu nhiên,
+# giá trị có `$`, `$A$B`, `${A}`, `$A}`, `$$A`, tên Unicode.
+def old_expand(text, env):
+    if "$" not in text:
+        return text
+    for name, val in env.items():
+        if name in text:
+            text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
+    return text
+E_NAMES = ["A", "B", "AB", "A1", "_", "vé", "D"]
+E_VALS = ["", "x", "1", "/tmp/w", "$A", "$B", "${A}", "$", "{", "}", "B", "$vé", "a$A"]
+E_TEXT = ["$", "${", "}", "{", "x", " ", "/", "\\", "é", "1"] + ["$" + n for n in E_NAMES] + ["${" + n + "}" for n in E_NAMES]
+diff, fast = [], 0
+for _ in range(30000):
+    env = {n: rnd.choice(E_VALS) for n in rnd.sample(E_NAMES, rnd.randint(0, len(E_NAMES)))}
+    s = "".join(rnd.choice(E_TEXT) for _ in range(rnd.randint(1, 8)))
+    want = old_expand(s, env)
+    if a.expand(s, env) != want:
+        diff.append((s, env))
+    refs = [m for m in a.VAR_REF.finditer(s) if m[1] in env]
+    fast += bool(refs) and not any("$" in env[m[1]] or a.adjacent(s, m.start()) for m in refs) and want != s
+check(not diff, f"expand phải cho đúng kết quả của vòng thay từng biến: {len(diff)} chỗ khác, vd {diff[:3]!r}")
+check(fast >= 3000, f"lô vi sai phải đi qua đường thay một lượt ({fast})")
+# Mở danh sách (strict_assign) không chép env: phép gán sau đó không được lọt vào env lúc mở danh sách (`D=/ && true &`
+# chạy nền cả danh sách, lệnh sau `&` thấy D=/tmp/w/).
+got = [full for _p, full, _c, _s in a.segments("D=/tmp/w/; D=/ && true & rm -rf ${D}src", strict_assign=True)]
+check(got == ["D=/tmp/w/", "D=/", "true & rm -rf /tmp/w/src"], f"env lúc mở danh sách không theo phép gán sau đó: {got!r}")
+for make in (lambda k: " ".join("v%d=1" % i for i in range(1250 * k)) + "; " + "echo $x; " * 1250 * k,
+             lambda k: "unset " + " ".join("v%d" % i for i in range(1250 * k)) + "; " + "echo $x; " * 1250 * k):
+    linear("suspicious_labels trên nhiều biến rồi nhiều đoạn có `$`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /

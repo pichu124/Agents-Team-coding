@@ -348,15 +348,37 @@ AGENT_BRANCH_DELETE = re.compile(r"^git\s+branch\s+(?:-D|--delete\s+--force|-d\s
 TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >/dev/null... ở cuối đoạn lệnh
 
 
+# Chỗ thay biến của expand: `$` hay `${`, rồi cả dãy chữ theo sau (tên trong env là `[A-Za-z_]\w*`, nên `\$\{?TÊN\b\}?` chỉ khớp
+# khi TÊN là cả dãy chữ đó), rồi `}` nếu có.
+VAR_REF = re.compile(r"\$\{?(\w+)\}?")
+
+
 def expand(text, env):
     if "$" not in text:  # không có chỗ nào để thay: khỏi duyệt env (vài nghìn biến, mỗi đoạn một lượt)
         return text
+    # Thay từng biến theo thứ tự của env (vòng dưới) là O(số biến) mỗi đoạn có `$`. Thứ tự chỉ đổi kết quả khi giá trị thay
+    # vào có `$` (biến mới để thay), hay chỗ thay đứng ngay sau `$`, `${` hay `$TÊN` (`$A$B`: thay B trước thì `$A` thành
+    # `$A<giá trị>`, không còn khớp A); không thì thay một lượt mọi chỗ có tên trong env cho cùng kết quả.
+    refs = [m for m in VAR_REF.finditer(text) if m[1] in env]
+    if not refs:
+        return text
+    if not any("$" in env[m[1]] or adjacent(text, m.start()) for m in refs):
+        return VAR_REF.sub(lambda m: env[m[1]] if m[1] in env else m[0], text)
     for name, val in env.items():
         # Regex chứa đúng chuỗi tên nên không khớp khi tên vắng trong text (đã thay ở các vòng trước): bỏ qua, khỏi dịch lại
         # regex cho mọi biến của env (quá 512 tên thì bộ đệm của `re` không giữ nổi).
         if name in text:
             text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
     return text
+
+
+def adjacent(text, at):
+    """`$` ở at đứng ngay sau `$`, `${`, `$TÊN` hay `${TÊN` (TÊN: dãy chữ)."""
+    j = at
+    while j and (text[j - 1].isalnum() or text[j - 1] == "_"):
+        j -= 1
+    j -= j > 0 and text[j - 1] == "{"
+    return j > 0 and text[j - 1] == "$"
 
 
 def expand_body(text, outer, inner):
@@ -656,8 +678,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     comment, csep = False, None
     # strict_assign: phép gán trong subshell `( … )`, trong nhóm hay danh sách chạy nền (`{ …; } &`, `D=x && a &`) chạy ở
     # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
-    # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới).
+    # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới). Mở danh sách không chép env (chép mỗi đoạn là O(số biến)
+    # mỗi đoạn: bậc hai trên vài nghìn phép gán rồi vài nghìn lệnh): lst là chính env, own() chép trước khi đổi nó tại chỗ.
     groups, lst, bg = [], {}, False
+
+    def own(d):
+        nonlocal lst
+        if lst is d:
+            lst = dict(d)
     # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), gồm
     # env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân, env tại toán tử, và env của shell con (kid:
     # env tại toán tử cộng gán tạm của lệnh nhận thân, rồi theo phép gán trong thân).
@@ -718,7 +746,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         closes = re.findall(r"(?:^|[\s;])\}(?=[\s;&|)]|$)|\)", seg) if strict_assign else []
         closes = closes[seg.count("$(") + seg.count("$(("):]  # bỏ `)` đóng `$(…)`, `$((…))`
         if strict_assign and not groups and (sep in (None, ";", "\n") or bg) and not mark_only:
-            lst = dict(env)  # mở danh sách mới ở ngoài mọi nhóm
+            lst = env  # mở danh sách mới ở ngoài mọi nhóm
         if strict_assign and background and not groups and not opens and not closes:
             env = dict(lst)  # `D=x && a & rm $D`: cả danh sách trước `&` chạy nền, lệnh sau `&` thấy env lúc mở danh sách
         groups += [(o, dict(env)) for o in opens]
@@ -780,6 +808,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             called = funcs & (set(toks) | set(words)) or (funcs and words[:1] and re.search(r"[$`]", words[0]))
             if ifs_dirty or (not sure and called):
                 for x in [env, kid] + (saved if ifs_dirty else []) + [y for p in pinned if p for y in p]:
+                    own(x)
                     x.clear()  # sau IFS cả env đã chụp (thân heredoc, phạm vi lồng) cũng thành không biết
             elif not sure:
                 drop = set(re.findall(r"\$\{#?([A-Za-z_]\w*):?=", code))
@@ -793,9 +822,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                         elif named and re.fullmatch(r"-[A-Za-z]+", t):
                             drop.update(t[k:] for k in range(1, len(t)))
                 for name in drop:
+                    own(env)
                     env.pop(name, None)
                     kid.pop(name, None)
         for name, val in ((ASSIGN_EMPTY if pure else ASSIGN).findall(full) if assigns and not frozen and sure else ()):
+            own(env)
             if forget:
                 env.pop(name, None)
                 kid.pop(name, None)
@@ -817,13 +848,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # Cờ -f của unset chỉ tìm ngoài nháy và comment như trước: `unset D # -f` vẫn làm D rỗng.
             words = set(re.split(r"[\s(){}!<>;&|]+", re.sub(r"[\"']", "", full)))
             if EVAL.search(lead):
+                own(env)
                 env.clear()
                 kid.clear()
             elif words & SETS_NAMES or (words & {"printf", "wait"} and any(w[:2] in ("-v", "-p") for w in words)):
                 for word in words | {w[2:] for w in words if w[:2] in ("-v", "-p")}:  # `printf -vD`: tên dính cờ
+                    own(env)
                     env.pop(word, None)
                     kid.pop(word, None)
             elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in re.split(r"[\s(){}!]+", plain)):
+                own(env)
                 env.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
                 kid.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
         m = CD.match(head)
@@ -865,6 +899,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # Biến mà đoạn nêu thành chưa biết, kể cả ở cách đọc chặt (đoạn sau `||` không gán gì): thêm nghi ngờ thay vì
             # giữ giá trị cũ; cách đọc exact không pipe_scope vẫn trong phép hợp nên không mất nhãn nhờ giá trị cũ.
             for name, _val in ASSIGN.findall(full):
+                own(env)
                 env.pop(name, None)
         if re.search(r"[)}]", seg):
             ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
