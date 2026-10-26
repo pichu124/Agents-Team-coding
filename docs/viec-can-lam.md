@@ -2,7 +2,7 @@
 
 Ảnh chụp ngày 21/10/2026, sau khi gom mọi nhánh về nhánh mặc định `main` (tên cũ `claude/sharp-knuth-lpdhqz`, đổi ngày 22/10) (đầu nhánh lúc ghi: `083c8e9`, sau PR #26). Mỗi việc ghi: vì sao cần làm, khi nào thì xong, ai đang làm. Làm xong việc nào thì xoá dòng đó khỏi file này, ngay trong PR của việc đó.
 
-Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, viết test đỏ trước, `KIT_SELFTEST=1 ./scripts/check.sh` phải exit 0, rồi verifier và reviewer mới cho qua. Không nới guard, Stop gate hay `scripts/guard-ask-floor`; không sửa hay nới assert cũ. Nhãn của `suspicious_labels` bản mới phải ⊇ bản trước, với `AUDIT_BASE_REF` đặt về commit trước khi sửa. Muốn đổi cách đọc lệnh thì thêm một cách đọc rồi hợp nhãn. Oracle bash chỉ có một bước, là bước đã có trên nhánh mặc định: không hạ `ORACLE_FLOOR`, `KNOWN_GAPS` chỉ được giảm. Thử hành vi bash thật thì thay `rm` và `git` bằng `echo` ngay trong văn bản lệnh, chạy trong thư mục tạm không phải repo git, HOME trỏ tới thư mục không tồn tại, và không đặt `rm` giả trên PATH.
+Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, viết test đỏ trước, `KIT_SELFTEST=1 ./scripts/check.sh` phải exit 0, rồi verifier và reviewer mới cho qua. Không nới guard, Stop gate hay `scripts/guard-ask-floor`; không sửa hay nới assert cũ. Nhãn của `suspicious_labels` bản mới phải ⊇ bản trước, với `AUDIT_BASE_REF` đặt về commit trước khi sửa. Muốn đổi cách đọc lệnh thì thêm một cách đọc rồi hợp nhãn. Oracle bash chỉ có một bước trong `scripts/test-audit.sh` (lô ngữ pháp chung, lô fuzz của PR #8, lưới thân heredoc): không hạ `ORACLE_FLOOR*`, `KNOWN_MISSES` ∪ `KNOWN_GAPS` chỉ được giảm. Thử hành vi bash thật thì thay `rm` và `git` bằng `echo` ngay trong văn bản lệnh, chạy trong thư mục tạm không phải repo git, HOME trỏ tới thư mục không tồn tại, và không đặt `rm` giả trên PATH.
 
 ## 1. Gom nhánh về nhánh mặc định (xong 21/10)
 
@@ -16,15 +16,6 @@ Luật chung cho mọi việc audit: dùng `/team-lead` với playbook bug-fix, 
 Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session chạy song song đã làm tài khoản chạm giới hạn dùng 5 giờ, và cả nhóm cùng dừng giữa chừng.
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
-
-### 2.1 Gộp hai oracle bash thành một bước
-- **Vì sao:** sau PR #8, test-audit có hai bước oracle: bước chung (blissful-dirac: ORACLE_FLOOR, KNOWN_GAPS) và bước của PR #8 (thư mục `$tmp/oracle-pr8`, KNOWN_MISSES chỉ được giảm, nhận bằng hằng MARK). Hai bước bổ sung cho nhau, không trùng: ngữ pháp của PR #8 sinh đúng các cấu trúc mà KNOWN_GAPS của bước chung loại ra (thân `bash -c` có biến hay lồng nhau, nháy lẻ trong comment hay thân heredoc, heredoc chưa đóng hay thân rỗng, gán trong khâu ống hay sau `&&`/`||`, `\` cuối dòng, `builtin cd`, cd lỗi). Số ca sót trên từng bản audit-agent.py (oracle PR #8 / oracle chung): 27727f5 69/25, 0667d98 6/13, 9bd03a3 0/10, 53f3ff2 0/0. Cộng lại hai bước mất khoảng 40–50 giây trên CI.
-- **Cần biết khi gộp:**
-  - Cách chặn rm khác nhau. Bước chung đặt `fakerm` trên một PATH chỉ có bash và cat; PR #8 thay chữ `rm` trong văn bản lệnh bằng đường dẫn tuyệt đối tới stub. `bash -l` có thể đặt lại PATH, nên mảnh `bash -lc` của PR #8 chỉ an toàn với cách thay trong văn bản: gộp thì dùng cách đó, hoặc bỏ `-l`.
-  - Thư mục: PR #8 thay `/tmp/` bằng `<chỗ>/tmp/`, cwd là `<chỗ>/p` có sẵn `p/src`; nguy khi normpath(PWD + đích) nằm ngoài `<chỗ>/tmp`. Ngữ pháp PR #8 không dùng tên vô hại (dist, node_modules), còn bước chung coi build là vô hại.
-  - Job nền: PR #8 đọc stdout tới EOF rồi `killpg`, mỗi lần gọi stub ghi ra `log.$$` riêng; ngữ pháp PR #8 không có `wait` hay `$( )` nên không cần lớp bọc e103274.
-  - KNOWN_MISSES chứa lệnh đã sinh mà vẫn sót; KNOWN_GAPS chứa cấu trúc không sinh. Gộp thì giữ một luật chỉ được giảm, đổi MARK cho khớp.
-- **Xong khi:** còn một bước oracle, ngữ pháp là hợp của hai bên, không mất lệnh nào mà một trong hai bước đang bắt, một dòng trong bảng Rule ↔ Thứ thực thi của CLAUDE.md.
 
 ### 2.4 Đường chậm bậc hai có từ trước
 - Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây; cả trên here-string: `"wc <<< x; "*8000` 3,9 giây, gấp đôi độ dài chậm ~3,5 lần, gần như hết ở `.sub` của HEREDOC/HEREDOC_STRICT trong keep_shell_heredocs các cách đọc không phải bash; ca `*5000` đã mất 4,1 giây trên runner Windows, nên assert here-string nay đo riêng cách đọc bash theo tỉ lệ); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).

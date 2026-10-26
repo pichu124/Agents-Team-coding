@@ -999,7 +999,7 @@ def fuzz_vp_c():
 PYEOF
 
 # Lưới của lớp lỗi "thay biến trong thân <<EOF không nháy đưa vào shell", dùng chung cho assert (theo mô hình, chạy mọi nơi)
-# và oracle bash của PR #8 (kiểm mô hình bằng bash thật). Reviewer chặn hai vòng liền, mỗi vòng một ví dụ của cùng lớp
+# và bước oracle bash (kiểm mô hình bằng bash thật). Reviewer chặn hai vòng liền, mỗi vòng một ví dụ của cùng lớp
 # (b06eb79 chỉ sửa biến là đích): lưới đi hết lớp thay vì theo ví dụ.
 grid="$tmp/heredoc_grid.py"
 cat > "$grid" <<'PYEOF'
@@ -1711,7 +1711,7 @@ for cmd in ("O=-rf; bash <<EOF; O=-f\necho it\\'s\nrm $O /x\necho 'x'\nEOF",    
             "O=-f; bash <<EOF\nO=-rf; rm \\$O /x\nEOF"):                              # `\$`, không mẹo nháy
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"thân <<EOF: biến là cờ hay tên lệnh: {cmd!r}: {got!r}")
-# Cả lớp đó (lưới dùng chung với oracle bash của PR #8, nơi bash thật kiểm mô hình của lưới): mọi lệnh nguy phải vào A.
+# Cả lớp đó (lưới dùng chung với bước oracle bash, nơi bash thật kiểm mô hình của lưới): mọi lệnh nguy phải vào A.
 spec = importlib.util.spec_from_file_location("heredoc_grid", sys.argv[16])
 hg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hg)
