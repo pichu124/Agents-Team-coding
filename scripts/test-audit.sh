@@ -2795,10 +2795,10 @@ fi
 # Oracle bash: hai bước trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên không bắt được lỗi mà mọi bản cùng có.
 # Phân tích lệnh của mục A từng đọc khác bash thật hơn mười lần (1e9882a và 3 lần vá, 3dab000, 5083855, 52233e5..9734b56,
 # reviewer chặn nhiều vòng). Bước này sinh lệnh tất định từ một ngữ pháp CHỈ gồm thứ an toàn, chạy bằng bash thật với rm giả
-# (`fakerm` ghi $PWD và đích vào log, không xoá gì; PATH chỉ có bash và cat; env tối giản; stdin /dev/null), rồi đòi mục A
-# báo mọi lệnh mà bash thật xoá ngoài thư mục tạm/build.
+# (stub ghi $PWD và đích vào log, không xoá gì, thay chữ rm ngay trong văn bản lệnh; PATH chỉ có bash, sh, cat; rm và git là
+# hàm chặn; env tối giản; stdin /dev/null), rồi đòi mục A báo mọi lệnh mà bash thật xoá ngoài thư mục tạm/build.
 "$py" -I -B - "$tmp/oracle" <<'PYEOF' || status=1
-import importlib.util, os, random, re, shlex, shutil, subprocess, sys, time
+import glob, importlib.util, os, queue, random, re, shutil, signal, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 for s in (sys.stdout, sys.stderr):
     s.reconfigure(encoding="utf-8")  # -I bỏ qua PYTHONIOENCODING
@@ -2839,10 +2839,10 @@ t0 = time.time()
 REAL, GONE, PROJ, HOME, BIN, LOG = (os.path.join(sbx, n) for n in ("tmpw", "khongco", "proj", "home", "bin", "log"))
 for d in (REAL + "/src", REAL + "/dist", HOME, BIN, LOG) + tuple(PROJ + "/" + n for n in ("src", "dist", "node_modules", "build")):
     os.makedirs(d, exist_ok=True)
-for tool in ("bash", "cat"):
+for tool in ("bash", "sh", "cat"):
     os.symlink(shutil.which(tool), os.path.join(BIN, tool))
 
-RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là `fakerm`
+RM = object()  # chỗ chữ lệnh xoá trong mảnh lệnh: bản audit là `rm`, bản bash là đường tới stub
 rnd = random.Random(7)
 pick = rnd.choice
 CD_T = [REAL] * 6 + [GONE] * 3 + ["dist", "node_modules", "src", "..", "/", "~", "-"]
@@ -3123,18 +3123,7 @@ cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
 # pid của `jobs -p` (pid không phải con thì builtin trả về ngay) và trả 0 như wait không đối số.
-PRELUDE = r"""fakerm() {
-  local a e=
-  printf 'C\t%s\n' "$PWD" >> LOG
-  for a in "$@"; do
-    if [ -z "$e" ]; then
-      if [ "$a" = -- ]; then e=1; continue; fi
-      case $a in -?*) continue;; esac
-    fi
-    printf 'T\t%s\t%s\n' "$PWD" "$a" >> LOG
-  done
-}
-cd() { builtin cd "$@" >/dev/null; }
+PRELUDE = r"""cd() { builtin cd "$@" >/dev/null; }
 pushd() { builtin pushd "$@" >/dev/null; }
 popd() { builtin popd "$@" >/dev/null; }
 echo() { builtin echo "$@" >/dev/null; }
@@ -3146,28 +3135,72 @@ wait() {
   fi
   builtin wait "$@"
 }
-export -f fakerm cd pushd popd echo wait
+export -f cd pushd popd echo wait
 """
+# rm thay bằng stub (đường tuyệt đối ghi ngay trong văn bản lệnh), như oracle bash của PR #8: mỗi lần gọi ghi $PWD và đối
+# số ra log.$$ cạnh stub. Không dùng hàm export làm rm giả: dash bỏ BASH_FUNC_*, nên mọi lớp sh sẽ không thấy nó. Mỗi luồng
+# một stub, tạo xong trước khi mở pool (tạo trong luồng thì exec gặp ETXTBSY).
+STUB = "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\" > \"${0%/*}/log.$$\"\n"
+BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
+with open(os.path.join(sbx, "chan.sh"), "w") as fh:
+    fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
+ENV = {"PATH": BIN, "HOME": HOME, "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK, "BASH_FUNC_git%%": BLOCK,
+       "BASH_ENV": os.path.join(sbx, "chan.sh")}
+FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
+DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash)\b|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
+W = (os.cpu_count() or 2) * 2
+slots, refused = queue.Queue(), []
+for k in range(W):
+    os.makedirs(os.path.join(LOG, str(k)))
+    with open(os.path.join(LOG, str(k), "stub"), "w") as fh:
+        fh.write(STUB)
+    os.chmod(os.path.join(LOG, str(k), "stub"), 0o755)
+    slots.put(os.path.join(LOG, str(k)))
+
+
+def targets(args):
+    """Đích như rm giả cũ (hàm fakerm) đọc: trước `--` đầu tiên bỏ token dạng `-?*`; giữ đích rỗng."""
+    end = args.index("--") if "--" in args else len(args)
+    return [t for t in args[:end] if t == "-" or not t.startswith("-")] + args[end + 1:]
 
 
 def run(i):
-    log = os.path.join(LOG, "%d.log" % i)
-    open(log, "w").close()
-    script = os.path.join(LOG, "%d.sh" % i)
-    with open(script, "w") as f:
-        f.write(PRELUDE.replace("LOG", shlex.quote(log)) + render(cmds[i], "fakerm") + "\n")
+    base = slots.get()
     try:
-        r = subprocess.run([os.path.join(BIN, "bash"), script], cwd=PROJ, env={"HOME": HOME, "PATH": BIN},
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
-        err, to = r.stderr.decode("utf-8", "replace"), False
-    except subprocess.TimeoutExpired:
-        err, to = "", True
-    with open(log) as f:
-        calls = [ln.rstrip("\n").split("\t")[1:] for ln in f if ln.startswith("T\t")]
-    return calls, err, to
+        text = render(cmds[i], os.path.join(base, "stub"))
+        plain = text.replace(sbx, "").replace(os.path.realpath(sbx), "")
+        for frag in ("pushd", "true $( ", "echo $( "):
+            plain = plain.replace(frag, "")
+        if FORBID.search(plain) or DISGUISE.search(re.sub(r"['\"\\\\]", "", plain)):
+            refused.append(render(cmds[i], "rm"))
+            return [], "", False
+        for f in glob.glob(os.path.join(base, "log.*")):
+            os.remove(f)
+        p = subprocess.Popen([os.path.join(BIN, "bash"), "-c", PRELUDE + text + "\n"], cwd=PROJ, env=ENV,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+        out, to = b"", False
+        try:
+            out = p.communicate(timeout=10)[0]
+        except subprocess.TimeoutExpired:
+            to = True
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait()
+        p.stdout.close()
+        calls = []
+        for f in sorted(glob.glob(os.path.join(base, "log.*"))):
+            with open(f, "rb") as fh:
+                pwd, *args = fh.read().decode("utf-8", "backslashreplace").split("\0")[:-1] or [""]
+            calls += [[pwd, t] for t in targets(args)]
+        return calls, out.decode("utf-8", "replace"), to
+    finally:
+        slots.put(base)
 
 
-with ThreadPoolExecutor(max_workers=(os.cpu_count() or 2) * 2) as ex:
+with ThreadPoolExecutor(max_workers=W) as ex:
     results = list(ex.map(run, range(len(cmds))))
 rreal, rsbx = os.path.realpath(REAL), os.path.realpath(sbx)
 
@@ -3205,6 +3238,10 @@ fail = False
 short = lambda s: s.replace(sbx, "$SBX")
 for c in timeouts[:5]:
     print(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}", file=sys.stderr)
+    fail = True
+for c in refused[:5]:
+    print(f"✘ audit: oracle bash: văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp, không chạy: "
+          f"{short(c)!r}", file=sys.stderr)
     fail = True
 if miss:
     fail = True
