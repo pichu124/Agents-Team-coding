@@ -330,13 +330,15 @@ if [ -n "$utf8_loc" ]; then
   printf '## Riêng Z\n- caf\351\n' > "$own_l1"
   cat "$tpl" "$own_l1" > "$ma/.claude/rules/agent-team.md"
   LC_ALL="$utf8_loc" run_install "$ma"
-  assert "MA: cài lại khi phần riêng có byte Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ $? -eq 0 ]
+  rc=$?
+  assert "MA: cài lại khi phần riêng có byte Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
   assert "MA: Latin-1 có dấu: phần của kit phải đúng template mới" kit_part_ok "$ma/.claude/rules/agent-team.md"
   assert "MA: Latin-1 có dấu: dưới dấu phải còn nguyên byte" own_part_is "$ma/.claude/rules/agent-team.md" "$own_l1"
   { echo; cat "$own_l1"; } > "$tmp/sep-own-latin1.md"
   cat "$old_tpl" "$tmp/sep-own-latin1.md" > "$ma/.claude/rules/agent-team.md"
   LC_ALL="$utf8_loc" run_install "$ma" --force
-  assert "MA: cài lại lên bản cũ có Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ $? -eq 0 ]
+  rc=$?
+  assert "MA: cài lại lên bản cũ có Latin-1 phải exit 0 ($utf8_loc) → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
   assert "MA: Latin-1 bản cũ: phần của kit phải đúng template mới" kit_part_ok "$ma/.claude/rules/agent-team.md"
   assert "MA: Latin-1 bản cũ: phải giữ mục riêng nguyên byte" own_part_is "$ma/.claude/rules/agent-team.md" \
     "$tmp/sep-own-latin1.md"
