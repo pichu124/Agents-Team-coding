@@ -8,7 +8,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 2 # có HEAD^ để test-audit.sh so nhãn audit với bản trước (PR: đầu nhánh base)
       # Khi dự án có dependency, thêm bước cài đặt ở đây (vd: actions/setup-node + npm ci).
@@ -32,7 +32,7 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 2
       - name: Môi trường
