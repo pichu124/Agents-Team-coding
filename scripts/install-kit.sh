@@ -94,6 +94,13 @@ if [ "$conflicts" -gt 0 ]; then
   exit 1
 fi
 
+# CLAUDE.md là symlink gãy thì không tạo được CLAUDE.md ở dưới: dừng ngay, trước khi đụng repo đích (như file trùng và
+# settings.json hỏng).
+if [ -L "$target/CLAUDE.md" ] && [ ! -e "$target/CLAUDE.md" ]; then
+  echo "✘ CLAUDE.md là symlink gãy: xoá hoặc sửa nó rồi chạy lại (chưa đổi gì trong repo)" >&2
+  exit 1
+fi
+
 # Gộp settings.json TRƯỚC khi chép file: JSON hỏng thì dừng mà repo đích chưa bị đụng tới.
 settings="$target/.claude/settings.json"
 merged=""

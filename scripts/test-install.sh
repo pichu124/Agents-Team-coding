@@ -779,6 +779,10 @@ if ln -s khong-co/khong-co.md "$dang/CLAUDE.md" 2>/dev/null && [ -L "$dang/CLAUD
   assert "AB: không tạo được CLAUDE.md thì phải exit khác 0" [ $? -ne 0 ]
   if grep -qF '✔ tạo CLAUDE.md' "$tmp/out"; then bad "AB: cp lỗi thì không được báo ✔ tạo CLAUDE.md"; else ok; fi
   assert "AB: phải báo ✘ (stderr) không tạo được CLAUDE.md → $(cat "$tmp/err")" grep -q '^✘.*CLAUDE\.md' "$tmp/err"
+  # Như C/E: dừng trước khi đụng repo (4.5 của docs/viec-can-lam.md, ghi nhận của PR #25).
+  assert "AB: CLAUDE.md là symlink gãy thì không được chép file nào" [ ! -e "$dang/.claude/agents/architect.md" ]
+  assert "AB: CLAUDE.md là symlink gãy thì không được tạo settings.json" [ ! -e "$dang/.claude/settings.json" ]
+  assert "AB: CLAUDE.md là symlink gãy thì không được tạo .gitattributes" [ ! -e "$dang/.gitattributes" ]
 else
   printf '⚠ bỏ qua ca AB: không tạo được symlink ở máy này\n'
 fi
