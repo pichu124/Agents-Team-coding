@@ -249,7 +249,7 @@ else
 fi
 
 # Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả hai chuỗi này.
-if grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md"; then
+if LC_ALL=C grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && LC_ALL=C grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md"; then
   echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
   echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
@@ -307,7 +307,7 @@ if [ "$ndropped" -gt 0 ]; then
 fi
 
 attrs="$target/.gitattributes"
-if ! grep -qsxF '*.sh text eol=lf' "$attrs"; then
+if ! LC_ALL=C grep -qsxF '*.sh text eol=lf' "$attrs"; then
   [ -s "$attrs" ] && [ -n "$(tail -c 1 "$attrs")" ] && echo >> "$attrs"
   echo '*.sh text eol=lf' >> "$attrs"
   echo "✔ .gitattributes: giữ LF cho *.sh (Windows)"

@@ -342,6 +342,8 @@ if [ -n "$utf8_loc" ]; then
   assert "MA: Latin-1 bản cũ: phần của kit phải đúng template mới" kit_part_ok "$ma/.claude/rules/agent-team.md"
   assert "MA: Latin-1 bản cũ: phải giữ mục riêng nguyên byte" own_part_is "$ma/.claude/rules/agent-team.md" \
     "$tmp/sep-own-latin1.md"
+else
+  printf '⚠ install: bỏ qua ca MA (không có locale UTF-8 trên máy này)\n'
 fi
 
 # N. grep có cờ quiet nhận stdin từ pipe trong file shell của kit: validate-kit đỏ, nêu file:dòng và cách sửa.
