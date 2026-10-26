@@ -2506,21 +2506,21 @@ print(f"✔ audit: mục A không bỏ sót lệnh nào bản ở {ref} báo: {l
 PYEOF
 fi
 
-# Oracle bash: đối chiếu mục A với chính bash. Phép so nhãn ở trên chỉ so với chính audit (bản trước, nhãn mong đợi) nên
-# không bắt được lỗi mà mọi bản cùng có; lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã cần hơn 10
-# commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…; 1e9882a và 3 lần vá, 3dab000, 5083855,
-# 52233e5..9734b56). Bước này chạy ba lô lệnh tất định bằng bash thật trong một pool, `rm` thay bằng stub chỉ ghi thư mục và
-# đích, rồi đỏ khi bash xoá đích nguy hiểm mà mục A không báo:
+# Oracle bash, một bước: đối chiếu mục A với chính bash. Phép so nhãn ở trên chỉ so với chính audit (bản trước, nhãn mong
+# đợi) nên không bắt được lỗi mà mọi bản cùng có; lớp lỗi "segments() đọc sai cấu trúc shell nên mục A bỏ sót lệnh xoá" đã
+# cần hơn 10 commit fix(audit) (nối dòng, `--`, cd, heredoc, nháy lẻ trong comment, bash -c…; 1e9882a và 3 lần vá, 3dab000,
+# 5083855, 52233e5..9734b56). Bước này chạy ba lô lệnh tất định bằng bash thật trong một pool, `rm` thay bằng stub chỉ ghi
+# thư mục và đích, rồi đỏ khi bash xoá đích nguy hiểm mà mục A không báo:
 #   - lô chung: ngữ pháp CHỈ gồm thứ an toàn (blissful-dirac), nguy là xoá ngoài thư mục tạm/build, sàn ORACLE_FLOOR*;
-#   - lô PR8: fuzz cố định của PR #8 (bash -c có biến và lồng nhau, nháy lẻ trong comment, heredoc chưa đóng…), KNOWN_MISSES;
+#   - lô PR8: fuzz cố định của PR #8 (bash -c có biến và lồng nhau, nháy lẻ trong comment, heredoc chưa đóng…);
 #   - lưới thân <<EOF ($grid), cùng cổng với lô PR8.
 # An toàn: stub là đường dẫn tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh
 # có git, push, reset, clean, Remove-Item hay `>` bị bỏ hẳn, PATH chỉ có bash, sh, cat, rm và git là hàm báo lỗi (export và
-# BASH_ENV), lệnh gọi gián tiếp hay che tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, HOME nằm trong sandbox (lô
-# PR8: không tồn tại), stdin là /dev/null, có timeout. Lô chung chạy cả trong dự án đã cài kit, với bash 3.2 và khi thư mục tạm nằm trong repo git;
-# lô PR8 và lưới chỉ chạy trong repo kit, với bash 5+ ngoài Windows và ngoài mọi repo git (KNOWN_MISSES lập trên bash 5.2 và
-# 5.3, sh là dash). Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES chỉ được giảm; dòng ✔ ghi đã canh với bản
-# nào hay vì sao bỏ qua.
+# BASH_ENV), lệnh gọi gián tiếp hay che tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, HOME nằm trong sandbox (lô PR8:
+# không tồn tại), stdin là /dev/null, có timeout. Lô chung chạy cả trong dự án đã cài kit, với bash 3.2 và khi thư mục tạm
+# nằm trong repo git; lô PR8 và lưới chỉ chạy trong repo kit, với bash 5+ ngoài Windows và ngoài mọi repo git (KNOWN_MISSES
+# lập trên bash 5.2 và 5.3, sh là dash). Bản trước (cùng ref với phép so nhãn) dùng để canh KNOWN_MISSES ∪ KNOWN_GAPS chỉ
+# được giảm; dòng ✔ ghi đã canh với bản nào hay vì sao bỏ qua.
 base_test="" base_why="$skip$miss"
 if [ -z "$base_why" ]; then
   if git show "$ref:./scripts/test-audit.sh" >"$tmp/test-audit-base.sh" 2>/dev/null; then
@@ -2556,13 +2556,16 @@ ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
-# cấu trúc tương ứng vào ngữ pháp cùng lúc.
-#   - nháy lẻ cặp không thoát, chuỗi trải nhiều dòng (ngữ pháp chỉ có nháy trọn cặp trên một dòng, `\'` và nháy trong comment)
-#   - heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)
-#   - bash -c; ssh, source, `. /dev/stdin` đọc heredoc
-#   - `&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)
-#   - biến môi trường kế thừa (bash chạy với env chỉ có HOME, PATH, LC_ALL và hàm chặn rm, git)
-#   - delimiter heredoc không phải `[A-Za-z_]\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF
+# cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
+# đỏ.
+KNOWN_GAPS = [
+"nháy lẻ cặp không thoát, chuỗi trải nhiều dòng (ngữ pháp chỉ có nháy trọn cặp trên một dòng, `\\'` và nháy trong comment)",
+"heredoc không đóng (dòng EOF luôn đứng riêng, không kèm comment)",
+"bash -c; ssh, source, `. /dev/stdin` đọc heredoc",
+"`&#`, `(#` (comment luôn có khoảng trắng trước `#`, không đứng sát `&` hay `(`)",
+"biến môi trường kế thừa (bash chạy với env chỉ có HOME, PATH, LC_ALL và hàm chặn rm, git)",
+"delimiter heredoc không phải `[A-Za-z_]\\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF",
+]
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
@@ -2570,27 +2573,34 @@ spec.loader.exec_module(a)
 fails = []
 known = dict(KNOWN_MISSES)
 ratchet = f"bỏ qua: {base_why}"
-# Dòng đầu của bước này.
-MARK = "# Oracle bash: đối chiếu mục A với chính bash."
+# Dòng đầu của bước này. MARK_OLD là dòng đầu của bước oracle PR #8 khi test-audit còn hai bước oracle (chưa có KNOWN_GAPS
+# dạng danh sách): nhánh đọc nó chỉ phục vụ lần chuyển tiếp từ bản hai bước, xoá ở PR sau.
+MARK = "# Oracle bash, một bước:"
+MARK_OLD = "# Oracle bash: đối chiếu mục A với chính bash."
 if base_test:
     text = open(base_test, encoding="utf-8").read()
-    before = None
-    if MARK not in text and not re.search(r"^KNOWN_MISSES\b", text, re.M):
+    before, names = None, []
+    if MARK in text:
+        names = ["KNOWN_MISSES", "KNOWN_GAPS"]
+    elif MARK_OLD in text or re.search(r"^KNOWN_MISSES\b", text, re.M):
+        names = ["KNOWN_MISSES"]
+    else:
         ratchet = f"bản ở {base_why} chưa có bước oracle"
-    else:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được, kể
-        # cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
+    if names:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được,
+        # kể cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
         try:
             i = text.index("\nKNOWN_MISSES")
             i = text.index("\n", text.rindex("<<'PYEOF'", 0, i)) + 1
-            node = next(n.value for n in ast.parse(text[i:text.index("\nPYEOF\n", i)]).body if isinstance(n, ast.Assign)
-                        and [getattr(t, "id", "") for t in n.targets] == ["KNOWN_MISSES"])
-            before = {c for c, _why in ast.literal_eval(node)}
-            ratchet = f"so với bản ở {base_why}"
+            body = ast.parse(text[i:text.index("\nPYEOF\n", i)]).body
+            vals = [ast.literal_eval(next(n.value for n in body if isinstance(n, ast.Assign)
+                                          and [getattr(t, "id", "") for t in n.targets] == [name])) for name in names]
+            before = {c for c, _why in vals[0]} | set(vals[1] if len(vals) > 1 else [])
+            ratchet = f"so với bản ở {base_why}" + ("" if len(names) > 1 else "; KNOWN_GAPS bỏ qua: bản trước còn hai bước")
         except Exception as exc:
-            fails.append(f"không đọc được KNOWN_MISSES của bản ở {base_why}: {exc!r}")
-    added = [] if before is None else [c for c in known if c not in before]
+            fails.append(f"không đọc được {' và '.join(names)} của bản ở {base_why}: {exc!r}")
+    added = [] if before is None else [c for c in list(known) + (KNOWN_GAPS if len(names) > 1 else []) if c not in before]
     if added:
-        fails.append(f"KNOWN_MISSES chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
+        fails.append(f"KNOWN_MISSES ∪ KNOWN_GAPS chỉ được giảm: thêm {len(added)} ca so với bản ở {base_why}: "
                      + "; ".join(repr(c) for c in added) + ". Sửa audit-agent.py cho ca đó, đừng ghi thêm.")
 for c in known:
     labels = a.suspicious_labels(c, a.SUSPICIOUS)
@@ -3297,8 +3307,8 @@ pr8 = "" if skip8 else (
     f"KNOWN_MISSES; lưới thân <<EOF: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
 print(f"✔ audit: oracle bash: {len(tasks)} lệnh chạy bằng bash {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
       f"{danger} lệnh xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ "
-      f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES chỉ được "
-      f"giảm: {ratchet} ({el:.0f} giây)")
+      f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
+      f"KNOWN_GAPS chỉ được giảm: {ratchet} ({el:.0f} giây)")
 PYEOF
 rm -rf "$tmp/oracle"
 
