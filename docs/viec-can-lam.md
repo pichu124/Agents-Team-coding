@@ -18,10 +18,10 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
 ### 2.4 Đường chậm bậc hai có từ trước
-- Mọi bản đều chậm: các mẫu SUSPICIOUS dạng `\bX\b.*Y` (`"helm "*10000` 110 giây, checkout 103, push 93, docker 49, gh 45, branch 41); SHELL_WORD (`"bash "*10000 + "; cat <<EOF"` 22,6 giây); HEREDOC cũ (`"<<A "*5000` khoảng 3 giây; cả trên here-string: `"wc <<< x; "*8000` 3,9 giây, gấp đôi độ dài chậm ~3,5 lần, gần như hết ở `.sub` của HEREDOC/HEREDOC_STRICT trong keep_shell_heredocs các cách đọc không phải bash; ca `*5000` đã mất 4,1 giây trên runner Windows, nên assert here-string nay đo riêng cách đọc bash theo tỉ lệ); QUOTED cũ (`'\\"'*20000` khoảng 52 giây).
-- `expand` là O(số biến × số đoạn có `$`), mỗi cách đọc một lượt: `" ".join("v%d=1" % i for i in range(5000)) + "; " + "echo $x; " * 5000` 13,7 giây (31893fb 11,4 giây; cách đọc strict thêm một lượt); `"unset v0 … v4999; " + "echo $x; " * 5000` 3,1 giây (31893fb 0,24 giây: cách đọc strict ghi 5000 tên bị unset thành biến rỗng). Đoạn không có `$` thì expand đã bỏ qua: hai lệnh trên với `true; ` thay `echo $x; ` mất 4,6 và 2,7 giây ở b06eb79 (31893fb 2,3 và 0,1 giây), nay 0,3 giây, có assert.
+- `expand` vẫn duyệt cả env (O(số biến) mỗi đoạn có `$`) khi giá trị thay vào có `$` hay chỗ thay đứng ngay sau `$`, `${`, `$TÊN` (`$A$B`): ở đó thay theo thứ tự của env đổi kết quả (`A=$B` thay trước hay sau B; thay B trước thì `$A$B` thành `$A<giá trị>`, không còn khớp A), mà dict không cho thứ tự của vài khoá nếu không duyệt cả env. `"D=$H v0=1 … v4999=1; " + "echo $D; " * 5000` và `"v0=1 … v4999=1; " + "echo $v1$v2; " * 5000` mỗi lệnh 14 giây.
 - Các assert tốc độ khác của test-audit.sh có ngưỡng tuyệt đối (1–6 giây, và `slow` > 3 giây) chỉ in thời gian khi đỏ, nên log CI không cho biết chúng cách ngưỡng bao xa trên Windows hay macOS (30 lần chạy tới 22/10 chỉ đỏ ở assert here-string). Cái nào đỏ oan trên runner chậm thì đổi sang tỉ lệ n và 4n như assert here-string, chứng minh vẫn đỏ với bản bậc hai.
-- **Xong khi:** mỗi ca dưới 1 giây, có assert hiệu năng, nhãn không đổi. Các regex này thuộc cách đọc cũ, nên phải so ⊇ với bản trước trên fixture, fuzz và oracle.
+- Có từ trước, không thuộc expand (reviewer PR #45): nhiều biến rồi nhiều heredoc vào shell, `V + "bash <<E\necho $x\nE\n" * (n//5)`, 2,3 giây ở n=2500 và 30 giây ở n=10000 (bản trước 3,6 và 57 giây). Thời gian nằm ở bản chép env cho mỗi heredoc, `pinned` và `dict.fromkeys`.
+- **Xong khi:** hai lệnh trên dưới 1 giây, có assert tỉ lệ đỏ với bản hiện tại, nhãn không đổi (so ⊇ với bản trước trên fixture, fuzz và oracle).
 
 ### 2.5 Chưa kiểm chứng
 - `git-bash.exe` của Git for Windows có chạy thân `-lc '…'` không.

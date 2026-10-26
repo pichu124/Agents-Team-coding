@@ -59,24 +59,40 @@ FIX_KINDS = ("interrupt", "reject_note", "correction")
 
 # Danh sách nghi ngờ RỘNG hơn guard: ý kiến thứ hai để tìm chỗ guard bỏ sót. Khớp thừa chỉ thêm
 # một dòng vào báo cáo. Thêm mẫu riêng của dự án trong .claude/audit-watch.txt (regex<TAB>nhãn).
+# Mẫu `\bX\b.*Y` quét `.*` tới cuối dòng từ mỗi X: bậc hai trên dòng nhiều X (`"helm "*10000` 13 giây). after_first(g, X, Y)
+# chỉ xét X đầu tiên của dòng (lookahead + backref thay nhóm nguyên tử, Python 3.8 chưa có), khớp đúng những chuỗi như
+# `\bX\b.*Y`: `.` không qua `\n` như `[^\n]`, các khớp của X là trọn từ nên không chồng nhau, X đầu dòng kết thúc trước mọi X
+# khác. g: tên nhóm, mỗi mẫu một tên.
+def after_first(g, x, y):
+    return rf"(?<![^\n])(?=(?P<{g}>[^\n]*?\b{x}\b))(?P={g})[^\n]*{y}"
+
+
 SUSPICIOUS = [
-    (r"\bpush\b.*(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)", "force-push / xoá nhánh remote"),
-    (r"\bpush\b.*\b(main|master|trunk|production|release)\b", "push lên nhánh chính"),
-    (r"\breset\b.*--hard", "git reset --hard"),
-    (r"\bclean\b.*(\s-\w*f|\s--force\b)", "git clean -f"),
-    (r"\bcheckout\b\s+(--\s+)?\.(\s|$)|\bcheckout\b.*\s--\s", "git checkout -- (bỏ thay đổi)"),
-    (r"\brestore\b(?=.*--worktree|(?!.*--staged))", "git restore (bỏ thay đổi)"),
-    (r"\bcheckout\b.*\s(-f|--force)\b", "git checkout -f (bỏ thay đổi)"),
+    (after_first("p", "push", r"(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)"),
+     "force-push / xoá nhánh remote"),
+    (after_first("p", "push", r"\b(main|master|trunk|production|release)\b"), "push lên nhánh chính"),
+    (after_first("r", "reset", "--hard"), "git reset --hard"),
+    (after_first("c", "clean", r"(\s-\w*f|\s--force\b)"), "git clean -f"),
+    (r"\bcheckout\b\s+(--\s+)?\.(\s|$)|" + after_first("c", "checkout", r"\s--\s"), "git checkout -- (bỏ thay đổi)"),
+    # `\brestore\b(?=.*--worktree|(?!.*--staged))`: có --worktree sau một restore (sau restore đầu dòng), hay có restore mà
+    # sau nó không còn --staged: restore sau --staged cuối dòng (lookahead tham lam lấy tới --staged cuối, hai từ không chồng
+    # nhau).
+    (after_first("w", "restore", "--worktree") + r"|(?<![^\n])(?=(?P<s>(?:[^\n]*--staged)?))(?P=s)[^\n]*?\brestore\b",
+     "git restore (bỏ thay đổi)"),
+    (after_first("c", "checkout", r"\s(-f|--force)\b"), "git checkout -f (bỏ thay đổi)"),
     (r"\bstash\s+(drop|clear)\b", "git stash drop/clear"),
     # -D phân biệt hoa thường (mẫu so không phân biệt): -d chỉ xoá nhánh đã gộp, git tự từ chối nhánh chưa gộp.
-    (r"\bbranch\b.*(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)", "xoá nhánh local (-D)"),
-    (r"\b(rm|remove-item|ri|del|erase|rd|rmdir)\b.*(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)", "xoá đệ quy"),
+    (after_first("b", "branch", r"(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)"), "xoá nhánh local (-D)"),
+    (after_first("r", "(rm|remove-item|ri|del|erase|rd|rmdir)", r"(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)"),
+     "xoá đệ quy"),
     (r"\b(drop\s+(table|database|schema)|truncate\s+table|dropdb)\b", "xoá dữ liệu SQL"),
     (r"\b(migrate\s+reset|db:(drop|reset))\b", "reset database"),
-    (r"\b(npm|pnpm|yarn|bun|cargo)\b.*\bpublish\b|\btwine\s+upload\b|\bdocker\b.*\bpush\b", "publish / đẩy artifact"),
-    (r"\b(terraform|kubectl|helm)\b.*\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b", "thay đổi hạ tầng"),
+    (after_first("n", "(npm|pnpm|yarn|bun|cargo)", r"\bpublish\b") + r"|\btwine\s+upload\b|"
+     + after_first("d", "docker", r"\bpush\b"), "publish / đẩy artifact"),
+    (after_first("t", "(terraform|kubectl|helm)", r"\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b"),
+     "thay đổi hạ tầng"),
     (r"\bdeploy\b|--prod\b", "deploy"),
-    (r"\bgh\b.*\b(pr\s+merge|release\s+create|repo\s+delete)\b", "merge PR / release / xoá repo"),
+    (after_first("g", "gh", r"\b(pr\s+merge|release\s+create|repo\s+delete)\b"), "merge PR / release / xoá repo"),
     # Chỉ xét `git` đầu tiên của dòng (lookahead + \1 thay nhóm nguyên tử, không thử lại `git` sau): `\bgit\b.*\bfilter-…`
     # quét `.*` tới cuối dòng từ mỗi `git`, bậc hai. Vẫn khớp đúng những chuỗi như mẫu đó: `.` không qua `\n`, và `git` nào
     # có filter-… phía sau trên dòng thì `git` đầu dòng cũng có.
@@ -115,6 +131,24 @@ _HD_OPEN = r"<<(?P<dash>-)?\s*(?P<q>['\"]?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P=q
 _HD_BODY = r"(?P<body>.*?)(?:\n[ \t]*(?P=name)[ \t]*(?:\n|$)|\Z)"
 HEREDOC = re.compile(_HD_OPEN + r"(?:(?(cont)(?!))(?(dash)\t*)(?P=name)(?:\n|$)|" + _HD_BODY + ")", re.DOTALL)
 HEREDOC_6F32D5A = re.compile(_HD_OPEN + _HD_BODY, re.DOTALL)
+
+
+# heredocs(rx, cmd) là rx.finditer(cmd) với rx là HEREDOC hay HEREDOC_6F32D5A. Dòng mở phải kết thúc bằng `\n`, nên `<<` sau
+# `\n` cuối không mở heredoc, mà finditer vẫn thử ở đó, lookahead quét tới hết chuỗi mỗi lần: bậc hai trên dòng cuối có nhiều
+# `<<NAME` (`"<<A "*5000`, `"wc <<< x; "*8000`). Ở `<<` trước đó, lần thử qua được tên thì lookahead thấy `\n` và thân luôn
+# khớp (tới `\Z` nếu không có dòng đóng), lần thử hỏng thì hỏng trước lookahead.
+def heredocs(rx, cmd):
+    last, pos = cmd.rfind("\n"), 0
+    while True:
+        at = cmd.find("<<", pos, max(last, 0))
+        if at < 0:
+            return
+        m = rx.match(cmd, at)
+        if m:
+            yield m
+        pos = m.end() if m else at + 1
+
+
 # segments(strict=True): thân rỗng khi dòng ngay sau dòng mở là dòng đóng (`cat <<'EOF'⏎EOF⏎rm -rf src`), đóng lỏng như
 # thân không rỗng (khoảng trắng hai bên, cả khi dòng mở có `\` lẻ cuối). Thân không rỗng kèm `\n` cuối (thành một đoạn
 # rỗng). Dòng mở ở cuối lệnh, không `\n`, khớp với thân rỗng. `<<` sau `<` là here-string `<<<`, không mở heredoc: HEREDOC
@@ -144,10 +178,19 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-# here_strings: tên shell ở đâu đó trong đoạn (như SHELL_WORD, đoạn đã cắt ở `|;&` và xuống dòng), `| shell` ngay sau từ.
+# Tên shell ở đâu đó trong đoạn (đoạn đã cắt ở `|;&` và xuống dòng): here_strings, shell_word. `| shell` ngay sau từ.
 SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
+
+
+# shell_word(lead) khớp đúng những chuỗi `\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$` khớp: tên shell trong
+# phần sau `\n|;&` cuối cùng (bỏ một `\n` cuối chuỗi: `$` khớp cả trước nó). Regex đó quét `[^\n|;&]*` từ mỗi tên shell:
+# bậc hai (`"bash "*10000 + "; cat <<EOF"` 16 giây).
+def shell_word(lead):
+    tail = lead[:-1] if lead.endswith("\n") else lead
+    return SHELL_WORD_ANY.search(tail, max(tail.rfind(c) for c in "\n|;&") + 1)
+
+
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
 # Dòng dấu mở thân heredoc đưa vào shell (OPEN: <<EOF, shell cha thay biến trong thân; OPEN_RAW: <<'EOF', không thay) và
@@ -189,6 +232,28 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
 # Nháy ANSI-C `$'…'` khớp trước cả hai: `\'` bên trong là nháy thoát, không đóng chuỗi (`echo $'it\'s'; rm -rf src 'x'`).
 QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.|" + QUOTED_X.pattern, re.MULTILINE)
+# quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
+# `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
+# giây). Mọi `"` trong phần đó là `\"` của lần quét đầu, nên lần quét từ chúng cùng nhịp với nó từ ký tự sau và cũng hỏng:
+# bỏ qua. Khớp của rx chỉ mở bằng `"`, `'` hay `#`.
+DQ_RUN = re.compile(r"\"(?:[^\"\\]|\\.)*")
+
+
+def quoted_sub(rx, f, text):
+    out, pos, dead = [], 0, 0
+    for c in re.finditer("[\"'#]", text):
+        at = c.start()
+        if at < pos or text[at] == '"' and at < dead:
+            continue
+        m = rx.match(text, at)
+        if m:
+            out += [text[pos:at], f(m)]
+            pos = m.end()
+        elif text[at] == '"':
+            dead = DQ_RUN.match(text, at).end()
+    return "".join(out) + text[pos:]
+
+
 # Thân -c cho segments(exact=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, -ec), `--` nếu có, rồi chuỗi nháy
 # đơn hay kép. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-` (`git-bash`, `-bash`). Cờ trước cụm c: `-x`,
 # `--tên`, cụm kết thúc bằng o kèm tên (`-o pipefail`, `+O extglob`, `-euo pipefail`). Tên mở bằng `\w`, không bằng `-`:
@@ -283,15 +348,37 @@ AGENT_BRANCH_DELETE = re.compile(r"^git\s+branch\s+(?:-D|--delete\s+--force|-d\s
 TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >/dev/null... ở cuối đoạn lệnh
 
 
+# Chỗ thay biến của expand: `$` hay `${`, rồi cả dãy chữ theo sau (tên trong env là `[A-Za-z_]\w*`, nên `\$\{?TÊN\b\}?` chỉ khớp
+# khi TÊN là cả dãy chữ đó), rồi `}` nếu có.
+VAR_REF = re.compile(r"\$\{?(\w+)\}?")
+
+
 def expand(text, env):
     if "$" not in text:  # không có chỗ nào để thay: khỏi duyệt env (vài nghìn biến, mỗi đoạn một lượt)
         return text
+    # Thay từng biến theo thứ tự của env (vòng dưới) là O(số biến) mỗi đoạn có `$`. Thứ tự chỉ đổi kết quả khi giá trị thay
+    # vào có `$` (biến mới để thay), hay chỗ thay đứng ngay sau `$`, `${` hay `$TÊN` (`$A$B`: thay B trước thì `$A` thành
+    # `$A<giá trị>`, không còn khớp A); không thì thay một lượt mọi chỗ có tên trong env cho cùng kết quả.
+    refs = [m for m in VAR_REF.finditer(text) if m[1] in env]
+    if not refs:
+        return text
+    if not any("$" in env[m[1]] or adjacent(text, m.start()) for m in refs):
+        return VAR_REF.sub(lambda m: env[m[1]] if m[1] in env else m[0], text)
     for name, val in env.items():
         # Regex chứa đúng chuỗi tên nên không khớp khi tên vắng trong text (đã thay ở các vòng trước): bỏ qua, khỏi dịch lại
         # regex cho mọi biến của env (quá 512 tên thì bộ đệm của `re` không giữ nổi).
         if name in text:
             text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
     return text
+
+
+def adjacent(text, at):
+    """`$` ở at đứng ngay sau `$`, `${`, `$TÊN` hay `${TÊN` (TÊN: dãy chữ)."""
+    j = at
+    while j and (text[j - 1].isalnum() or text[j - 1] == "_"):
+        j -= 1
+    j -= j > 0 and text[j - 1] == "{"
+    return j > 0 and text[j - 1] == "$"
 
 
 def expand_body(text, outer, inner):
@@ -373,7 +460,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             pos = end + 1
         rest, body = "".join(parts), body[pos:]
         lead = string[line_start:start]
-        fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
+        fed = shell_word(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if bash and not (fed or quoted):
             return rest + "\n" + "".join("(%s)\n" % c for c in command_subs(body))
         if not (fed and scoped):
@@ -383,7 +470,13 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     if not (bash and scoped):
-        return (HEREDOC_STRICT if strict else HEREDOC if scoped and empty_body else HEREDOC_6F32D5A).sub(sub, cmd)
+        if strict:
+            return HEREDOC_STRICT.sub(sub, cmd)
+        out, pos = [], 0
+        for m in heredocs(HEREDOC if scoped and empty_body else HEREDOC_6F32D5A, cmd):
+            out += [cmd[pos:m.start()], sub(m)]
+            pos = m.end()
+        return "".join(out) + cmd[pos:]
     cmd = here_strings(cmd)
     out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
     tok = next(toks, None)
@@ -577,15 +670,23 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         quoted = QUOTED_PS_X if ps else QUOTED_XB if strict else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
-    marked = body if shell_c else "".join(p if i % 2 else quoted.sub(keep, p) for i, p in enumerate(regions))
+    mask = (lambda p: quoted.sub(keep, p)) if ps or quoted is QUOTED_XB else (lambda p: quoted_sub(quoted, keep, p))
+    marked = body if shell_c else "".join(p if i % 2 else mask(p) for i, p in enumerate(regions))
     out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, [], False, False, None
     # Comment chạy tới xuống dòng kế: `;`, `&&`, `|` trong nó không ngắt lệnh, cd trong nó không chạy. comment: phần đang
     # xét nằm trong comment mở ở phần trước; csep: dấu ngắt thật ngay trước comment mở đầu phần (`true || # x`).
     comment, csep = False, None
     # strict_assign: phép gán trong subshell `( … )`, trong nhóm hay danh sách chạy nền (`{ …; } &`, `D=x && a &`) chạy ở
     # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
-    # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới).
+    # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới). Mở danh sách không chép env (chép mỗi đoạn là O(số biến)
+    # mỗi đoạn: bậc hai trên vài nghìn phép gán rồi vài nghìn lệnh): lst là chính env, own() chép trước khi đổi nó tại chỗ.
     groups, lst, bg = [], {}, False
+
+    def own(d):
+        nonlocal lst
+        if lst is d:
+            lst = dict(d)
+
     # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), gồm
     # env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân, env tại toán tử, và env của shell con (kid:
     # env tại toán tử cộng gán tạm của lệnh nhận thân, rồi theo phép gán trong thân).
@@ -646,7 +747,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         closes = re.findall(r"(?:^|[\s;])\}(?=[\s;&|)]|$)|\)", seg) if strict_assign else []
         closes = closes[seg.count("$(") + seg.count("$(("):]  # bỏ `)` đóng `$(…)`, `$((…))`
         if strict_assign and not groups and (sep in (None, ";", "\n") or bg) and not mark_only:
-            lst = dict(env)  # mở danh sách mới ở ngoài mọi nhóm
+            lst = env  # mở danh sách mới ở ngoài mọi nhóm
         if strict_assign and background and not groups and not opens and not closes:
             env = dict(lst)  # `D=x && a & rm $D`: cả danh sách trước `&` chạy nền, lệnh sau `&` thấy env lúc mở danh sách
         groups += [(o, dict(env)) for o in opens]
@@ -708,6 +809,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             called = funcs & (set(toks) | set(words)) or (funcs and words[:1] and re.search(r"[$`]", words[0]))
             if ifs_dirty or (not sure and called):
                 for x in [env, kid] + (saved if ifs_dirty else []) + [y for p in pinned if p for y in p]:
+                    own(x)
                     x.clear()  # sau IFS cả env đã chụp (thân heredoc, phạm vi lồng) cũng thành không biết
             elif not sure:
                 drop = set(re.findall(r"\$\{#?([A-Za-z_]\w*):?=", code))
@@ -721,9 +823,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                         elif named and re.fullmatch(r"-[A-Za-z]+", t):
                             drop.update(t[k:] for k in range(1, len(t)))
                 for name in drop:
+                    own(env)
                     env.pop(name, None)
                     kid.pop(name, None)
         for name, val in ((ASSIGN_EMPTY if pure else ASSIGN).findall(full) if assigns and not frozen and sure else ()):
+            own(env)
             if forget:
                 env.pop(name, None)
                 kid.pop(name, None)
@@ -745,13 +849,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # Cờ -f của unset chỉ tìm ngoài nháy và comment như trước: `unset D # -f` vẫn làm D rỗng.
             words = set(re.split(r"[\s(){}!<>;&|]+", re.sub(r"[\"']", "", full)))
             if EVAL.search(lead):
+                own(env)
                 env.clear()
                 kid.clear()
             elif words & SETS_NAMES or (words & {"printf", "wait"} and any(w[:2] in ("-v", "-p") for w in words)):
                 for word in words | {w[2:] for w in words if w[:2] in ("-v", "-p")}:  # `printf -vD`: tên dính cờ
+                    own(env)
                     env.pop(word, None)
                     kid.pop(word, None)
             elif "unset" in words and not any(w[:1] == "-" and "f" in w for w in re.split(r"[\s(){}!]+", plain)):
+                own(env)
                 env.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
                 kid.update(dict.fromkeys(filter(IDENT.fullmatch, words), ""))
         m = CD.match(head)
@@ -793,6 +900,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # Biến mà đoạn nêu thành chưa biết, kể cả ở cách đọc chặt (đoạn sau `||` không gán gì): thêm nghi ngờ thay vì
             # giữ giá trị cũ; cách đọc exact không pipe_scope vẫn trong phép hợp nên không mất nhãn nhờ giá trị cũ.
             for name, _val in ASSIGN.findall(full):
+                own(env)
                 env.pop(name, None)
         if re.search(r"[)}]", seg):
             ctx = ""  # subshell, nhóm hay $( ) vừa đóng: thư mục cd bên trong không còn áp dụng
@@ -982,7 +1090,7 @@ def reading_combos(cmd, tool="Bash"):
     joins = (True,) if tool == "PowerShell" else (False, True)
     marks = (False, True) if re.search("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", cmd) else (False,)
     stricts = (False, True) if re.search(r"(?:^|[\s;&|'\"])[A-Za-z_][A-Za-z0-9_]*=", cmd) else (False,)
-    empties = (True, False) if any(m["body"] is None for m in HEREDOC.finditer(cmd)) else (True,)
+    empties = (True, False) if any(m["body"] is None for m in heredocs(HEREDOC, cmd)) else (True,)
     combos = [(join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, False, False, False, False, False,
                False)
               for strict_assign in stricts for comments in (False, True)

@@ -1403,7 +1403,7 @@ for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" 
 # (keep_shell_heredocs bash=True) 2,7–33 giây, gấp 4 độ dài thì chậm 11–18 lần. e77a51f (tuyến tính): cách đọc bash
 # 0,01–0,05 giây, gấp 4 độ dài chậm 3,6–4,5 lần (22/10/2026, 4 nhân, min 5 lần đo). Ngưỡng 4 giây trên cả suspicious_labels
 # đỏ oan trên runner Windows (`wc <<< x; ` 4,1 giây, máy 4 nhân 1,9 giây): các cách đọc khác còn chậm bậc hai trên `<<<`
-# (2.4 của docs/viec-can-lam.md), nên thời gian đó sát ngưỡng mà không nói gì về cách đọc bash. Vì thế đo riêng cách đọc
+# (HEREDOC, nay tuyến tính: heredocs()), nên thời gian đó sát ngưỡng mà không nói gì về cách đọc bash. Vì thế đo riêng cách đọc
 # bash và assert tỉ lệ (không phụ thuộc tốc độ máy): dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Bậc hai thì lượt đo
 # nào cũng ~16, nên đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. Trần tuyệt đối để rộng: cách đọc bash dưới 1
 # giây (~20 lần e77a51f), cả suspicious_labels dưới 12 giây (~3 lần số đo Windows).
@@ -1519,6 +1519,171 @@ for _ in range(8000):
             multi += len(re.findall(r"\bgit\b", mo.group(0), re.IGNORECASE)) > 1
 check(not diff, f"SHELL_C và mẫu filter-branch phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
 check(through >= 20 and multi >= 10, f"lô vi sai phải đi qua cờ `-<shell>` ({through}) và dòng nhiều git ({multi})")
+# Mẫu `\bX\b.*Y` của SUSPICIOUS (ba09758) quét `.*` từ mỗi X tới cuối dòng: `"helm "*10000` 13,5 giây, push 12,5, checkout
+# 10,2, docker 5,8, gh 5,6, branch 4,7. Bản tuyến tính phải khớp đúng những chuỗi mẫu cũ khớp (giữ nguyên văn mẫu cũ ở đây):
+# chuỗi ngẫu nhiên ghép từ X, Y của các mẫu (hoa thường, ſ, K Kelvin, ı, İ), `-item`, khoảng trắng Unicode, `\n`, `\r`. Lô
+# phải đi qua chỗ khó: nhiều X trước Y, restore sau --staged.
+OLD_SUSPICIOUS = [
+    r"\bpush\b.*(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)",
+    r"\bpush\b.*\b(main|master|trunk|production|release)\b",
+    r"\breset\b.*--hard",
+    r"\bclean\b.*(\s-\w*f|\s--force\b)",
+    r"\bcheckout\b\s+(--\s+)?\.(\s|$)|\bcheckout\b.*\s--\s",
+    r"\brestore\b(?=.*--worktree|(?!.*--staged))",
+    r"\bcheckout\b.*\s(-f|--force)\b",
+    r"\bstash\s+(drop|clear)\b",
+    r"\bbranch\b.*(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)",
+    r"\b(rm|remove-item|ri|del|erase|rd|rmdir)\b.*(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)",
+    r"\b(drop\s+(table|database|schema)|truncate\s+table|dropdb)\b",
+    r"\b(migrate\s+reset|db:(drop|reset))\b",
+    r"\b(npm|pnpm|yarn|bun|cargo)\b.*\bpublish\b|\btwine\s+upload\b|\bdocker\b.*\bpush\b",
+    r"\b(terraform|kubectl|helm)\b.*\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b",
+    r"\bdeploy\b|--prod\b",
+    r"\bgh\b.*\b(pr\s+merge|release\s+create|repo\s+delete)\b",
+    r"(?m)^(?=(.*?\bgit\b))\1.*\bfilter-(branch|repo)\b",
+]
+check(len(OLD_SUSPICIOUS) == len(a.SUSPICIOUS), f"SUSPICIOUS có {len(a.SUSPICIOUS)} mẫu, bản đối chiếu có {len(OLD_SUSPICIOUS)}")
+WORDS = ["push", "PUSH", "puſh", "reset", "clean", "checkout", "restore", "branch", "rm", "RM", "remove-item", "Remove-Item",
+         "remove", "-item", "item", "ri", "del", "erase", "rd", "rmdir", "npm", "pnpm", "yarn", "bun", "cargo", "docker",
+         "terraform", "kubectl", "helm", "gh", "git", "twine", "upload", "publish", "pr", "merge", "release", "create",
+         "repo", "delete", "apply", "destroy", "drain", "main", "master", "--force", "-f", "-F", "--delete", "--mirror",
+         "-d", "-D", "+x", "+", ":x", ":", "--hard", "-xf", "-xF", "--", ".", "--worktree", "--staged", "--STAGED", "-r",
+         "-rf", "-R", "-recurse", "--recursive", "/s", "/S", "filter-branch", "x", "_", "é", "1", "\u212a", "ı", "İ", "ſ",
+         "pr merge", "PR  merge", "release\tcreate", "repo delete", "-d -f", "--delete --force", "-d --force"]
+SEPS = [" ", " ", " ", " ", "  ", "\t", "\n", "\n", "\r", "\x0b", "\u00a0", "", "", "-", "/"]
+rnd = random.Random(5)
+diff, multi, staged = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(WORDS) + rnd.choice(SEPS) for _ in range(rnd.randint(1, 10)))
+    for old, (new, label) in zip(OLD_SUSPICIOUS, a.SUSPICIOUS):
+        mo, mn = re.search(old, s, re.IGNORECASE), re.search(new, s, re.IGNORECASE)
+        if bool(mo) != bool(mn):
+            diff.append((label, s))
+        elif mo and label != "git restore (bỏ thay đổi)":
+            first = re.match(r"[\w-]+", mo.group(0))
+            multi += bool(first) and len(re.findall(r"(?<![\w-])" + re.escape(first[0]) + r"(?![\w-])", mo.group(0), re.I)) > 1
+        elif mo:
+            staged += bool(re.search(r"--staged[^\n]*\brestore\b", s, re.IGNORECASE))
+check(not diff, f"SUSPICIOUS phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(multi >= 25 and staged >= 20, f"lô vi sai phải đi qua dòng nhiều X trước Y ({multi}) và restore sau --staged ({staged})")
+# 2.4: đường bậc hai theo độ dài lệnh. Assert tỉ lệ (không phụ thuộc tốc độ máy, runner Windows và macOS chậm hơn nhiều):
+# gấp 4 độ dài thì chậm dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Lấy min 3 lần đo; bậc hai thì lượt nào cũng ~16, nên
+# đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. limit chỉ để khỏi đo lại lâu trên bản bậc hai.
+def best_time(f, x, runs=3, limit=1):
+    """Thời gian một lần gọi f(x), lấy min của `runs` mẫu. Mỗi mẫu lặp f tới khi đủ 50 ms: lần đo vài ms gọn trong một lát
+    lập lịch nên luôn sạch, còn lần đo 4n bị chen khi CPU bị tranh, tỉ lệ đỏ oan (reviewer PR #45: 8 tiến trình chiếm CPU)."""
+    best = float("inf")
+    for i in range(runs):
+        n, t0 = 0, time.perf_counter()
+        while True:
+            f(x)
+            n += 1
+            el = time.perf_counter() - t0
+            if el >= 0.05:
+                break
+        best = min(best, el / n)
+        if best >= limit and i:
+            break
+    return best
+def linear(what, f, make):
+    for _ in range(3):
+        t1 = best_time(f, make(1))
+        t4 = best_time(f, make(4), limit=8 * t1)
+        if t4 < 8 * t1:
+            break
+    check(t4 < 8 * t1, f"{what} tuyến tính: {make(1)[:14]!r}… mất {t1:.3f} s, gấp 4 độ dài mất {t4:.3f} s "
+                       f"(phải dưới 8 lần; tuyến tính ~4, bậc hai ~16)")
+suspicious = lambda s: [re.search(rx, s, re.IGNORECASE) for rx, _l in a.SUSPICIOUS]
+for w in ("push", "reset", "clean", "checkout", "branch", "rm", "remove-item", "npm", "docker", "terraform", "helm", "gh",
+          "filter-branch"):
+    linear("mẫu SUSPICIOUS trên dòng nhiều X", suspicious, lambda k, w=w: (w + " ") * 1000 * k)
+linear("mẫu SUSPICIOUS trên dòng nhiều restore rồi --staged", suspicious, lambda k: "restore " * 4000 * k + "--staged")
+for w in ("helm", "checkout", "push", "docker", "gh", "branch"):
+    linear("suspicious_labels trên dòng nhiều X", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+           lambda k, w=w: (w + " ") * 1250 * k)
+# Shell nhận thân heredoc: SHELL_WORD của ba09758 quét `[^\n|;&]*` từ mỗi tên shell (`"bash "*10000 + "; cat <<EOF"` 16
+# giây). shell_word phải khớp đúng những chuỗi regex đó khớp, cả khi chuỗi kết thúc bằng `\n` (`$` khớp trước nó).
+OLD_SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
+SW_WORDS = ["bash", "BASH", "baſh", "sh", "SH", "zsh", "dash", "pwsh", "powershell", "cmd", "cmd.exe", "bash.exe", ".exe", "x",
+            "-", "é", "K", "_", "1", "git-bash", "bashx"]
+SW_SEPS = [" ", " ", "", "\n", "\n", ";", "|", "&", "&&", "\t", "\r", " "]
+diff, cut, eol = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(SW_WORDS) + rnd.choice(SW_SEPS) for _ in range(rnd.randint(1, 6)))
+    mo = OLD_SHELL_WORD.search(s)
+    if bool(mo) != bool(a.shell_word(s)):
+        diff.append(s)
+    elif mo:
+        cut += bool(re.search(r"[\n|;&]", s[:mo.start()]))
+        eol += s.endswith("\n")
+check(not diff, f"shell_word phải khớp đúng những chuỗi SHELL_WORD cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(cut >= 500 and eol >= 200, f"lô vi sai phải đi qua tên shell sau `\\n|;&` ({cut}) và chuỗi kết thúc bằng `\\n` ({eol})")
+linear("suspicious_labels trên dòng nhiều tên shell trước heredoc", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+       lambda k: "bash " * 1250 * k + "; cat <<EOF")
+# HEREDOC, HEREDOC_6F32D5A: finditer thử cả `<<NAME` trên dòng cuối (không có `\n`), lookahead quét tới hết chuỗi mỗi lần
+# (ba09758: `"<<A "*5000` 0,7 giây, `"wc <<< x; "*8000` 4,4 giây). heredocs() bỏ các chỗ đó, phải cho đúng các khớp của
+# finditer (chỗ, nhóm).
+HD_WORDS = ["<<A", "<<-A", "<< A", "<<'A'", '<<"A', "<<<", "<<", "<", "A", "\tA", " A ", "x", "\\", "bash", "<<A\\", "1<<2"]
+diff, hits, tail = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(HD_WORDS) + rnd.choice(["", " ", "\n", "\n", "\t", "; "]) for _ in range(rnd.randint(1, 8)))
+    for rx in (a.HEREDOC, a.HEREDOC_6F32D5A):
+        old = [(m.span(), m.groupdict()) for m in rx.finditer(s)]
+        if old != [(m.span(), m.groupdict()) for m in a.heredocs(rx, s)]:
+            diff.append(s)
+        hits += len(old) > 1
+        tail += "<<" in s[s.rfind("\n") + 1:]
+check(not diff, f"heredocs() phải cho đúng các khớp của finditer: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(hits >= 100 and tail >= 5000, f"lô vi sai phải có chuỗi nhiều heredoc ({hits}), `<<` sau `\\n` cuối ({tail})")
+for make in (lambda k: "<<A " * 2500 * k, lambda k: "wc <<< x; " * 2000 * k):
+    linear("suspicious_labels trên dòng cuối nhiều `<<`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
+# QUOTED, QUOTED_6F32D5A, QUOTED_X: rx.sub thử lại nháy kép chưa đóng từ mỗi `\"` (ba09758: `'\\"'*20000` 6,7 giây).
+# quoted_sub phải cho đúng kết quả của rx.sub (gọi f cùng thứ tự, cùng khớp).
+Q_WORDS = ['"', '"', "\\", '\\"', "\\\\", "'", "#", "x", "$'", "\\\n", "<", "\\;", "é"]
+diff, unclosed = [], 0
+for _ in range(20000):
+    s = "".join(rnd.choice(Q_WORDS) + rnd.choice(["", "", " ", "\n", ";", "\t", "|"]) for _ in range(rnd.randint(1, 10)))
+    for rx in (a.QUOTED, a.QUOTED_6F32D5A, a.QUOTED_X):
+        old, new = [], []
+        if rx.sub(lambda m: old.append(m.span()) or "<%d>" % len(old), s) != \
+                a.quoted_sub(rx, lambda m: new.append(m.span()) or "<%d>" % len(new), s) or old != new:
+            diff.append(s)
+    runs = [a.DQ_RUN.match(s, i) for i, ch in enumerate(s) if ch == '"']
+    unclosed += any(s[m.end():m.end() + 1] != '"' and '"' in m[0][1:] for m in runs)  # chưa đóng, có `\"` bên trong
+check(not diff, f"quoted_sub phải cho đúng kết quả của rx.sub: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(unclosed >= 1000, f"lô vi sai phải có nháy kép chưa đóng chứa `\\\"` ({unclosed})")
+linear("suspicious_labels trên chuỗi `\\\"` dài", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), lambda k: '\\"' * 2500 * k)
+# expand của ba09758 duyệt cả env ở mỗi đoạn có `$` (vài nghìn phép gán rồi vài nghìn `echo $x`: 12 giây). Bản mới chỉ thay
+# một lượt khi thứ tự không đổi kết quả: phải cho đúng kết quả của vòng cũ (giữ nguyên văn ở đây), với env thứ tự ngẫu nhiên,
+# giá trị có `$`, `$A$B`, `${A}`, `$A}`, `$$A`, tên Unicode.
+def old_expand(text, env):
+    if "$" not in text:
+        return text
+    for name, val in env.items():
+        if name in text:
+            text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
+    return text
+E_NAMES = ["A", "B", "AB", "A1", "_", "vé", "D"]
+E_VALS = ["", "x", "1", "/tmp/w", "$A", "$B", "${A}", "$", "{", "}", "B", "$vé", "a$A"]
+E_TEXT = ["$", "${", "}", "{", "x", " ", "/", "\\", "é", "1"] + ["$" + n for n in E_NAMES] + ["${" + n + "}" for n in E_NAMES]
+diff, fast = [], 0
+for _ in range(30000):
+    env = {n: rnd.choice(E_VALS) for n in rnd.sample(E_NAMES, rnd.randint(0, len(E_NAMES)))}
+    s = "".join(rnd.choice(E_TEXT) for _ in range(rnd.randint(1, 8)))
+    want = old_expand(s, env)
+    if a.expand(s, env) != want:
+        diff.append((s, env))
+    refs = [m for m in a.VAR_REF.finditer(s) if m[1] in env]
+    fast += bool(refs) and not any("$" in env[m[1]] or a.adjacent(s, m.start()) for m in refs) and want != s
+check(not diff, f"expand phải cho đúng kết quả của vòng thay từng biến: {len(diff)} chỗ khác, vd {diff[:3]!r}")
+check(fast >= 3000, f"lô vi sai phải đi qua đường thay một lượt ({fast})")
+# Mở danh sách (strict_assign) không chép env: phép gán sau đó không được lọt vào env lúc mở danh sách (`D=/ && true &`
+# chạy nền cả danh sách, lệnh sau `&` thấy D=/tmp/w/).
+got = [full for _p, full, _c, _s in a.segments("D=/tmp/w/; D=/ && true & rm -rf ${D}src", strict_assign=True)]
+check(got == ["D=/tmp/w/", "D=/", "true & rm -rf /tmp/w/src"], f"env lúc mở danh sách không theo phép gán sau đó: {got!r}")
+for make in (lambda k: " ".join("v%d=1" % i for i in range(625 * k)) + "; " + "echo $x; " * 625 * k,
+             lambda k: "unset " + " ".join("v%d" % i for i in range(625 * k)) + "; " + "echo $x; " * 625 * k):
+    linear("suspicious_labels trên nhiều biến rồi nhiều đoạn có `$`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
@@ -1753,9 +1918,11 @@ check(not a.suspicious_labels("cd /tmp/x && rm -rf *.o", a.SUSPICIOUS),
 # (5243b61 của nhánh chính; f8c96d5 của nhánh này làm cùng việc): đầu ra phải y như bản bậc hai ở mọi tổ hợp join, scoped,
 # raw_marks, empty_body, exact, snap, strict, trên lệnh fixture, MISSED_VP, fuzz_vp_b/c và một lô riêng có `\` chẵn/lẻ cuối
 # dòng mở và cuối các dòng thân. Bản tham chiếu: keep_shell_heredocs của nhánh chính (ca8b719) nguyên văn, chỉ thêm `a.`,
-# đếm dòng kéo, chọn HEREDOC_STRICT khi strict, và thay vòng kéo dòng bằng vòng bậc hai của trước 5243b61.
+# đếm dòng kéo, chọn HEREDOC_STRICT khi strict, và thay vòng kéo dòng bằng vòng bậc hai của trước 5243b61. SHELL_WORD (regex
+# bậc hai mà shell_word thay) giữ nguyên văn ở đây.
 import glob, itertools
 pulled = []
+SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 def keep_shell_heredocs_ref(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False,
                             strict=False):
     def sub(m):
@@ -1773,7 +1940,7 @@ def keep_shell_heredocs_ref(cmd, join=False, scoped=True, raw_marks=False, empty
             n += 1
         pulled.append(n)
         lead = m.string[line_start:m.start()]
-        fed = a.SHELL_WORD.search(a.LINE_JOIN.sub(r"\1", lead) if exact else lead) or a.PIPE_SHELL.match(rest)
+        fed = SHELL_WORD.search(a.LINE_JOIN.sub(r"\1", lead) if exact else lead) or a.PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         mark = a.SNAP if snap and not raw_marks else ""
