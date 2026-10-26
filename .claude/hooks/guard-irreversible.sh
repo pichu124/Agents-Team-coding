@@ -155,6 +155,14 @@ decode_shell_c() {
 }
 
 decode_shell_c
+# Thân -c guard không giải được thì thư mục của push là chưa biết, tức hỏi (4.11 cũ): thân nhiều dòng (dòng mở thân bằng nháy
+# mà không đóng; grep đọc từng dòng) và shell là biến ($SHELL -c, "${SHELL}" -lc). Chỉ một lần grep ở locale C mỗi dạng.
+SHV='(^|[;&|(`{[:space:]])"?[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?"?([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c'
+# Từ của thân đi qua các đoạn đã đóng ('…', "…", \x, chữ thường) rồi gặp nháy mở chưa đóng ở cuối dòng.
+SHO='([^'"'"'"[:space:]\\]|\\.|'"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*")*('"'"'[^'"'"']*|"([^"\\]|\\.)*)$'
+if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC$SHO" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
+  shc_unknown=1
+fi
 # Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
 # độ dài của nó.
 cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"

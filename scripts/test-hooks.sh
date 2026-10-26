@@ -461,6 +461,20 @@ EOF
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force \\\nWrite-Host done'
   TOOL=Unknown expect_guard ask $'Set-Location C:\\\nRemove-Item -Recurse -Force *'
   TOOL=Unknown expect_guard ask $'Remove-Item -Recurse -Force `\n  C:\\'
+  # Thân -c nhiều dòng (grep đọc từng dòng nên không giải được) và shell là biến (mục 4.11 cũ của docs/viec-can-lam.md).
+  expect_guard ask "bash -c 'true$nl cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c 'echo a'\\''b$nl cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "sh -c \"true$nl git -C '$on_main' push\""
+  # shellcheck disable=SC2016
+  expect_guard ask '$SHELL -c '"'cd '\\''$on_main'\\'' && git push'"
+  # shellcheck disable=SC2016
+  expect_guard ask '"$SHELL" -c '"\"cd '$on_main' && git push\""
+  # shellcheck disable=SC2016
+  expect_guard ask '${SHELL} -lc '"'git -C '\\''$on_main'\\'' push'"
+  # Thân đóng trên cùng dòng thì vẫn đọc như cũ; shell là biến mà lệnh không có chữ push thì không hỏi.
+  expect_guard allow "bash -c 'echo hi'$nl git push origin feat/x"
+  # shellcheck disable=SC2016
+  expect_guard allow '$SHELL -c "echo hi"'
 done
 # Lệnh dài hơn pipe buffer (64 KiB), phần nguy hiểm ở dòng đầu: grep -q thoát ở dòng khớp đầu
 # tiên, printf còn ghi dở thì chết vì SIGPIPE, pipefail từng biến "khớp" thành "không khớp".
