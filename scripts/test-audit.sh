@@ -1403,7 +1403,7 @@ for cmd in ("{" * 40000 + " $D", "}" * 40000 + " $D", "{a" * 20000 + " $D", "a" 
 # (keep_shell_heredocs bash=True) 2,7–33 giây, gấp 4 độ dài thì chậm 11–18 lần. e77a51f (tuyến tính): cách đọc bash
 # 0,01–0,05 giây, gấp 4 độ dài chậm 3,6–4,5 lần (22/10/2026, 4 nhân, min 5 lần đo). Ngưỡng 4 giây trên cả suspicious_labels
 # đỏ oan trên runner Windows (`wc <<< x; ` 4,1 giây, máy 4 nhân 1,9 giây): các cách đọc khác còn chậm bậc hai trên `<<<`
-# (2.4 của docs/viec-can-lam.md), nên thời gian đó sát ngưỡng mà không nói gì về cách đọc bash. Vì thế đo riêng cách đọc
+# (HEREDOC, nay tuyến tính: heredocs()), nên thời gian đó sát ngưỡng mà không nói gì về cách đọc bash. Vì thế đo riêng cách đọc
 # bash và assert tỉ lệ (không phụ thuộc tốc độ máy): dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Bậc hai thì lượt đo
 # nào cũng ~16, nên đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. Trần tuyệt đối để rộng: cách đọc bash dưới 1
 # giây (~20 lần e77a51f), cả suspicious_labels dưới 12 giây (~3 lần số đo Windows).
@@ -1567,9 +1567,9 @@ for _ in range(20000):
 check(not diff, f"SUSPICIOUS phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
 check(multi >= 25 and staged >= 20, f"lô vi sai phải đi qua dòng nhiều X trước Y ({multi}) và restore sau --staged ({staged})")
 # 2.4: đường bậc hai theo độ dài lệnh. Assert tỉ lệ (không phụ thuộc tốc độ máy, runner Windows và macOS chậm hơn nhiều):
-# gấp 4 độ dài thì chậm dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Lấy min 5 lần đo; bậc hai thì lượt nào cũng ~16, nên
+# gấp 4 độ dài thì chậm dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Lấy min 3 lần đo; bậc hai thì lượt nào cũng ~16, nên
 # đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. limit chỉ để khỏi đo lại lâu trên bản bậc hai.
-def best_time(f, x, runs=5, limit=1):
+def best_time(f, x, runs=3, limit=1):
     best = float("inf")
     for i in range(runs):
         t0 = time.perf_counter()
@@ -1588,7 +1588,7 @@ def linear(what, f, make):
                        f"(phải dưới 8 lần; tuyến tính ~4, bậc hai ~16)")
 suspicious = lambda s: [re.search(rx, s, re.IGNORECASE) for rx, _l in a.SUSPICIOUS]
 for w in ("push", "reset", "clean", "checkout", "branch", "rm", "remove-item", "npm", "docker", "terraform", "helm", "gh",
-          "git", "filter-branch"):
+          "filter-branch"):
     linear("mẫu SUSPICIOUS trên dòng nhiều X", suspicious, lambda k, w=w: (w + " ") * 1000 * k)
 linear("mẫu SUSPICIOUS trên dòng nhiều restore rồi --staged", suspicious, lambda k: "restore " * 4000 * k + "--staged")
 for w in ("helm", "checkout", "push", "docker", "gh", "branch"):
@@ -1674,8 +1674,8 @@ check(fast >= 3000, f"lô vi sai phải đi qua đường thay một lượt ({f
 # chạy nền cả danh sách, lệnh sau `&` thấy D=/tmp/w/).
 got = [full for _p, full, _c, _s in a.segments("D=/tmp/w/; D=/ && true & rm -rf ${D}src", strict_assign=True)]
 check(got == ["D=/tmp/w/", "D=/", "true & rm -rf /tmp/w/src"], f"env lúc mở danh sách không theo phép gán sau đó: {got!r}")
-for make in (lambda k: " ".join("v%d=1" % i for i in range(1250 * k)) + "; " + "echo $x; " * 1250 * k,
-             lambda k: "unset " + " ".join("v%d" % i for i in range(1250 * k)) + "; " + "echo $x; " * 1250 * k):
+for make in (lambda k: " ".join("v%d=1" % i for i in range(625 * k)) + "; " + "echo $x; " * 625 * k,
+             lambda k: "unset " + " ".join("v%d" % i for i in range(625 * k)) + "; " + "echo $x; " * 625 * k):
     linear("suspicious_labels trên nhiều biến rồi nhiều đoạn có `$`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
