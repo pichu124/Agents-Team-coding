@@ -178,8 +178,10 @@ rules_mark='<!-- agent-team:kit-end'
 # Có dấu: mọi thứ sau dòng dấu đầu tiên, nguyên văn. Không có dấu (bản cài cũ): dòng trống + các mục
 # heading # hoặc ## (ngoài code fence) mà template không có, nguyên văn; ### trở xuống thuộc mục cha.
 # \r đi qua awk dưới dạng \001: gawk của Git for Windows bỏ \r khi đọc, phần riêng CRLF sẽ thành LF.
+# LC_ALL=C cho cả ống: phần riêng có thể có byte không phải UTF-8 (Latin-1), mà ở locale UTF-8 tr và awk của macOS dừng
+# ở byte đó (regex ~ của awk BWK), installer báo không đọc được. Mọi phép so ở đây là so byte, kết quả không đổi.
 own_part() {
-  tr '\r' '\001' < "$1" | awk -v has_mark="$2" -v mark="$rules_mark" '
+  LC_ALL=C tr '\r' '\001' < "$1" | LC_ALL=C awk -v has_mark="$2" -v mark="$rules_mark" '
     function is_heading(s,   t, c, n) { # cập nhật trạng thái code fence; 1 nếu s là heading cấp 1-2 ngoài fence
       t = s # fence được thụt tối đa 3 dấu cách (không dùng / ? ? ?/: mawk 1.3.4 chỉ khớp 1 dấu cách)
       if (match(t, /^ +/) && RLENGTH <= 3) t = substr(t, RLENGTH + 1)
@@ -206,7 +208,7 @@ own_part() {
       if (keep && !kept++) print ""
     }
     keep
-  ' "$rules_tpl" - | tr '\001' '\r'
+  ' "$rules_tpl" - | LC_ALL=C tr '\001' '\r'
 }
 
 kept="CLAUDE.md đã có nên giữ nguyên; "
@@ -226,7 +228,7 @@ if [ ! -f "$rules" ]; then
   echo "✔ ${kept}quy ước đội ở .claude/rules/agent-team.md"
 else
   has_mark=0
-  grep -q "^$rules_mark" "$rules" && has_mark=1
+  LC_ALL=C grep -q "^$rules_mark" "$rules" && has_mark=1
   # Đọc hết phần riêng trước khi ghi. "x" giữ newline cuối mà $(...) cắt mất.
   if ! own="$(own_part "$rules" "$has_mark" && echo x)"; then
     echo "✘ không đọc được .claude/rules/agent-team.md nên chưa cập nhật nó" >&2
