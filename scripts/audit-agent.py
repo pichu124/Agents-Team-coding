@@ -160,10 +160,19 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
 PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-# here_strings: tên shell ở đâu đó trong đoạn (như SHELL_WORD, đoạn đã cắt ở `|;&` và xuống dòng), `| shell` ngay sau từ.
+# Tên shell ở đâu đó trong đoạn (đoạn đã cắt ở `|;&` và xuống dòng): here_strings, shell_word. `| shell` ngay sau từ.
 SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
+
+
+# shell_word(lead) khớp đúng những chuỗi `\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$` khớp: tên shell trong
+# phần sau `\n|;&` cuối cùng (bỏ một `\n` cuối chuỗi: `$` khớp cả trước nó). Regex đó quét `[^\n|;&]*` từ mỗi tên shell:
+# bậc hai (`"bash "*10000 + "; cat <<EOF"` 16 giây).
+def shell_word(lead):
+    tail = lead[:-1] if lead.endswith("\n") else lead
+    return SHELL_WORD_ANY.search(tail, max(tail.rfind(c) for c in "\n|;&") + 1)
+
+
 SPLIT = re.compile(r"\n|;|&&|\|\||\|")
 LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # `\` + xuống dòng mà `\` không bị thoát (`\\`); thay bằng r"\1" là nối dòng
 # Dòng dấu mở thân heredoc đưa vào shell (OPEN: <<EOF, shell cha thay biến trong thân; OPEN_RAW: <<'EOF', không thay) và
@@ -389,7 +398,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             pos = end + 1
         rest, body = "".join(parts), body[pos:]
         lead = string[line_start:start]
-        fed = SHELL_WORD.search(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
+        fed = shell_word(LINE_JOIN.sub(r"\1", lead) if exact else lead) or PIPE_SHELL.match(rest)
         if bash and not (fed or quoted):
             return rest + "\n" + "".join("(%s)\n" % c for c in command_subs(body))
         if not (fed and scoped):

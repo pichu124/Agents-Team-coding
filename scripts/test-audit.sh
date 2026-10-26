@@ -1594,6 +1594,25 @@ linear("mẫu SUSPICIOUS trên dòng nhiều restore rồi --staged", suspicious
 for w in ("helm", "checkout", "push", "docker", "gh", "branch"):
     linear("suspicious_labels trên dòng nhiều X", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
            lambda k, w=w: (w + " ") * 1250 * k)
+# Shell nhận thân heredoc: SHELL_WORD của ba09758 quét `[^\n|;&]*` từ mỗi tên shell (`"bash "*10000 + "; cat <<EOF"` 16
+# giây). shell_word phải khớp đúng những chuỗi regex đó khớp, cả khi chuỗi kết thúc bằng `\n` (`$` khớp trước nó).
+OLD_SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
+SW_WORDS = ["bash", "BASH", "baſh", "sh", "SH", "zsh", "dash", "pwsh", "powershell", "cmd", "cmd.exe", "bash.exe", ".exe", "x",
+            "-", "é", "K", "_", "1", "git-bash", "bashx"]
+SW_SEPS = [" ", " ", "", "\n", "\n", ";", "|", "&", "&&", "\t", "\r", " "]
+diff, cut, eol = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(SW_WORDS) + rnd.choice(SW_SEPS) for _ in range(rnd.randint(1, 6)))
+    mo = OLD_SHELL_WORD.search(s)
+    if bool(mo) != bool(a.shell_word(s)):
+        diff.append(s)
+    elif mo:
+        cut += bool(re.search(r"[\n|;&]", s[:mo.start()]))
+        eol += s.endswith("\n")
+check(not diff, f"shell_word phải khớp đúng những chuỗi SHELL_WORD cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(cut >= 500 and eol >= 200, f"lô vi sai phải đi qua tên shell sau `\\n|;&` ({cut}) và chuỗi kết thúc bằng `\\n` ({eol})")
+linear("suspicious_labels trên dòng nhiều tên shell trước heredoc", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+       lambda k: "bash " * 1250 * k + "; cat <<EOF")
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
@@ -1828,9 +1847,11 @@ check(not a.suspicious_labels("cd /tmp/x && rm -rf *.o", a.SUSPICIOUS),
 # (5243b61 của nhánh chính; f8c96d5 của nhánh này làm cùng việc): đầu ra phải y như bản bậc hai ở mọi tổ hợp join, scoped,
 # raw_marks, empty_body, exact, snap, strict, trên lệnh fixture, MISSED_VP, fuzz_vp_b/c và một lô riêng có `\` chẵn/lẻ cuối
 # dòng mở và cuối các dòng thân. Bản tham chiếu: keep_shell_heredocs của nhánh chính (ca8b719) nguyên văn, chỉ thêm `a.`,
-# đếm dòng kéo, chọn HEREDOC_STRICT khi strict, và thay vòng kéo dòng bằng vòng bậc hai của trước 5243b61.
+# đếm dòng kéo, chọn HEREDOC_STRICT khi strict, và thay vòng kéo dòng bằng vòng bậc hai của trước 5243b61. SHELL_WORD (regex
+# bậc hai mà shell_word thay) giữ nguyên văn ở đây.
 import glob, itertools
 pulled = []
+SHELL_WORD = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$", re.IGNORECASE)
 def keep_shell_heredocs_ref(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False,
                             strict=False):
     def sub(m):
@@ -1848,7 +1869,7 @@ def keep_shell_heredocs_ref(cmd, join=False, scoped=True, raw_marks=False, empty
             n += 1
         pulled.append(n)
         lead = m.string[line_start:m.start()]
-        fed = a.SHELL_WORD.search(a.LINE_JOIN.sub(r"\1", lead) if exact else lead) or a.PIPE_SHELL.match(rest)
+        fed = SHELL_WORD.search(a.LINE_JOIN.sub(r"\1", lead) if exact else lead) or a.PIPE_SHELL.match(rest)
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         mark = a.SNAP if snap and not raw_marks else ""
