@@ -87,14 +87,12 @@ Không còn PR nào mở (21/10, sau PR #27).
 
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
-- `actions/checkout@v4` báo cảnh báo Node 20 trong CI.
 - Guard hỏi thừa khi chuỗi `git push --force` hay `rm -rf /` chỉ là dữ liệu trong thân heredoc ghi ra file (`cat > gen.py <<'E'` ⏎ … ⏎ `E`), như lệnh so nhãn của verifier nhánh tích hợp audit ngày 21/10: session đứng 2,5 giờ chờ người duyệt. Không nới guard; cách tránh là ghi script bằng tool Write rồi mới chạy.
 - Các điểm sau của `scripts/install-kit.sh` do verifier và reviewer của PR #25 ghi nhận. Tất cả đều vô hại hoặc hiếm gặp:
   - Khối "Bước tiếp theo" vẫn in `git add -A && git commit` khi không có gì đổi, và không nhắc `git diff HEAD`.
   - `git add --chmod=+x` ở cuối stage cả nội dung các script `.sh`, nên `git diff` không hiện thay đổi của chúng. Có thể chỉ đặt bit chạy (`git update-index --chmod=+x`) cho file đã được theo dõi.
   - Dòng sửa tay trong manifest kiểu `../x`, tên thư mục hay `-rf` bị báo "kit đã bỏ" mãi, vì installer kiểm bằng `-e` và không lọc `..`, `/`, `-`.
   - Cảnh báo "CLAUDE.md còn quy ước đội chép từ bản kit cũ" báo nhầm khi CLAUDE.md riêng có câu `/team-lead <task>` và về sau gardener hay `/correct` tạo bảng `Rule ↔ Thứ thực thi` trong đó.
-  - CLAUDE.md là symlink gãy thì installer ✘ exit 1, nhưng lúc đó đã chép file kit và gộp settings. Nó không dừng trước khi đụng repo như ca C/E của test-install.
   - Installer không cảnh báo khi `kit-commit` trong manifest không phải tổ tiên của HEAD của kit, tức kit đang ở bản cũ hơn bản đã cài. File trùng bản mới hơn (có trong lịch sử kit) sẽ bị đưa về bản cũ.
 
 ### 4.8 Lệnh PowerShell của đoạn "Cập nhật kit" chưa chạy tay trên Windows
