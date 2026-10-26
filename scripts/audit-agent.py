@@ -59,24 +59,40 @@ FIX_KINDS = ("interrupt", "reject_note", "correction")
 
 # Danh sách nghi ngờ RỘNG hơn guard: ý kiến thứ hai để tìm chỗ guard bỏ sót. Khớp thừa chỉ thêm
 # một dòng vào báo cáo. Thêm mẫu riêng của dự án trong .claude/audit-watch.txt (regex<TAB>nhãn).
+# Mẫu `\bX\b.*Y` quét `.*` tới cuối dòng từ mỗi X: bậc hai trên dòng nhiều X (`"helm "*10000` 13 giây). after_first(g, X, Y)
+# chỉ xét X đầu tiên của dòng (lookahead + backref thay nhóm nguyên tử, Python 3.8 chưa có), khớp đúng những chuỗi như
+# `\bX\b.*Y`: `.` không qua `\n` như `[^\n]`, các khớp của X là trọn từ nên không chồng nhau, X đầu dòng kết thúc trước mọi X
+# khác. g: tên nhóm, mỗi mẫu một tên.
+def after_first(g, x, y):
+    return rf"(?<![^\n])(?=(?P<{g}>[^\n]*?\b{x}\b))(?P={g})[^\n]*{y}"
+
+
 SUSPICIOUS = [
-    (r"\bpush\b.*(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)", "force-push / xoá nhánh remote"),
-    (r"\bpush\b.*\b(main|master|trunk|production|release)\b", "push lên nhánh chính"),
-    (r"\breset\b.*--hard", "git reset --hard"),
-    (r"\bclean\b.*(\s-\w*f|\s--force\b)", "git clean -f"),
-    (r"\bcheckout\b\s+(--\s+)?\.(\s|$)|\bcheckout\b.*\s--\s", "git checkout -- (bỏ thay đổi)"),
-    (r"\brestore\b(?=.*--worktree|(?!.*--staged))", "git restore (bỏ thay đổi)"),
-    (r"\bcheckout\b.*\s(-f|--force)\b", "git checkout -f (bỏ thay đổi)"),
+    (after_first("p", "push", r"(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)"),
+     "force-push / xoá nhánh remote"),
+    (after_first("p", "push", r"\b(main|master|trunk|production|release)\b"), "push lên nhánh chính"),
+    (after_first("r", "reset", "--hard"), "git reset --hard"),
+    (after_first("c", "clean", r"(\s-\w*f|\s--force\b)"), "git clean -f"),
+    (r"\bcheckout\b\s+(--\s+)?\.(\s|$)|" + after_first("c", "checkout", r"\s--\s"), "git checkout -- (bỏ thay đổi)"),
+    # `\brestore\b(?=.*--worktree|(?!.*--staged))`: có --worktree sau một restore (sau restore đầu dòng), hay có restore mà
+    # sau nó không còn --staged: restore sau --staged cuối dòng (lookahead tham lam lấy tới --staged cuối, hai từ không chồng
+    # nhau).
+    (after_first("w", "restore", "--worktree") + r"|(?<![^\n])(?=(?P<s>(?:[^\n]*--staged)?))(?P=s)[^\n]*?\brestore\b",
+     "git restore (bỏ thay đổi)"),
+    (after_first("c", "checkout", r"\s(-f|--force)\b"), "git checkout -f (bỏ thay đổi)"),
     (r"\bstash\s+(drop|clear)\b", "git stash drop/clear"),
     # -D phân biệt hoa thường (mẫu so không phân biệt): -d chỉ xoá nhánh đã gộp, git tự từ chối nhánh chưa gộp.
-    (r"\bbranch\b.*(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)", "xoá nhánh local (-D)"),
-    (r"\b(rm|remove-item|ri|del|erase|rd|rmdir)\b.*(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)", "xoá đệ quy"),
+    (after_first("b", "branch", r"(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)"), "xoá nhánh local (-D)"),
+    (after_first("r", "(rm|remove-item|ri|del|erase|rd|rmdir)", r"(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)"),
+     "xoá đệ quy"),
     (r"\b(drop\s+(table|database|schema)|truncate\s+table|dropdb)\b", "xoá dữ liệu SQL"),
     (r"\b(migrate\s+reset|db:(drop|reset))\b", "reset database"),
-    (r"\b(npm|pnpm|yarn|bun|cargo)\b.*\bpublish\b|\btwine\s+upload\b|\bdocker\b.*\bpush\b", "publish / đẩy artifact"),
-    (r"\b(terraform|kubectl|helm)\b.*\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b", "thay đổi hạ tầng"),
+    (after_first("n", "(npm|pnpm|yarn|bun|cargo)", r"\bpublish\b") + r"|\btwine\s+upload\b|"
+     + after_first("d", "docker", r"\bpush\b"), "publish / đẩy artifact"),
+    (after_first("t", "(terraform|kubectl|helm)", r"\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b"),
+     "thay đổi hạ tầng"),
     (r"\bdeploy\b|--prod\b", "deploy"),
-    (r"\bgh\b.*\b(pr\s+merge|release\s+create|repo\s+delete)\b", "merge PR / release / xoá repo"),
+    (after_first("g", "gh", r"\b(pr\s+merge|release\s+create|repo\s+delete)\b"), "merge PR / release / xoá repo"),
     # Chỉ xét `git` đầu tiên của dòng (lookahead + \1 thay nhóm nguyên tử, không thử lại `git` sau): `\bgit\b.*\bfilter-…`
     # quét `.*` tới cuối dòng từ mỗi `git`, bậc hai. Vẫn khớp đúng những chuỗi như mẫu đó: `.` không qua `\n`, và `git` nào
     # có filter-… phía sau trên dòng thì `git` đầu dòng cũng có.

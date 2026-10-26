@@ -1519,6 +1519,81 @@ for _ in range(8000):
             multi += len(re.findall(r"\bgit\b", mo.group(0), re.IGNORECASE)) > 1
 check(not diff, f"SHELL_C và mẫu filter-branch phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
 check(through >= 20 and multi >= 10, f"lô vi sai phải đi qua cờ `-<shell>` ({through}) và dòng nhiều git ({multi})")
+# Mẫu `\bX\b.*Y` của SUSPICIOUS (ba09758) quét `.*` từ mỗi X tới cuối dòng: `"helm "*10000` 13,5 giây, push 12,5, checkout
+# 10,2, docker 5,8, gh 5,6, branch 4,7. Bản tuyến tính phải khớp đúng những chuỗi mẫu cũ khớp (giữ nguyên văn mẫu cũ ở đây):
+# chuỗi ngẫu nhiên ghép từ X, Y của các mẫu (hoa thường, ſ, K Kelvin, ı, İ), `-item`, khoảng trắng Unicode, `\n`, `\r`. Lô
+# phải đi qua chỗ khó: nhiều X trước Y, restore sau --staged.
+OLD_SUSPICIOUS = [
+    r"\bpush\b.*(\s--force\b|\s-f\b|\s--delete\b|\s--mirror\b|\s-d\b|\s\+\S|\s:\S)",
+    r"\bpush\b.*\b(main|master|trunk|production|release)\b",
+    r"\breset\b.*--hard",
+    r"\bclean\b.*(\s-\w*f|\s--force\b)",
+    r"\bcheckout\b\s+(--\s+)?\.(\s|$)|\bcheckout\b.*\s--\s",
+    r"\brestore\b(?=.*--worktree|(?!.*--staged))",
+    r"\bcheckout\b.*\s(-f|--force)\b",
+    r"\bstash\s+(drop|clear)\b",
+    r"\bbranch\b.*(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)",
+    r"\b(rm|remove-item|ri|del|erase|rd|rmdir)\b.*(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)",
+    r"\b(drop\s+(table|database|schema)|truncate\s+table|dropdb)\b",
+    r"\b(migrate\s+reset|db:(drop|reset))\b",
+    r"\b(npm|pnpm|yarn|bun|cargo)\b.*\bpublish\b|\btwine\s+upload\b|\bdocker\b.*\bpush\b",
+    r"\b(terraform|kubectl|helm)\b.*\b(apply|destroy|delete|upgrade|install|uninstall|rollback|scale|drain)\b",
+    r"\bdeploy\b|--prod\b",
+    r"\bgh\b.*\b(pr\s+merge|release\s+create|repo\s+delete)\b",
+    r"(?m)^(?=(.*?\bgit\b))\1.*\bfilter-(branch|repo)\b",
+]
+check(len(OLD_SUSPICIOUS) == len(a.SUSPICIOUS), f"SUSPICIOUS có {len(a.SUSPICIOUS)} mẫu, bản đối chiếu có {len(OLD_SUSPICIOUS)}")
+WORDS = ["push", "PUSH", "puſh", "reset", "clean", "checkout", "restore", "branch", "rm", "RM", "remove-item", "Remove-Item",
+         "remove", "-item", "item", "ri", "del", "erase", "rd", "rmdir", "npm", "pnpm", "yarn", "bun", "cargo", "docker",
+         "terraform", "kubectl", "helm", "gh", "git", "twine", "upload", "publish", "pr", "merge", "release", "create",
+         "repo", "delete", "apply", "destroy", "drain", "main", "master", "--force", "-f", "-F", "--delete", "--mirror",
+         "-d", "-D", "+x", "+", ":x", ":", "--hard", "-xf", "-xF", "--", ".", "--worktree", "--staged", "--STAGED", "-r",
+         "-rf", "-R", "-recurse", "--recursive", "/s", "/S", "filter-branch", "x", "_", "é", "1", "\u212a", "ı", "İ", "ſ",
+         "pr merge", "PR  merge", "release\tcreate", "repo delete", "-d -f", "--delete --force", "-d --force"]
+SEPS = [" ", " ", " ", " ", "  ", "\t", "\n", "\n", "\r", "\x0b", "\u00a0", "", "", "-", "/"]
+rnd = random.Random(5)
+diff, multi, staged = [], 0, 0
+for _ in range(20000):
+    s = "".join(rnd.choice(WORDS) + rnd.choice(SEPS) for _ in range(rnd.randint(1, 10)))
+    for old, (new, label) in zip(OLD_SUSPICIOUS, a.SUSPICIOUS):
+        mo, mn = re.search(old, s, re.IGNORECASE), re.search(new, s, re.IGNORECASE)
+        if bool(mo) != bool(mn):
+            diff.append((label, s))
+        elif mo and label != "git restore (bỏ thay đổi)":
+            first = re.match(r"[\w-]+", mo.group(0))
+            multi += bool(first) and len(re.findall(r"(?<![\w-])" + re.escape(first[0]) + r"(?![\w-])", mo.group(0), re.I)) > 1
+        elif mo:
+            staged += bool(re.search(r"--staged[^\n]*\brestore\b", s, re.IGNORECASE))
+check(not diff, f"SUSPICIOUS phải khớp đúng những chuỗi mẫu cũ khớp: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
+check(multi >= 25 and staged >= 20, f"lô vi sai phải đi qua dòng nhiều X trước Y ({multi}) và restore sau --staged ({staged})")
+# 2.4: đường bậc hai theo độ dài lệnh. Assert tỉ lệ (không phụ thuộc tốc độ máy, runner Windows và macOS chậm hơn nhiều):
+# gấp 4 độ dài thì chậm dưới 8 lần, giữa tuyến tính ~4 và bậc hai ~16. Lấy min 5 lần đo; bậc hai thì lượt nào cũng ~16, nên
+# đo lại tối đa 3 lượt để một lần máy khựng không đỏ oan. limit chỉ để khỏi đo lại lâu trên bản bậc hai.
+def best_time(f, x, runs=5, limit=1):
+    best = float("inf")
+    for i in range(runs):
+        t0 = time.perf_counter()
+        f(x)
+        best = min(best, time.perf_counter() - t0)
+        if best >= limit and i:
+            break
+    return best
+def linear(what, f, make):
+    for _ in range(3):
+        t1 = best_time(f, make(1))
+        t4 = best_time(f, make(4), limit=8 * t1)
+        if t4 < 8 * t1:
+            break
+    check(t4 < 8 * t1, f"{what} tuyến tính: {make(1)[:14]!r}… mất {t1:.3f} s, gấp 4 độ dài mất {t4:.3f} s "
+                       f"(phải dưới 8 lần; tuyến tính ~4, bậc hai ~16)")
+suspicious = lambda s: [re.search(rx, s, re.IGNORECASE) for rx, _l in a.SUSPICIOUS]
+for w in ("push", "reset", "clean", "checkout", "branch", "rm", "remove-item", "npm", "docker", "terraform", "helm", "gh",
+          "git", "filter-branch"):
+    linear("mẫu SUSPICIOUS trên dòng nhiều X", suspicious, lambda k, w=w: (w + " ") * 1000 * k)
+linear("mẫu SUSPICIOUS trên dòng nhiều restore rồi --staged", suspicious, lambda k: "restore " * 4000 * k + "--staged")
+for w in ("helm", "checkout", "push", "docker", "gh", "branch"):
+    linear("suspicious_labels trên dòng nhiều X", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+           lambda k, w=w: (w + " ") * 1250 * k)
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
