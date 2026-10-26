@@ -2573,19 +2573,18 @@ spec.loader.exec_module(a)
 fails = []
 known = dict(KNOWN_MISSES)
 ratchet = f"bỏ qua: {base_why}"
-# Dòng đầu của bước này. MARK_OLD là dòng đầu của bước oracle PR #8 khi test-audit còn hai bước oracle (chưa có KNOWN_GAPS
-# dạng danh sách): nhánh đọc nó chỉ phục vụ lần chuyển tiếp từ bản hai bước, xoá ở PR sau.
-MARK = "# Oracle bash, một bước:"
-MARK_OLD = "# Oracle bash: đối chiếu mục A với chính bash."
+# Danh sách nào bản trước gán ở cột 0 thì canh danh sách đó, không dựa vào một dòng comment (sửa comment từng làm
+# KNOWN_GAPS mất canh mà không ai thấy). Bản hai bước cũ chỉ gán KNOWN_MISSES (KNOWN_GAPS nằm trong comment): lần chuyển
+# tiếp đó canh mỗi KNOWN_MISSES.
 if base_test:
     text = open(base_test, encoding="utf-8").read()
-    before, names = None, []
-    if MARK in text:
-        names = ["KNOWN_MISSES", "KNOWN_GAPS"]
-    elif MARK_OLD in text or re.search(r"^KNOWN_MISSES\b", text, re.M):
-        names = ["KNOWN_MISSES"]
-    else:
+    before = None
+    names = [n for n in ("KNOWN_MISSES", "KNOWN_GAPS") if re.search(rf"^{n}\s*=", text, re.M)]
+    if not names:
         ratchet = f"bản ở {base_why} chưa có bước oracle"
+    elif names == ["KNOWN_GAPS"]:
+        fails.append(f"bản ở {base_why} gán KNOWN_GAPS mà không gán KNOWN_MISSES ở cột 0: không đọc được")
+        names = []
     if names:  # đọc phép gán ở cột 0 trong khối Python chứa nó, dạng gì cũng được (`[]`, comment sau `]`…). Không đọc được,
         # kể cả khi tên bị đổi hay phép gán bị thụt vào, thì đỏ: bỏ qua chỉ khi bản trước chưa có bước này
         try:
@@ -2595,7 +2594,7 @@ if base_test:
             vals = [ast.literal_eval(next(n.value for n in body if isinstance(n, ast.Assign)
                                           and [getattr(t, "id", "") for t in n.targets] == [name])) for name in names]
             before = {c for c, _why in vals[0]} | set(vals[1] if len(vals) > 1 else [])
-            ratchet = f"so với bản ở {base_why}" + ("" if len(names) > 1 else "; KNOWN_GAPS bỏ qua: bản trước còn hai bước")
+            ratchet = f"so với bản ở {base_why}" + ("" if len(names) > 1 else "; KNOWN_GAPS bỏ qua: bản trước chưa gán nó")
         except Exception as exc:
             fails.append(f"không đọc được {' và '.join(names)} của bản ở {base_why}: {exc!r}")
     added = [] if before is None else [c for c in list(known) + (KNOWN_GAPS if len(names) > 1 else []) if c not in before]
@@ -3035,7 +3034,7 @@ def spawn(base, text, cwd, env, timeout):
         to = True
     try:
         os.killpg(p.pid, signal.SIGKILL)  # tiến trình nào còn sót trong nhóm không được ghi lẫn sang lệnh sau
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):  # macOS trả EPERM thay ESRCH khi cả nhóm chỉ còn zombie chưa thu
         pass
     p.wait()
     p.stdout.close()
@@ -3069,7 +3068,7 @@ def run_chung(base, i):
     FORBID/DISGUISE soát văn bản đã bỏ đường sandbox và ba mảnh của ngữ pháp (`pushd` khớp push, `$(` là thay lệnh): phần
     còn lại của lệnh không được gọi gì khác."""
     text = render(cmds[i], os.path.join(base, "stub"))
-    plain = text.replace(sbx, "").replace(root, "")
+    plain = text.replace(root, "").replace(sbx, "")  # root trước: trên macOS sbx (/var/…) có thể là chuỗi con của root
     for frag in ("pushd", "true $( ", "echo $( "):
         plain = plain.replace(frag, "")
     if FORBID.search(plain) or DISGUISE.search(re.sub(r"['\"\\\\]", "", plain)):
@@ -3077,7 +3076,7 @@ def run_chung(base, i):
     to, out, logs = spawn(base, PRELUDE + text + "\n", PROJ, env_chung, 10)
     return [(pwd, t) for pwd, args in logs for t in targets_chung(args)], out, to, False
 
-W = 2 * (os.cpu_count() or 1)
+W = min(8, 2 * (os.cpu_count() or 1))  # mỗi chỗ chạy một tiến trình Python phụ (~18 MB): cpu_count của host có thể lớn
 bases = [setup(k) for k in range(W)]
 if not skip8:
     nfail = len(fails)
@@ -3283,8 +3282,8 @@ if miss:
         if err.strip():
             out.append("    stderr: " + short(err.strip())[:300].replace("\n", "\n            "))
     out.append("  Sửa phân tích lệnh trong audit-agent.py (segments, benign_delete) cho tới khi mục A báo các lệnh này, và "
-               "thêm ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp, trừ khi đó là lỗ có việc riêng: khi đó ghi "
-               "vào KNOWN_GAPS. AUDIT_LOST_ALL=1 in đủ.")
+               "thêm ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp và đừng ghi thêm vào KNOWN_GAPS hay "
+               "KNOWN_MISSES: hai danh sách chỉ được giảm. AUDIT_LOST_ALL=1 in đủ.")
 if danger < ORACLE_FLOOR:
     out.append(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa "
                "bị thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ "
