@@ -118,8 +118,14 @@ unquote_word() {
 # chép phần còn lại của từ (60 KB, 330 đoạn mất 6,5 giây ở UTF-8; Git Bash chậm hơn nhiều lần), nên thân quá 16 KB
 # hay 256 đoạn thì bỏ, tổng các thân quá 8 KB hay quá 256 thân thì dừng: lệnh có chữ push khi đó vào cổng push và
 # không biết thư mục, tức hỏi. Thân nhiều dòng (grep đọc từng dòng) chưa được đọc.
-SHC='(^|[;&|(`{[:space:]"'"'"'/])(ba|da|z|k)?sh([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+--)?[[:space:]]+'
-SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
+# Tên shell (cả bash.exe, ash, mksh, bash5, fish), option trước -c (cả -O/+O và --rcfile có đối số), option sau -c (bash -c -x
+# '…': bash vẫn đọc option rồi lấy từ đầu tiên không phải option làm thân).
+SHN='((ba|da|z|k|a|mk|y)?sh|bash[0-9][0-9.]*|fish)(\.exe)?'
+SHOPT='[-+]o[[:space:]]+[A-Za-z]+|[-+]O[[:space:]]+[A-Za-z_]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z-]+|[-+][A-Za-z]+'
+SHC='(^|[;&|(`{[:space:]"'"'"'/])'"$SHN"'([[:space:]]+('"$SHOPT"'))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+(--|'"$SHOPT"'))*[[:space:]]+'
+# Thân chưa trong nháy dừng ở ( và `: thân $(bash -c '…') thì shell ngoài chạy lệnh lồng trước, lượt khớp sau phải bắt đầu
+# được ở (bash để giải shell con đó (reviewer PR #47).
+SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\(`]|\\.)+'
 shc_unknown=""
 # Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
 # 40 KB toàn chữ p mất 11 giây).
@@ -157,10 +163,12 @@ decode_shell_c() {
 decode_shell_c
 # Thân -c guard không giải được thì thư mục của push là chưa biết, tức hỏi (4.11 cũ): thân nhiều dòng (dòng mở thân bằng nháy
 # mà không đóng; grep đọc từng dòng) và shell là biến ($SHELL -c, "${SHELL}" -lc, ${SHELL:-bash} -c). Chỉ một lần grep ở locale C mỗi dạng.
-SHV='(^|[;&|(`{[:space:]])"?[$][{]?[A-Za-z_][A-Za-z0-9_]*([:]?[-=?+][^}[:space:]]*)?[}]?"?([[:space:]]+([-+]o[[:space:]]+[A-Za-z]+|--[A-Za-z-]+|-[A-Za-z]+))*[[:space:]]+-[A-Za-z]*c'
+# Shell từ lệnh lồng ($(command -v bash) -c, `which bash` -c) cũng vậy.
+SHV='(^|[;&|(`{[:space:]])"?([$][{]?[A-Za-z_][A-Za-z0-9_]*([:]?[-=?+][^}[:space:]]*)?[}]?|[$][(][^)]*[)]|`[^`]*`)"?([[:space:]]+('"$SHOPT"'))*[[:space:]]+-[A-Za-z]*c'
 # Từ của thân đi qua các đoạn đã đóng ('…', "…", \x, chữ thường) rồi gặp nháy mở chưa đóng ở cuối dòng.
 SHO='([^'"'"'"[:space:]\\]|\\.|'"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*")*('"'"'[^'"'"']*|"([^"\\]|\\.)*)$'
-if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC$SHO" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
+# Thân ANSI-C ($'…\n…') thì chưa giải: \n là xuống dòng thật trong thân.
+if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC($SHO|[$]')" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
   shc_unknown=1
 fi
 # Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
