@@ -475,6 +475,25 @@ EOF
   expect_guard ask '${SHELL} -lc '"'git -C '\\''$on_main'\\'' push'"
   # shellcheck disable=SC2016
   expect_guard ask '${SHELL:-bash} -c '"'cd '\\''$on_main'\\'' && git push'"
+  # Shell có option kèm đối số, option sau -c, tên ngoài danh sách cũ, tên từ lệnh lồng, thân ANSI-C (4.11).
+  expect_guard ask "bash -O extglob -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash +O extglob -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --rcfile /dev/null -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c -x 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c -o pipefail 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash.exe -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "sh.exe -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "ash -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "mksh -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash5 -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "fish -c 'cd '\\''$on_main'\\'' && git push'"
+  # shellcheck disable=SC2016
+  expect_guard ask '$(command -v bash) -c '"'cd '\\''$on_main'\\'' && git push'"
+  # shellcheck disable=SC2016
+  expect_guard ask '`which bash` -c '"'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c \$'true\\ncd \\'$on_main\\' && git push'"
+  expect_guard allow "bash.exe -c 'echo hi'"
+  expect_guard allow "bash -O extglob -c -x 'echo hi'"
   # Thân đóng trên cùng dòng thì vẫn đọc như cũ; shell là biến mà lệnh không có chữ push thì không hỏi.
   expect_guard allow "bash -c 'echo hi'$nl git push origin feat/x"
   # shellcheck disable=SC2016
