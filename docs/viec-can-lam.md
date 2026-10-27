@@ -17,11 +17,10 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
-### 2.4 Đường chậm bậc hai có từ trước
-- `expand` vẫn duyệt cả env (O(số biến) mỗi đoạn có `$`) khi giá trị thay vào có `$` hay chỗ thay đứng ngay sau `$`, `${`, `$TÊN` (`$A$B`): ở đó thay theo thứ tự của env đổi kết quả (`A=$B` thay trước hay sau B; thay B trước thì `$A$B` thành `$A<giá trị>`, không còn khớp A), mà dict không cho thứ tự của vài khoá nếu không duyệt cả env. `"D=$H v0=1 … v4999=1; " + "echo $D; " * 5000` và `"v0=1 … v4999=1; " + "echo $v1$v2; " * 5000` mỗi lệnh 14 giây.
-- Các assert tốc độ khác của test-audit.sh có ngưỡng tuyệt đối (1–6 giây, và `slow` > 3 giây) chỉ in thời gian khi đỏ, nên log CI không cho biết chúng cách ngưỡng bao xa trên Windows hay macOS (30 lần chạy tới 22/10 chỉ đỏ ở assert here-string). Cái nào đỏ oan trên runner chậm thì đổi sang tỉ lệ n và 4n như assert here-string, chứng minh vẫn đỏ với bản bậc hai.
-- Có từ trước, không thuộc expand (reviewer PR #45): nhiều biến rồi nhiều heredoc vào shell, `V + "bash <<E\necho $x\nE\n" * (n//5)`, 2,3 giây ở n=2500 và 30 giây ở n=10000 (bản trước 3,6 và 57 giây). Thời gian nằm ở bản chép env cho mỗi heredoc, `pinned` và `dict.fromkeys`.
-- **Xong khi:** hai lệnh trên dưới 1 giây, có assert tỉ lệ đỏ với bản hiện tại, nhãn không đổi (so ⊇ với bản trước trên fixture, fuzz và oracle).
+### 2.4 Đường chậm bậc hai có từ trước (đã thu hẹp)
+- **Đã có:** PR sửa 2.4 cho `expand` (giá trị thay vào có `$` hay chỗ thay đứng sát nhau) chỉ xét các tên đứng ngay sau `$` trong đoạn, tìm theo thứ tự env bằng filter chạy trong C, thay vì duyệt cả env mỗi đoạn. `"D=$H v0=1 … v4999=1; " + "echo $D; " * 5000` 10,5 → 0,97 giây, `"v0=1 … v4999=1; " + "echo $v1$v2; " * 5000` 11 → 1,2 giây (với 5 biến, main mất 0,74 và 0,86 giây: phần còn lại là chi phí của 5000 đoạn, không theo số biến). Hai assert tỉ lệ mới đỏ với bản cũ; fuzz so `expand` với vòng cũ nay có env quá 64 tên.
+- **Vì sao còn:** nhiều biến rồi nhiều heredoc vào shell, `V + "bash <<E\necho $x\nE\n" * (n//5)`, vẫn 3,2 giây ở n=2500 (reviewer PR #45): thời gian nằm ở bản chép env cho mỗi heredoc, `pinned` và `dict.fromkeys`. Các assert tốc độ khác của test-audit.sh có ngưỡng tuyệt đối (1–6 giây, và `slow` > 3 giây) chỉ in thời gian khi đỏ; cái nào đỏ oan trên runner chậm thì đổi sang tỉ lệ.
+- **Xong khi:** lệnh heredoc trên dưới 1 giây, có assert tỉ lệ đỏ với bản hiện tại, nhãn không đổi.
 
 ### 2.5 Chưa kiểm chứng
 - `git-bash.exe` của Git for Windows có chạy thân `-lc '…'` không.
