@@ -364,12 +364,22 @@ def expand(text, env):
         return text
     if not any("$" in env[m[1]] or adjacent(text, m.start()) for m in refs):
         return VAR_REF.sub(lambda m: env[m[1]] if m[1] in env else m[0], text)
-    for name, val in env.items():
-        # Regex chứa đúng chuỗi tên nên không khớp khi tên vắng trong text (đã thay ở các vòng trước): bỏ qua, khỏi dịch lại
-        # regex cho mọi biến của env (quá 512 tên thì bộ đệm của `re` không giữ nổi).
-        if name in text:
-            text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
-    return text
+    # Vòng cũ duyệt mọi tên của env theo thứ tự, thay `\$\{?TÊN\b\}?` nếu có: O(số biến) mỗi đoạn (2.4: 5000 biến × 5000
+    # đoạn mất 14 giây). Regex đó chỉ khớp khi TÊN là cả dãy chữ ngay sau `$` hay `${` (VAR_REF), nên ở mỗi bước chỉ các tên đó
+    # có thể thay. Tìm tên đầu tiên trong số đó theo thứ tự còn lại của env (filter chạy trong C, tiếp từ chỗ đang đứng), thay,
+    # rồi tính lại: tên đã qua lượt thì không thay nữa, y như vòng cũ.
+    if len(env) <= 64:  # env nhỏ: duyệt thẳng rẻ hơn tính lại các tên sau `$` mỗi bước
+        for name, val in env.items():
+            if name in text:
+                text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
+        return text
+    names = iter(env)
+    while True:
+        live = {m[1] for m in VAR_REF.finditer(text)} & env.keys()
+        name = next(filter(live.__contains__, names), None) if live else None
+        if name is None:
+            return text
+        text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=env[name]: v, text)
 
 
 def adjacent(text, at):
