@@ -1681,6 +1681,15 @@ for _ in range(30000):
     refs = [m for m in a.VAR_REF.finditer(s) if m[1] in env]
     fast += bool(refs) and not any("$" in env[m[1]] or a.adjacent(s, m.start()) for m in refs) and want != s
 check(not diff, f"expand phải cho đúng kết quả của vòng thay từng biến: {len(diff)} chỗ khác, vd {diff[:3]!r}")
+# Đường tìm tên sau `$` (2.4) không được chậm hơn hẳn vòng cũ khi một đoạn có nhiều chỗ thay khác nhau (reviewer 2.4: 3000
+# `$vN` sát nhau với 3000 biến từng chậm gấp 9 lần). Tỉ lệ với chính vòng cũ trên cùng máy, không phụ thuộc tốc độ runner.
+E_BIG = {"v%d" % i: "1" for i in range(3000)}
+for text in ("".join("$v%d" % i for i in range(3000)), " ".join("$v%d" % i for i in range(3000)) + " $v1$v2"):
+    for _ in range(3):
+        t_new, t_old = best_time(lambda t: a.expand(t, E_BIG), text), best_time(lambda t: old_expand(t, E_BIG), text)
+        if t_new < 2 * t_old:
+            break
+    check(t_new < 2 * t_old, f"expand với nhiều chỗ thay khác nhau mất {t_new:.3f} s, vòng cũ {t_old:.3f} s (phải dưới 2 lần)")
 check(fast >= 3000, f"lô vi sai phải đi qua đường thay một lượt ({fast})")
 # Mở danh sách (strict_assign) không chép env: phép gán sau đó không được lọt vào env lúc mở danh sách (`D=/ && true &`
 # chạy nền cả danh sách, lệnh sau `&` thấy D=/tmp/w/).

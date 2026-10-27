@@ -368,7 +368,9 @@ def expand(text, env):
     # đoạn mất 14 giây). Regex đó chỉ khớp khi TÊN là cả dãy chữ ngay sau `$` hay `${` (VAR_REF), nên ở mỗi bước chỉ các tên đó
     # có thể thay. Tìm tên đầu tiên trong số đó theo thứ tự còn lại của env (filter chạy trong C, tiếp từ chỗ đang đứng), thay,
     # rồi tính lại: tên đã qua lượt thì không thay nữa, y như vòng cũ.
-    if len(env) <= 64:  # env nhỏ: duyệt thẳng rẻ hơn tính lại các tên sau `$` mỗi bước
+    # Env nhỏ, hay đoạn có nhiều chỗ thay so với số biến: duyệt thẳng rẻ hơn tính lại các tên sau `$` mỗi bước (mỗi bước
+    # O(độ dài đoạn); đoạn 3000 `$vN` khác nhau với 3000 biến từng chậm gấp 9 lần vòng cũ, reviewer 2.4).
+    if len(env) <= 64 or len(refs) * 16 >= len(env):
         for name, val in env.items():
             if name in text:
                 text = re.sub(r"\$\{?" + name + r"\b\}?", lambda _m, v=val: v, text)
