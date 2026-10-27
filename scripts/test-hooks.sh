@@ -183,6 +183,18 @@ git commit -m "Đổi tên" && git push origin
 EOF
   expect_guard ask "git -C \"$on_main\" push origin"
   expect_guard ask "cd \"$on_main\" && git push"
+  # Từ khoá và tiền tố trước cd mà CDA chưa nhận, option -e/-@ của cd (4.10).
+  expect_guard ask "time cd \"$on_main\" && git push"
+  expect_guard ask "! cd \"$on_main\" || git push"
+  expect_guard ask "while cd \"$on_main\"; do git push; break; done"
+  expect_guard ask "until cd \"$on_main\"; do sleep 1; done; git push"
+  expect_guard ask "eval cd \"'$on_main'\" && git push"
+  expect_guard ask "x=1 cd \"$on_main\" && git push"
+  expect_guard ask "A=1 B=2 cd \"$on_main\" && git push"
+  expect_guard ask "if true; then :; elif cd \"$on_main\"; then git push; fi"
+  expect_guard ask "cd -e \"$on_main\" && git push"
+  expect_guard ask "cd -@ \"$on_main\" && git push"
+  expect_guard allow "x=1 cd \"$work\" && git push"
   # cd tới thư mục không có thì lỗi, shell ở lại chỗ cũ: cd tương đối sau đó tính từ chỗ cũ (4.3).
   expect_guard ask "cd \"$tmp/nope\"; cd \"main repo\"; git push" "$tmp"
   expect_guard allow "git push"

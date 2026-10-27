@@ -386,7 +386,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
-  CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|if|builtin|command|exec)[[:space:]])[[:space:]]*'
+  # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
+  CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|elif|if|while|until|time|eval|builtin|command|exec|!)[[:space:]])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*[[:space:]]+)*'
   # Thư mục gom vào mảng: nối chuỗi chép lại cả chuỗi mỗi lần, bậc hai theo số cd (4.3). Mảng không rỗng (bash < 4.4
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
@@ -409,7 +410,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     [ "$a" = "$ARG_PS" ] && um="ps"
     [ "$a" = "$ARG_BSQ" ] && q=1
     [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
-    CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
+    CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
     for f in "${forms[@]}"; do
