@@ -386,7 +386,23 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
-  CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|if|builtin|command|exec)[[:space:]])[[:space:]]*'
+  # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
+  # CDCUT cắt phần trước cd của mỗi kết quả grep, tuyến tính: last_arg chạy regex ($re)$ bậc hai theo độ dài từ không có
+  # dấu cách, nên phép gán dài trước cd (x=<190 KB> cd M) từng quá timeout (reviewer 4.10). Kết quả bắt đầu bằng N khi cd
+  # chỉ khớp nhờ tiền tố mới (phép gán, time, !, while, until, elif, eval), O khi không.
+  CDCUT='{ s = $0; n = length(s); p = 1; nw = 0
+    while (p <= n) {
+      c = substr(s, p, 1)
+      if (index(";&|(`\"\047{$ \t", c)) { p++; continue }
+      q = p
+      while (q <= n && (c = substr(s, q, 1)) != " " && c != "\t") q++
+      t = tolower(substr(s, p, q - p))
+      if (t ~ /^(then|do|else|if|builtin|command|exec)$/) { p = q; continue }
+      if (t ~ /^(elif|while|until|time|eval|!)$/ || t ~ /^[a-z_][a-z0-9_]*=/) { nw = 1; p = q; continue }
+      break
+    }
+    print (nw ? "N" : "O") substr(s, p) }'
+  CDA='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|elif|if|while|until|time|eval|builtin|command|exec|!)[[:space:]])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*[[:space:]]+)*'
   # Thư mục gom vào mảng: nối chuỗi chép lại cả chuỗi mỗi lần, bậc hai theo số cd (4.3). Mảng không rỗng (bash < 4.4
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
@@ -409,7 +425,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     [ "$a" = "$ARG_PS" ] && um="ps"
     [ "$a" = "$ARG_BSQ" ] && q=1
     [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
-    CDRE="${CDS}((${S}+(--|-p|-l|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
+    CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
     for f in "${forms[@]}"; do
@@ -419,7 +435,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       fi
       cur="$base"
       cl=("$base")
-      for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}"); do
+      for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+        nw=""
+        case "$m" in N*) nw=1 ;; esac
+        m="${m#?}"
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
         # Lượt từ ghép chỉ thêm thư mục: từ quá PATH_MAX (4096) thì bỏ, trước mọi phép cắt chuỗi (bậc hai theo độ dài).
@@ -435,6 +454,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           gone "$RD" || dl+=("$RD")
         fi
         resolve_dir "$cur" "$t"
+        # cd chỉ khớp nhờ tiền tố mới (time, x=1, ...) có thể là chữ trong chuỗi (echo "x=1 cd W"): chỉ thêm thư mục,
+        # không đổi chỗ đứng cho các cd sau, nên cd thật phía sau vẫn được đọc như trước (reviewer 4.10).
+        if [ -n "$nw" ]; then
+          gone "$RD" || dl+=("$RD")
+          continue
+        fi
         # cd tới thư mục không có thì lỗi và shell ở lại chỗ cũ, như bash: không nối các cd sau vào nó (đường dài dần,
         # bậc hai theo số cd, 4.3), và `cd nope; cd sub` được đọc đúng là <chỗ cũ>/sub. Thư mục lệnh tạo trước khi cd
         # (mkdir a && cd a && cd ../m) thì lúc hook chạy cd -L/-P qua nó cũng lỗi, nên nối vào cũng không hỏi thêm được.
