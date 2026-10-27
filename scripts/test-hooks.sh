@@ -492,6 +492,15 @@ EOF
   # shellcheck disable=SC2016
   expect_guard ask '`which bash` -c '"'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -c \$'true\\ncd \\'$on_main\\' && git push'"
+  # Thân là lệnh lồng chưa trong nháy: shell ngoài chạy $(…) trước, nên shell con bên trong phải được giải (reviewer PR #47).
+  expect_guard ask "bash -c -x \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "bash -c -o pipefail \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "sh -c -e \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "fish -c \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "bash.exe -c \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "bash -O extglob -c \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "bash -c \$(bash -c 'cd '\\''$on_main'\\'' && git pu''sh')"
+  expect_guard ask "bash -c -x \`bash -c 'git -C '\\''$on_main'\\'' push'\`"
   expect_guard allow "bash.exe -c 'echo hi'"
   expect_guard allow "bash -O extglob -c -x 'echo hi'"
   # Thân đóng trên cùng dòng thì vẫn đọc như cũ; shell là biến mà lệnh không có chữ push thì không hỏi.

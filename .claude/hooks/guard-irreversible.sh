@@ -123,7 +123,9 @@ unquote_word() {
 SHN='((ba|da|z|k|a|mk|y)?sh|bash[0-9][0-9.]*|fish)(\.exe)?'
 SHOPT='[-+]o[[:space:]]+[A-Za-z]+|[-+]O[[:space:]]+[A-Za-z_]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z-]+|[-+][A-Za-z]+'
 SHC='(^|[;&|(`{[:space:]"'"'"'/])'"$SHN"'([[:space:]]+('"$SHOPT"'))*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]+(--|'"$SHOPT"'))*[[:space:]]+'
-SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\]|\\.)+'
+# Thân chưa trong nháy dừng ở ( và `: thân $(bash -c '…') thì shell ngoài chạy lệnh lồng trước, lượt khớp sau phải bắt đầu
+# được ở (bash để giải shell con đó (reviewer PR #47).
+SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\(`]|\\.)+'
 shc_unknown=""
 # Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
 # 40 KB toàn chữ p mất 11 giây).
