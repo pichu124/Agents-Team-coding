@@ -215,6 +215,19 @@ case "$src" in
         if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
+    # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
+    # `git push -o 'a|b' --force`. Thêm một dạng thay chúng bằng _ (chỉ thêm chữ để khớp, lệnh gốc vẫn được so). Một lần
+    # grep chọn lệnh có nháy chứa các ký tự đó, rồi awk duyệt từng ký tự (tuyến tính, trạng thái nháy theo từng dòng).
+    if LC_ALL=C text_grep "$src" -Eq -- '"[^"]*[;&|][^"]*"|'"'"'[^'"'"']*[;&|][^'"'"']*'"'"''; then
+      qm="$(printf '%s\n' "$src" | LC_ALL=C awk '{ n = length($0); q = 0
+        for (i = 1; i <= n; i++) { c = substr($0, i, 1)
+          if (q == 0) { if (c == "\047") q = 1; else if (c == "\"") q = 2; else if (c == "\\") { printf "%s", c; i++; c = substr($0, i, 1) } }
+          else if (q == 1) { if (c == "\047") q = 0; else if (c ~ /[;&|]/) c = "_" }
+          else { if (c == "\"") q = 0; else if (c == "\\") { printf "%s", c; i++; c = substr($0, i, 1) } else if (c ~ /[;&|]/) c = "_" }
+          printf "%s", c }
+        print "" }')"
+      cmd="$cmd$nl$qm"
+    fi
     ;;
 esac
 

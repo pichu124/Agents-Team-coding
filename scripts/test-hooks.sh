@@ -195,6 +195,13 @@ EOF
   expect_guard ask "cd -e \"$on_main\" && git push"
   expect_guard ask "cd -@ \"$on_main\" && git push"
   expect_guard allow "x=1 cd \"$work\" && git push"
+  # Phép gán có nháy và dấu cách trước cd; `;&|` trong nháy không ngắt luật force-push (4.10).
+  expect_guard ask "x=\"a b\" cd \"$on_main\" && git push"
+  expect_guard ask "A='1 2' B=3 cd \"$on_main\" && git push"
+  expect_guard ask "git push origin \"x;y\" --force"
+  expect_guard ask "git push -o 'ci.skip|x' origin feat --force"
+  expect_guard ask "git push origin 'a&b' +feat"
+  expect_guard allow "git push origin \"x;y\""
   # cd giả trong chuỗi (chỉ khớp nhờ tiền tố mới) không được đổi chỗ đứng của cd thật phía sau (reviewer 4.10).
   expect_guard ask "git commit -m \"doc; x=1 cd work\"; cd \"main repo\" && git push" "$tmp"
   expect_guard ask "echo \"doc: run time cd work\"; cd \"main repo\" && git push" "$tmp"
