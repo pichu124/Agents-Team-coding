@@ -419,6 +419,9 @@ def expand_body(text, outer, inner):
 # CANDIDATES: bật/tắt để test so được (tắt thì nhãn như trước).
 CANDIDATES = True
 CAND_CAP, VARIANT_CAP, SCAN_CAP = 8, 16, 64  # ứng viên mỗi tên (quá thì tên là không biết), tích mỗi đoạn, quét từng tên
+# Trần tổng độ dài các bản ứng viên của một lệnh: mỗi bản là bản chép đủ dài của đoạn và được so với mọi mẫu, nên lệnh dài
+# nhiều tên nhiều ứng viên từng chậm 7 lần (reviewer bước 2). Hết trần thì đoạn sau không có bản ứng viên.
+VARIANT_BUDGET = lambda n: 2 * n + 65536
 # NAME=, NAME+= (gán, gán tạm, env, export, `bash -s NAME=`), giá trị chữ trong nháy hay tới dấu tách
 CAND_ASSIGN = re.compile(r"(?:^|(?<=[\s;&|(){}`'\"" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + r"]))"
                          r"([A-Za-z_]\w*)(\+?)=(\"[^\"]*\"|'[^']*'|[^\s;&|()<>`]*)")
@@ -465,7 +468,7 @@ def candidates(b):
     return {k: v for k, v in c.items() if 0 < len(v) <= CAND_CAP}
 
 
-def variants(seg, raw, store, cands):
+def variants(seg, raw, store, cands, limit=SCAN_CAP):
     """Các bản (so mẫu, đầy đủ) của đoạn đã thay biến bằng ứng viên. Tên một ứng viên thay ở mọi bản; tích các tên nhiều ứng
     viên ≤ VARIANT_CAP, quá thì quét từng tên (≤ SCAN_CAP bản, tên khác để nguyên). `\\` ngay trước `$` bỏ cùng chỗ thay:
     `\\$O` trong thân <<EOF là của shell con. Chuỗi trong nháy che bằng "" như bản so mẫu gốc, trừ nháy kép chỉ gồm chữ không
@@ -481,9 +484,10 @@ def variants(seg, raw, store, cands):
         if size > VARIANT_CAP:
             break
     if size <= VARIANT_CAP:
-        combos = [dict(one, **dict(zip(many, vs))) for vs in itertools.product(*(cands[n] for n in many))]
+        combos = list(itertools.islice((dict(one, **dict(zip(many, vs))) for vs in itertools.product(*(cands[n] for n in many))),
+                                       limit))
     else:
-        combos = list(itertools.islice((dict(one, **{n: v}) for n in many for v in cands[n]), SCAN_CAP))
+        combos = list(itertools.islice((dict(one, **{n: v}) for n in many for v in cands[n]), min(SCAN_CAP, limit)))
 
     def unmask(m):
         n = m[1].lstrip("0") or "0"
@@ -699,7 +703,7 @@ def unwrap_shell_c(text, rx):
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
              strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False, strict=False, pure=False,
-             bash=False, cands=None, extra=None):
+             bash=False, cands=None, extra=None, budget=None):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -1008,9 +1012,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if plain2 != plain:  # đoạn phụ đứng trước: out[-1] (LOCAL_SHELL đọc ở dấu mở thân) vẫn là đoạn như cũ
                 out.append((plain2, full, ctx, "$" in raw))
             out.append((plain, full, ctx, "$" in raw))
-            if cands and extra is not None and "$" in raw:  # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc
-                extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True)
-                          for vp, vf in variants(seg, raw, store, cands)]
+            # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh.
+            n = budget[0] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
+            if cands and extra is not None and "$" in raw and n > 0:
+                vs = variants(seg, raw, store, cands, n)
+                if budget:
+                    budget[0] -= sum(len(vp) + len(vf) for vp, vf in vs)
+                extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True) for vp, vf in vs]
         if before:
             ctx = before[1]
         elif maybe:
@@ -1288,14 +1296,14 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
     # của cách đọc đó (thân dữ liệu đã bỏ). Các bản so sau mọi đoạn gốc, trong cùng lượt đọc: không thêm lượt segments.
-    bodies, read, segs, extra = {}, set(), [], []
+    bodies, read, segs, extra, budget = {}, set(), [], [], [VARIANT_BUDGET(len(cmd))]
     for combo in reading_combos(cmd, tool):
         key = reading_key(cmd, tool, combo, bodies)
         if key not in read:
             read.add(key)
             cands = candidates(key[0]) if CANDIDATES and "$" in cmd and combo[10] and not combo[11] and not combo[4] \
                 and (combo[12] or "<<" not in cmd) else None
-            segs += segments(cmd, tool, *combo, cands=cands, extra=extra)
+            segs += segments(cmd, tool, *combo, cands=cands, extra=extra, budget=budget)
     segs += extra
     done = set()
     for seg in segs:

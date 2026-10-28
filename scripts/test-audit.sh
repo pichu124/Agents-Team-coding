@@ -2093,6 +2093,20 @@ check(len(fixture_cmds) > 300 and t_on < 1.6 * t_off,
 print(f"• audit: bản ứng viên: {widened}/{len(set(corpus))} lệnh fixture và fuzz thêm nhãn, không lệnh nào mất nhãn; "
       f"{len(fixture_cmds)} lệnh fixture {t_on:.3f} s bật / {t_off:.3f} s tắt")
 labels_of = lambda c: a.suspicious_labels(c, a.SUSPICIOUS)
+# Lệnh dài, nhiều tên nhiều ứng viên (reviewer bước 2: đoạn 188 KB với 8 tên × 8 ứng viên từng chậm 7 lần vì mỗi đoạn có tới 64
+# bản đủ dài): tổng độ dài các bản ứng viên của một lệnh có trần, bật không chậm quá 2,5 lần so với tắt.
+long_cmds = ["".join(f"V{j}=-{v}; " for j in range(8) for v in "abcdefgh") + "echo " + " ".join(f"$V{j}" for j in range(8)) * 2000,
+             "".join(f"V{j}=-{v}; " for j in range(8) for v in "abcdefgh")
+             + "".join(f"echo {i} " + " ".join(f"$V{j}" for j in range(8)) + "; " for i in range(1000))]
+for c in long_cmds:
+    for _ in range(3):
+        a.CANDIDATES = False
+        t_off = best_time(labels_of, c)
+        a.CANDIDATES = True
+        t_on = best_time(labels_of, c)
+        if t_on < 2.5 * t_off:
+            break
+    check(t_on < 2.5 * t_off, f"bản ứng viên trên lệnh {len(c)} byte: {t_on:.3f} s bật, {t_off:.3f} s tắt (phải dưới 2,5 lần)")
 linear("bản ứng viên, nhiều tên hai ứng viên trong một đoạn", labels_of,
        lambda k: "".join(f"V{i}=/tmp/a V{i}=/tmp/b; " for i in range(250 * k)) + "rm -rf " + " ".join(f"$V{i}" for i in range(250 * k)))
 linear("bản ứng viên, nhiều đoạn có tên tám ứng viên", labels_of,
