@@ -1922,6 +1922,28 @@ for i, (cmd, why) in enumerate(vp.MISSED_VP):
         check("xoá đệ quy" not in got, f"MISSED_VP[{i}] nay đã nghi: bỏ {i} khỏi MISSED_VP_PENDING để có assert canh: {cmd!r}")
     else:
         check("xoá đệ quy" in got, f"MISSED_VP[{i}] {why}: {cmd!r}: {got!r}")
+# Lỗ của 2.8 (docs/viec-can-lam.md) mà bash 5.2 thật xoá đích nguy hiểm: mục A phải gắn đúng nhãn. Các ca đầu cách đọc pure
+# hay bash đã bắt nhưng chưa có fixture canh; các ca sau do PR sửa 2.8 (phần rẻ) bắt.
+MISSED_28 = [
+    ("D=/tmp/x; f() { D=..; }; D=/tmp/x; f; rm -rf node_modules/$D", "xoá đệ quy", "hàm gán D=.. chạy sau phép gán: xoá node_modules/.."),
+    ("if false; then echo a\\; fi; D=/tmp/x; fi; rm -rf $D/src", "xoá đệ quy", "`\\;` là chữ, if chỉ đóng ở fi thứ hai: D rỗng, xoá /src"),
+    ("for D in a /; do :; done; rm -rf node_modules/$D", "xoá đệ quy", "for để D = /: xoá node_modules//"),
+    ("read D </dev/null; rm -rf $D/src", "xoá đệ quy", "read gán D rỗng: xoá /src"),
+    ("D=/tmp/w; D+=/../..; rm -rf $D", "xoá đệ quy", "`+=` nối: D = /tmp/w/../.. tức /"),
+    ("D=/; rm -rf /tmp/$D", "xoá đệ quy", "xoá chính /tmp"),
+    ("true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy", "nhóm sau || không chạy: D rỗng, xoá src của dự án"),
+    ("(export D=/tmp/w && cd /tmp/w/s)\nrm -rf ${D}src", "xoá đệ quy", "export và cd trong subshell không ra ngoài: xoá src của dự án"),
+    ("rm -rf {,/}src", "xoá đệ quy", "brace thành src và /src"),
+    ("echo rm -rf src | /bin/bash", "xoá đệ quy", "ống vào /bin/bash: xoá src của dự án"),
+    ("git checkout .&", "git checkout -- (bỏ thay đổi)", "`.` dính `&` vẫn là đường dẫn cả thư mục"),
+    ("rm \\-rf /x", "xoá đệ quy", "bash bỏ `\\`: cờ -rf, xoá /x"),
+    ("rm -rf {/tmp/a,/}", "xoá đệ quy", "brace thành /tmp/a và /: xoá /"),
+    ("cat <<'EOF' | X=1 bash\nrm -rf /x\nEOF", "xoá đệ quy", "phép gán trước shell sau ống: thân là lệnh, xoá /x"),
+    ("cat <<'EOF' | env bash\nrm -rf /x\nEOF", "xoá đệ quy", "env trước shell sau ống: thân là lệnh, xoá /x"),
+]
+for cmd, label, why in MISSED_28:
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
 # Glob mở bằng `.` (`.?`, `.[.]`, `.*`) khớp cả `..` ở bash < 5.2 (chưa có globskipdots; /bin/bash của macOS là 3.2): đích
 # tương đối sau cd vào thư mục tạm hay build ra ngoài thư mục đó (bash 5.2 với `shopt -u globskipdots`, rm thay bằng echo:
 # xoá ../../home tức /home, ../src của dự án).
