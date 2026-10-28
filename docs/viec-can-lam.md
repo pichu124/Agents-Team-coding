@@ -42,6 +42,7 @@ Bash xoá trong thư mục tạm mà mục A vẫn báo. Sửa là thu hẹp: ph
 
 ### 2.8 Lỗ mà mọi bản đều bỏ sót (bash 5.2 thật xoá, chưa ai làm)
 Mỗi lỗ xong khi có fixture vào A và oracle sinh được dạng đó.
+- **Đã có (PR sửa 2.8, phần rẻ):** `MISSED_28` của test-audit canh 15 lệnh: mười ca cách đọc pure hay bash đã bắt (hàm gán sau phép gán, `\;` trong if, `for D in`, `read D </dev/null`, `D+=`, `rm -rf /tmp/$D`, nhóm sau `||`, export/cd trong subshell, `{,/}src`, `| /bin/bash`) và năm ca PR đó sửa: `git checkout .&` (mẫu nhãn nhận `.` dính toán tử), `rm \-rf /x` (mẫu xoá đệ quy nhận `\` trước cờ), `rm -rf {/tmp/a,/}` (benign_delete bung brace, cả lồng, rồi xét từng đích; dãy `{a..b}`, nháy hay `\` trong đích là không biết, nên `/tmp/{1..3}` bị báo thừa; `cd /tmp/w && rm -rf {a,b}` và `rm -rf {node_modules,dist}` thôi bị báo), `cat <<'EOF' | X=1 bash` và `| env bash` (PIPE_SHELL nhận phép gán và env trước shell). Oracle chưa sinh các dạng này; các mục dưới vẫn liệt kê để làm phần oracle.
 - Hàm gọi sau một phép gán chắc chắn chạy: `D=/tmp/x; f() { D=..; }; D=/tmp/x; f; rm -rf node_modules/$D`. Cách đọc pure nay bắt (gọi hàm đã định nghĩa làm mọi biến thành không biết); còn thiếu fixture và oracle.
 - `\;` hay `\|` làm SPLIT tách sai nên `fi` bị trừ độ sâu: `if false; then echo a\; fi; D=/tmp/x; fi; rm -rf $D/src`. Cách đọc pure nay bắt ca này; còn thiếu fixture và oracle.
 - `for D in ..; do :; done; rm -rf node_modules/$D`.

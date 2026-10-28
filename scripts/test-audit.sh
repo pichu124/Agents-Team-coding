@@ -1653,6 +1653,10 @@ for _ in range(20000):
 check(not diff, f"quoted_sub phải cho đúng kết quả của rx.sub: {len(diff)} chuỗi khác, vd {diff[:3]!r}")
 check(unclosed >= 1000, f"lô vi sai phải có nháy kép chưa đóng chứa `\\\"` ({unclosed})")
 linear("suspicious_labels trên chuỗi `\\\"` dài", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), lambda k: '\\"' * 2500 * k)
+# Phép gán trước shell sau ống (2.8): giá trị gán không được nuốt `|` hay `<<<`, không thì mỗi here-string quét tới cuối dòng
+# (reviewer: 8 KB 0,2 giây, 32 KB 3,2 giây).
+linear("suspicious_labels trên chuỗi here-string qua ống có phép gán", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+       lambda k: "cat <<<a" + "| x=<<<a" * 1000 * k + "| foo")
 # expand của ba09758 duyệt cả env ở mỗi đoạn có `$` (vài nghìn phép gán rồi vài nghìn `echo $x`: 12 giây). Bản mới chỉ thay
 # một lượt khi thứ tự không đổi kết quả: phải cho đúng kết quả của vòng cũ (giữ nguyên văn ở đây), với env thứ tự ngẫu nhiên,
 # giá trị có `$`, `$A$B`, `${A}`, `$A}`, `$$A`, tên Unicode.
@@ -1922,6 +1926,36 @@ for i, (cmd, why) in enumerate(vp.MISSED_VP):
         check("xoá đệ quy" not in got, f"MISSED_VP[{i}] nay đã nghi: bỏ {i} khỏi MISSED_VP_PENDING để có assert canh: {cmd!r}")
     else:
         check("xoá đệ quy" in got, f"MISSED_VP[{i}] {why}: {cmd!r}: {got!r}")
+# Lỗ của 2.8 (docs/viec-can-lam.md) mà bash 5.2 thật xoá đích nguy hiểm: mục A phải gắn đúng nhãn. Các ca đầu cách đọc pure
+# hay bash đã bắt nhưng chưa có fixture canh; các ca sau do PR sửa 2.8 (phần rẻ) bắt.
+MISSED_28 = [
+    ("D=/tmp/x; f() { D=..; }; D=/tmp/x; f; rm -rf node_modules/$D", "xoá đệ quy", "hàm gán D=.. chạy sau phép gán: xoá node_modules/.."),
+    ("if false; then echo a\\; fi; D=/tmp/x; fi; rm -rf $D/src", "xoá đệ quy", "`\\;` là chữ, if chỉ đóng ở fi thứ hai: D rỗng, xoá /src"),
+    ("for D in a /; do :; done; rm -rf node_modules/$D", "xoá đệ quy", "for để D = /: xoá node_modules//"),
+    ("read D </dev/null; rm -rf $D/src", "xoá đệ quy", "read gán D rỗng: xoá /src"),
+    ("D=/tmp/w; D+=/../..; rm -rf $D", "xoá đệ quy", "`+=` nối: D = /tmp/w/../.. tức /"),
+    ("D=/; rm -rf /tmp/$D", "xoá đệ quy", "xoá chính /tmp"),
+    ("true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy", "nhóm sau || không chạy: D rỗng, xoá src của dự án"),
+    ("(export D=/tmp/w && cd /tmp/w/s)\nrm -rf ${D}src", "xoá đệ quy", "export và cd trong subshell không ra ngoài: xoá src của dự án"),
+    ("rm -rf {,/}src", "xoá đệ quy", "brace thành src và /src"),
+    ("echo rm -rf src | /bin/bash", "xoá đệ quy", "ống vào /bin/bash: xoá src của dự án"),
+    ("git checkout .&", "git checkout -- (bỏ thay đổi)", "`.` dính `&` vẫn là đường dẫn cả thư mục"),
+    ("rm \\-rf /x", "xoá đệ quy", "bash bỏ `\\`: cờ -rf, xoá /x"),
+    ("rm -rf {/tmp/a,/}", "xoá đệ quy", "brace thành /tmp/a và /: xoá /"),
+    ("cat <<'EOF' | X=1 bash\nrm -rf /x\nEOF", "xoá đệ quy", "phép gán trước shell sau ống: thân là lệnh, xoá /x"),
+    ("cat <<'EOF' | env bash\nrm -rf /x\nEOF", "xoá đệ quy", "env trước shell sau ống: thân là lệnh, xoá /x"),
+    # Reviewer của PR đó: `\` trong brace bash bỏ đi (bản đầu giữ `\` nên tách thành phần sai, main vẫn báo); `}` trong nháy
+    # hay có `\`, khoảng trắng trong nháy, `--` trước brace.
+    ("rm -rf node_modules{\\x,}", "xoá đệ quy", "brace thành node_modulesx (thư mục của dự án) và node_modules"),
+    ("rm -rf dist{,\\src}", "xoá đệ quy", "brace thành dist và distsrc"),
+    ("rm -rf {\"/tmp/x}\",/home}", "xoá đệ quy", "`}` trong nháy là chữ: brace thành /tmp/x} và /home"),
+    ("rm -rf {/tmp/x\\},/home}", "xoá đệ quy", "`\\}` là chữ: brace thành /tmp/x} và /home"),
+    ("rm -rf {/home,\"/tmp/x /tmp/y\"}", "xoá đệ quy", "khoảng trắng trong nháy không tách từ: brace thành /home và một đích"),
+    ("rm -rf -- {-src,/tmp/a}", "xoá đệ quy", "sau `--`, -src là đích: xoá ./-src của dự án"),
+]
+for cmd, label, why in MISSED_28:
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
 # Glob mở bằng `.` (`.?`, `.[.]`, `.*`) khớp cả `..` ở bash < 5.2 (chưa có globskipdots; /bin/bash của macOS là 3.2): đích
 # tương đối sau cd vào thư mục tạm hay build ra ngoài thư mục đó (bash 5.2 với `shopt -u globskipdots`, rm thay bằng echo:
 # xoá ../../home tức /home, ../src của dự án).

@@ -73,7 +73,8 @@ SUSPICIOUS = [
     (after_first("p", "push", r"\b(main|master|trunk|production|release)\b"), "push lên nhánh chính"),
     (after_first("r", "reset", "--hard"), "git reset --hard"),
     (after_first("c", "clean", r"(\s-\w*f|\s--force\b)"), "git clean -f"),
-    (r"\bcheckout\b\s+(--\s+)?\.(\s|$)|" + after_first("c", "checkout", r"\s--\s"), "git checkout -- (bỏ thay đổi)"),
+    # `.` rồi khoảng trắng, hết dòng hay toán tử (`git checkout .&`, `.;`, `.|`, `.)`, 2.8).
+    (r"\bcheckout\b\s+(--\s+)?\.(\s|$|[;&|)])|" + after_first("c", "checkout", r"\s--\s"), "git checkout -- (bỏ thay đổi)"),
     # `\brestore\b(?=.*--worktree|(?!.*--staged))`: có --worktree sau một restore (sau restore đầu dòng), hay có restore mà
     # sau nó không còn --staged: restore sau --staged cuối dòng (lookahead tham lam lấy tới --staged cuối, hai từ không chồng
     # nhau).
@@ -83,7 +84,9 @@ SUSPICIOUS = [
     (r"\bstash\s+(drop|clear)\b", "git stash drop/clear"),
     # -D phân biệt hoa thường (mẫu so không phân biệt): -d chỉ xoá nhánh đã gộp, git tự từ chối nhánh chưa gộp.
     (after_first("b", "branch", r"(\s(?-i:-D)\b|\s--delete\s+--force\b|\s-d\s+(-f|--force)\b)"), "xoá nhánh local (-D)"),
-    (after_first("r", "(rm|remove-item|ri|del|erase|rd|rmdir)", r"(\s-\w*r\w*\b|\s-recurse\b|\s--recursive\b|\s/s\b)"),
+    # `\` trước cờ bash bỏ đi (`rm \-rf /x`, 2.8).
+    (after_first("r", "(rm|remove-item|ri|del|erase|rd|rmdir)",
+                 r"(\s\\?-\w*r\w*\b|\s\\?-recurse\b|\s\\?--recursive\b|\s/s\b)"),
      "xoá đệ quy"),
     (r"\b(drop\s+(table|database|schema)|truncate\s+table|dropdb)\b", "xoá dữ liệu SQL"),
     (r"\b(migrate\s+reset|db:(drop|reset))\b", "reset database"),
@@ -177,10 +180,15 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
-PIPE_SHELL = re.compile(r"^\s*\|\s*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+# Phép gán hay env (kèm phép gán) trước shell sau ống vẫn là ống vào shell (`| X=1 bash`, `| env bash`, 2.8).
+# Giá trị gán không qua `|;&<>()`: `\S*` nuốt cả `| x=<<<a…` nên mỗi here-string quét tới cuối dòng, bậc hai (reviewer).
+PIPE_PREFIX = r"(?:[A-Za-z_]\w*=[^\s;&|<>()]*\s+)*(?:env\s+(?:[A-Za-z_]\w*=[^\s;&|<>()]*\s+)*)?"
+HS_PIPE_PREFIX = r"(?:[A-Za-z_]\w*=[^ \t\n;&|<>()]*[ \t]+)*(?:env[ \t]+(?:[A-Za-z_]\w*=[^ \t\n;&|<>()]*[ \t]+)*)?"
+PIPE_SHELL = re.compile(r"^\s*\|\s*" + PIPE_PREFIX + r"(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 # Tên shell ở đâu đó trong đoạn (đoạn đã cắt ở `|;&` và xuống dòng): here_strings, shell_word. `| shell` ngay sau từ.
 SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*" + HS_PIPE_PREFIX + r"(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b",
+                           re.IGNORECASE)
 
 
 # shell_word(lead) khớp đúng những chuỗi `\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$` khớp: tên shell trong
@@ -981,6 +989,33 @@ def agent_worktree(p):
     return bool(m) and "." not in re.split(r"[\\/]", m.group(1))
 
 
+def brace_alts(t):
+    """Các đích bash bung từ brace `{a,b}` trong t (nhiều nhóm, nhóm lồng bung từ trong ra); [t] khi không có nhóm có dấu
+    phẩy; None khi không biết (dãy `{a..b}`, quá 64 đích, quá 8 lượt)."""
+    out = [t]
+    for _ in range(8):
+        nxt, changed = [], False
+        for x in out:
+            m = next((g for g in re.finditer(r"\{([^{}]*)\}", x) if "," in g[1] or ".." in g[1]), None)
+            if not m:
+                nxt.append(x)
+                continue
+            if ".." in m[1]:
+                return None
+            changed = True
+            nxt += [x[:m.start()] + alt + x[m.end():] for alt in m[1].split(",")]
+        out = nxt
+        if len(out) > 64:
+            return None
+        if not changed:
+            return out
+    return None
+
+
+def shlex_quote(x):
+    return "'" + x.replace("'", "'\\''") + "'" if x else "''"
+
+
 def benign_delete(full, ctx, worktree=True, tool="Bash"):
     """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi)."""
     # Biến hay lệnh lồng chưa thay được có thể chứa `..`, đường tuyệt đối hay khoảng trắng (tách thành đích khác, kể cả từ
@@ -1018,6 +1053,18 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
             continue
         if t.endswith("/"):
             return False  # rm đi theo symlink ở thành phần cuối: xoá nội dung thư mục mà link trỏ tới, tên nào cũng vậy
+        if "{" in t:
+            # Brace bash bung trước khi rm chạy: `{/tmp/a,/}` có /tmp/ mà vẫn xoá / (2.8). Bung các nhóm `{a,b}` (cả lồng)
+            # rồi xét từng đích. Không biết (không vô hại): dãy `{a..b}`, quá 64 đích, nháy hay `\` trong đích (bash bỏ
+            # chúng, `}` trong nháy là chữ; reviewer: `node_modules{\x,}` là node_modulesx), hay còn `{…,…}` không bung được.
+            alts = brace_alts(t)
+            if alts is None or re.search(r"[\\\"']", t) or (alts == [t] and re.search(r"\{[^}]*,", t)):
+                return False
+            if alts != [t]:
+                # `--`: đích mở bằng `-` sau bung (`{-src,/tmp/a}` sau `--`) vẫn là đích.
+                if not benign_delete("rm -- " + " ".join(shlex_quote(x) for x in alts), ctx, worktree, tool):
+                    return False
+                continue
         if benign_path(t):
             continue
         # Chỉ tin thư mục cd khi đích chắc là tương đối và ở trong thư mục đó. Brace, extglob (`{a,/}`, `+(.)`; biến, lệnh lồng
