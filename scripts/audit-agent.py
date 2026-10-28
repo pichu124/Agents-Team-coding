@@ -420,13 +420,15 @@ def expand_body(text, outer, inner):
 CANDIDATES = True
 CAND_CAP, VARIANT_CAP, SCAN_CAP = 8, 16, 64  # ứng viên mỗi tên (quá thì tên là không biết), tích mỗi đoạn, quét từng tên
 # Trần tổng độ dài các bản ứng viên của một lệnh: mỗi bản là bản chép đủ dài của đoạn và được so với mọi mẫu, nên lệnh dài
-# nhiều tên nhiều ứng viên từng chậm 7 lần (reviewer bước 2). Hết trần thì đoạn sau không có bản ứng viên.
+# nhiều tên nhiều ứng viên từng chậm 7 lần (reviewer bước 2). variants ước độ dài mỗi bản trước khi sinh (ứng viên dài thay ở
+# nhiều `$A` làm bản dài gấp nhiều lần đoạn) và dừng khi hết trần; hết trần thì đoạn sau không có bản ứng viên.
 VARIANT_BUDGET = lambda n: 2 * n + 65536
 # NAME=, NAME+= (gán, gán tạm, env, export, `bash -s NAME=`), giá trị chữ trong nháy hay tới dấu tách
 CAND_ASSIGN = re.compile(r"(?:^|(?<=[\s;&|(){}`'\"" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + r"]))"
                          r"([A-Za-z_]\w*)(\+?)=(\"[^\"]*\"|'[^']*'|[^\s;&|()<>`]*)")
 CAND_FOR = re.compile(r"\bfor\s+([A-Za-z_]\w*)\s+in\s([^;\n&|)]*)")
-CAND_READ = re.compile(r"\bread\s+(?:-\w+\s+)*([A-Za-z_]\w*)")
+# `read` không dính `-` hay chữ phía trước: `read -read -read … <<<` chỉ quét cờ từ một chỗ (reviewer PR #56: 192 KB mất 63 s).
+CAND_READ = re.compile(r"(?<![\w-])read\s+(?:-\w+\s+)*([A-Za-z_]\w*)")
 CAND_HERESTR = re.compile(r"<<<\s*(\"[^\"]*\"|'[^']*'|[^\s;&|]+)")
 CAND_DEFAULT = re.compile(r"\$\{([A-Za-z_]\w*):?[-=]([^}$]*)\}")
 # Chỗ thay của bản ứng viên: `${NAME}`, `${NAME:-W}` (cả `-=+?`), `$NAME` (cả dãy chữ). Không quét `[^}]*` qua `$`: `${a:-`
@@ -468,11 +470,12 @@ def candidates(b):
     return {k: v for k, v in c.items() if 0 < len(v) <= CAND_CAP}
 
 
-def variants(seg, raw, store, cands, limit=SCAN_CAP):
+def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
     """Các bản (so mẫu, đầy đủ) của đoạn đã thay biến bằng ứng viên. Tên một ứng viên thay ở mọi bản; tích các tên nhiều ứng
     viên ≤ VARIANT_CAP, quá thì quét từng tên (≤ SCAN_CAP bản, tên khác để nguyên). `\\` ngay trước `$` bỏ cùng chỗ thay:
     `\\$O` trong thân <<EOF là của shell con. Chuỗi trong nháy che bằng "" như bản so mẫu gốc, trừ nháy kép chỉ gồm chữ không
-    khoảng trắng và `$NAME` có tên thuộc cands: gỡ che để biến ở vị trí cờ hay tên lệnh khớp mẫu."""
+    khoảng trắng và `$NAME` có tên thuộc cands: gỡ che để biến ở vị trí cờ hay tên lệnh khớp mẫu. room: tổng độ dài (so mẫu
+    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh."""
     names = [n for n in dict.fromkeys(m[1] or m[2] for m in CAND_REF.finditer(raw)) if n in cands]
     if not names:
         return []
@@ -507,7 +510,18 @@ def variants(seg, raw, store, cands, limit=SCAN_CAP):
                 out += [text[pos:j], combo[n]]
                 pos = m.end()
         return "".join(out) + text[pos:]
-    return [(put(plain, refs[0], c), put(raw, refs[1], c)) for c in combos]
+    grow = {}  # tên -> (số chỗ thay, tổng độ dài chỗ thay) trên cả hai bản: độ dài bản = gốc + Σ số chỗ × len(giá trị) − chỗ thay
+    for m, n in refs[0] + refs[1]:
+        k, w = grow.get(n, (0, 0))
+        grow[n] = (k + 1, w + m.end() - m.start())
+    out, left = [], room
+    for c in combos:
+        if left is not None:
+            left -= len(plain) + len(raw) + sum(grow[n][0] * len(v) - grow[n][1] for n, v in c.items() if n in grow)
+            if left < 0:
+                break
+        out.append((put(plain, refs[0], c), put(raw, refs[1], c)))
+    return out
 
 
 def ansi_c(e):
@@ -1015,7 +1029,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh.
             n = budget[0] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
             if cands and extra is not None and "$" in raw and n > 0:
-                vs = variants(seg, raw, store, cands, n)
+                vs = variants(seg, raw, store, cands, n, budget[0] if budget else None)
                 if budget:
                     budget[0] -= sum(len(vp) + len(vf) for vp, vf in vs)
                 extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True) for vp, vf in vs]
