@@ -255,10 +255,11 @@ else
   fi
 fi
 
-# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả ba chuỗi này. Câu mô tả dự án của kit phân
-# biệt với CLAUDE.md riêng có /team-lead và bảng Rule ↔ Thứ thực thi do gardener hay /correct tạo.
+# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó (11 bản, e053d71..ced0c81^) đều có cả ba chuỗi này.
+# Dòng quy ước thứ ba phân biệt với CLAUDE.md riêng có /team-lead và bảng Rule ↔ Thứ thực thi do gardener hay /correct
+# tạo; không dùng câu mô tả dự án của kit vì người dùng điền TODO thì câu đó bị thay.
 if LC_ALL=C grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && LC_ALL=C grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md" &&
-  LC_ALL=C grep -qsF 'Bộ khởi động đội AI agent lập trình cho Claude Code' "$target/CLAUDE.md"; then
+  LC_ALL=C grep -qsF 'Người viết không tự kiểm: verify và review bằng subagent mới' "$target/CLAUDE.md"; then
   echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
   echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
@@ -290,7 +291,7 @@ if [ -f "$manifest" ]; then
       *)
         [ "$in_list" = 1 ] || continue
         # Dòng sửa tay không phải đường file của kit trong repo (../x, /tuyệt đối, C:\x, -rf, tên thư mục): bỏ qua.
-        case "$line" in /* | -* | [A-Za-z]:* | .. | ../* | */.. | */../*) continue ;; esac
+        case "$line" in /* | -* | [A-Za-z]:* | .. | ../* | */.. | */../* | ./* | */./* | *//*) continue ;; esac
         [ -f "$target/$line" ] || continue
         # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
         case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
@@ -311,9 +312,11 @@ fi
 } > "$manifest"
 short() { case "$1" in *-dirty) printf '%s-dirty' "${1:0:7}" ;; *) printf '%s' "${1:0:7}" ;; esac; }
 # Bản đã cài mới hơn kit đang dùng (kit-commit không phải tổ tiên của HEAD của kit): file trùng bản mới hơn sẽ được
-# "cập nhật" về bản cũ. Commit lạ với kit (đã xoá, kit khác) thì không kết luận.
+# "cập nhật" về bản cũ. Commit lạ với kit (đã xoá, kit khác) hay kit clone nông (lịch sử bị cắt, merge-base không
+# biết commit cũ có là tổ tiên không) thì không kết luận.
 prev_sha="${prev%-dirty}"
 if [ -n "$kit_repo" ] && [ -n "$prev_sha" ] && [ "$prev_sha" != unknown ] &&
+  [ "$(git -C "$kit" rev-parse --is-shallow-repository 2>/dev/null)" = false ] &&
   git -C "$kit" cat-file -e "$prev_sha^{commit}" 2>/dev/null &&
   ! git -C "$kit" merge-base --is-ancestor "$prev_sha" HEAD 2>/dev/null; then
   echo "⚠ kit đang ở bản cũ hơn bản đã cài (đã cài $(short "$prev"), kit $(short "$commit")): file kit trong repo vừa được đưa về bản này." >&2
@@ -389,7 +392,8 @@ for f in "${sh_files[@]}"; do
   entry="$(git -C "$target" ls-files -s -- "$f" 2>/dev/null)"
   case "$entry" in
     100755\ *) ;;
-    100644\ *) sha="${entry#* }"; cache+=(--cacheinfo "100755,${sha%% *},$f") ;;
+    # Chỉ khi đúng một dòng ở stage 0; file đang conflict (stage 1..3) thì add như cũ.
+    100644\ *\ 0"	"*) sha="${entry#* }"; cache+=(--cacheinfo "100755,${sha%% *},$f") ;;
     *) untracked+=("$f") ;;
   esac
 done

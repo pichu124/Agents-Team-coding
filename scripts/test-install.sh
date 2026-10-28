@@ -1200,7 +1200,7 @@ echo x > "$aq/-rf"
 {
   echo "kit-commit: unknown"
   echo "kit-files:"
-  printf '%s\n' ../x "$tmp/x" -rf scripts .claude/agents
+  printf '%s\n' ../x "$tmp/x" -rf scripts .claude/agents ./scripts/check.sh scripts//check.sh scripts/./check.sh
 } > "$aq/$man"
 run_install "$aq"
 assert "AQ: cài lại phải exit 0" [ $? -eq 0 ]
@@ -1237,6 +1237,38 @@ git -C "$ask" checkout -q "$ask1"
 "$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
 assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
 assert "AS: kit cũ hơn bản đã cài phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q '^⚠.*cũ hơn' "$tmp/err"
+
+# AT. Bản chép CLAUDE.md của kit cũ mà người dùng đã điền TODO (thay câu mô tả dự án của kit): vẫn là quy ước đội
+#     của kit cũ, phải cảnh báo (reviewer PR #50).
+at="$tmp/old claude filled"
+new_repo "$at"
+install "$at"
+awk '/^Bộ khởi động đội AI agent/ { print "Ứng dụng web bán hàng (Next.js)."; next } /TODO khi cài/ { next } { print }' \
+  "$kit/CLAUDE.md" > "$at/CLAUDE.md"
+run_install "$at"
+assert "AT: install phải exit 0" [ $? -eq 0 ]
+assert "AT: bản chép kit cũ đã điền mô tả dự án vẫn phải cảnh báo ⚠ → $(cat "$tmp/err")" claude_warned
+
+# AU. Kit clone nông (git clone --depth 1, rồi fetch --depth 1 + reset): commit đã cài còn trong kho nhưng ngoài lịch
+#     sử nông, merge-base không kết luận được. Không được báo "kit cũ hơn" khi kit thật ra mới hơn (reviewer PR #50).
+au_up="$tmp/upstream kit"
+new_repo "$au_up"
+kit_copy "$au_up"
+git -C "$au_up" -c core.autocrlf=false add -A
+git -C "$au_up" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit1
+au_k="$tmp/shallow kit"
+git clone -q --depth 1 "file://$au_up" "$au_k"
+au_t="$tmp/shallow target"
+new_repo "$au_t"
+"$au_k/scripts/install-kit.sh" "$au_t" >/dev/null 2>&1
+echo "ghi chú" > "$au_up/NOTES.md"
+git -C "$au_up" add NOTES.md
+git -C "$au_up" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit2
+git -C "$au_k" fetch -q --depth 1 origin
+git -C "$au_k" reset -q --hard FETCH_HEAD
+"$au_k/scripts/install-kit.sh" "$au_t" > "$tmp/out" 2> "$tmp/err"
+assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+assert "AU: kit nông mới hơn thì không được báo kit cũ hơn → $(cat "$tmp/err")" sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
