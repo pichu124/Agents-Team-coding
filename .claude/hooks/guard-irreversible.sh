@@ -216,16 +216,17 @@ case "$src" in
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
     # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
-    # `git push -o 'a|b' --force`. Thêm một dạng thay chúng bằng _ (chỉ thêm chữ để khớp, lệnh gốc vẫn được so). Một lần
-    # grep chọn lệnh có nháy chứa các ký tự đó, rồi awk duyệt từng ký tự (tuyến tính, trạng thái nháy theo từng dòng).
-    if LC_ALL=C text_grep "$src" -Eq -- '"[^"]*[;&|][^"]*"|'"'"'[^'"'"']*[;&|][^'"'"']*'"'"''; then
-      qm="$(printf '%s\n' "$src" | LC_ALL=C awk '{ n = length($0); q = 0
-        for (i = 1; i <= n; i++) { c = substr($0, i, 1)
-          if (q == 0) { if (c == "\047") q = 1; else if (c == "\"") q = 2; else if (c == "\\") { printf "%s", c; i++; c = substr($0, i, 1) } }
-          else if (q == 1) { if (c == "\047") q = 0; else if (c ~ /[;&|]/) c = "_" }
-          else { if (c == "\"") q = 0; else if (c == "\\") { printf "%s", c; i++; c = substr($0, i, 1) } else if (c ~ /[;&|]/) c = "_" }
-          printf "%s", c }
-        print "" }')"
+    # `git push -o 'a|b' --force`. Thêm một dạng thay chúng bằng _ trong đoạn nháy không có khoảng trắng (chỉ thêm chữ để
+    # khớp, lệnh gốc vẫn được so). Đoạn có khoảng trắng thường là thân lệnh (`bash -c "git push … && gh pr create --base
+    # main"`, `ssh h 'a; b'`): nối các lệnh trong đó lại thì luật khớp xuyên qua chúng (reviewer PR #53). Dòng quá 16 KB
+    # bỏ qua: substr của onetrue-awk 2 chép cả dòng, vòng match bậc hai theo độ dài.
+    if LC_ALL=C text_grep "$src" -Eq -- '"[^"[:space:]]*[;&|][^"[:space:]]*"|'"'"'[^'"'"'[:space:]]*[;&|][^'"'"'[:space:]]*'"'"''; then
+      qm="$(printf '%s\n' "$src" | LC_ALL=C awk 'length($0) > 16384 { print ""; next }
+        { s = $0; out = ""
+          while (match(s, /"[^" \t\\]*"|\047[^\047 \t]*\047/)) {
+            seg = substr(s, RSTART, RLENGTH); gsub(/[;&|]/, "_", seg)
+            out = out substr(s, 1, RSTART - 1) seg; s = substr(s, RSTART + RLENGTH) }
+          print out s }')"
       cmd="$cmd$nl$qm"
     fi
     ;;

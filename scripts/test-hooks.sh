@@ -202,6 +202,11 @@ EOF
   expect_guard ask "git push -o 'ci.skip|x' origin feat --force"
   expect_guard ask "git push origin 'a&b' +feat"
   expect_guard allow "git push origin \"x;y\""
+  # Thân lệnh trong nháy (có dấu cách) giữ `;&|` thật: không được nối hai lệnh để luật khớp xuyên qua (reviewer PR #53).
+  expect_guard allow "timeout 60 bash -c \"git push -u origin feat && gh pr create --draft --base main\""
+  expect_guard allow "bash -c 'git push -u origin feat && gh pr create -d --title x'"
+  expect_guard allow "ssh host 'git push origin feat; git branch -d old'"
+  expect_guard allow "git commit -m \"docs: git push; never -f\""
   # cd giả trong chuỗi (chỉ khớp nhờ tiền tố mới) không được đổi chỗ đứng của cd thật phía sau (reviewer 4.10).
   expect_guard ask "git commit -m \"doc; x=1 cd work\"; cd \"main repo\" && git push" "$tmp"
   expect_guard ask "echo \"doc: run time cd work\"; cd \"main repo\" && git push" "$tmp"
