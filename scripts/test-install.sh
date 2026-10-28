@@ -1148,6 +1148,96 @@ case "$out" in
 esac
 assert "AN: chỉ báo đúng một lỗi → $out" [ "$(grep -c '^✘ \.claude' <<<"$out")" = 1 ]
 
+# AO. Khối "Bước tiếp theo": có thay đổi thì chỉ cách xem (git diff HEAD) trước khi commit; cài lại mà không có gì
+#     đổi so với HEAD thì không bảo commit (4.5).
+ao="$tmp/next steps"
+new_repo "$ao"
+run_install "$ao"
+assert "AO: cài mới phải nhắc git diff HEAD → $(cat "$tmp/out")" grep -qF 'git diff HEAD' "$tmp/out"
+git -C "$ao" add -A
+git -C "$ao" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+run_install "$ao"
+assert "AO: cài lại không đổi gì phải exit 0" [ $? -eq 0 ]
+assert "AO: không có gì đổi thì không được bảo git add -A && git commit → $(cat "$tmp/out")" \
+  sh -c '! grep -qF "git add -A" "$1"' _ "$tmp/out"
+assert "AO: không có gì đổi thì phải nói rõ → $(cat "$tmp/out")" grep -qF 'không có gì đổi' "$tmp/out"
+
+# AP. Script đã theo dõi mà kit đổi nội dung: chỉ đặt bit chạy trong index, không stage nội dung, để git diff vẫn hiện
+#     thay đổi của kit (4.5). Script mới (chưa theo dõi) vẫn được stage với bit chạy.
+ap="$tmp/chmod only"
+new_repo "$ap"
+install "$ap"
+echo "# bản kit cũ" >> "$ap/scripts/check.sh"
+git -C "$ap" add -A
+git -C "$ap" update-index --chmod=-x scripts/check.sh # bản cũ commit thiếu bit chạy (commit từ Windows)
+git -C "$ap" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit
+rm -f "$ap/scripts/validate-kit.sh"
+git -C "$ap" rm -q --cached scripts/validate-kit.sh
+git -C "$ap" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "bỏ validate-kit"
+run_install "$ap" --force
+assert "AP: cài lại --force phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+nl=$'\n'
+unstaged="$(git -C "$ap" diff --name-only)"
+case "$nl$unstaged$nl" in
+  *"${nl}scripts/check.sh$nl"*) ok ;;
+  *) bad "AP: nội dung kit đổi phải còn trong git diff (chưa stage) → $unstaged" ;;
+esac
+for f in scripts/check.sh scripts/validate-kit.sh; do
+  mode="$(git -C "$ap" ls-files -s "$f")"
+  case "$mode" in
+    100755*) ok ;;
+    *) bad "AP: $f phải có bit chạy trong index → $mode" ;;
+  esac
+done
+
+# AQ. Dòng sửa tay trong manifest không phải đường file trong repo (../x, /tuyệt đối, -rf, tên thư mục): không báo
+#     "kit đã bỏ" (4.5).
+aq="$tmp/manifest junk"
+new_repo "$aq"
+install "$aq"
+echo x > "$tmp/x"
+echo x > "$aq/-rf"
+{
+  echo "kit-commit: unknown"
+  echo "kit-files:"
+  printf '%s\n' ../x "$tmp/x" -rf scripts .claude/agents
+} > "$aq/$man"
+run_install "$aq"
+assert "AQ: cài lại phải exit 0" [ $? -eq 0 ]
+assert "AQ: dòng không phải file kit trong repo thì không được báo kit đã bỏ → $(cat "$tmp/err")" no_dropped_warning
+
+# AR. CLAUDE.md riêng có /team-lead <task> và bảng Rule ↔ Thứ thực thi (gardener hay /correct tạo) nhưng không có câu mô
+#     tả dự án của kit: không phải bản chép CLAUDE.md của kit cũ, không cảnh báo (4.5).
+ar="$tmp/own rules table"
+new_repo "$ar"
+# shellcheck disable=SC2016  # dấu ` là chữ markdown
+printf '%s\n' '# Dự án X' 'Task lớn dùng `/team-lead <task>`.' '' '## Rule ↔ Thứ thực thi' '| Rule | Thực thi bởi |' > "$ar/CLAUDE.md"
+run_install "$ar"
+assert "AR: install phải exit 0" [ $? -eq 0 ]
+assert "AR: CLAUDE.md riêng có bảng Rule ↔ Thứ thực thi thì không được cảnh báo → $(cat "$tmp/err")" no_claude_warning
+
+# AS. kit-commit trong manifest không phải tổ tiên của HEAD của kit (kit đang ở bản cũ hơn bản đã cài): cảnh báo, vì
+#     file trùng bản mới hơn sẽ bị đưa về bản cũ (4.5).
+ask="$tmp/kit rollback"
+new_repo "$ask"
+kit_copy "$ask"
+git -C "$ask" -c core.autocrlf=false add -A
+git -C "$ask" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit1
+ask1="$(git -C "$ask" rev-parse HEAD)"
+echo "ghi chú" > "$ask/NOTES.md"
+git -C "$ask" add NOTES.md
+git -C "$ask" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit2
+ast="$tmp/rollback target"
+new_repo "$ast"
+"$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
+assert "AS: cài từ kit2 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+assert "AS: kit mới hơn bản đã cài thì không được cảnh báo bản cũ → $(cat "$tmp/err")" \
+  sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
+git -C "$ask" checkout -q "$ask1"
+"$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
+assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+assert "AS: kit cũ hơn bản đã cài phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q '^⚠.*cũ hơn' "$tmp/err"
+
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
   exit 1

@@ -255,8 +255,10 @@ else
   fi
 fi
 
-# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả hai chuỗi này.
-if LC_ALL=C grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && LC_ALL=C grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md"; then
+# Kit cũ chép nguyên CLAUDE.md của kit sang dự án; mọi bản đó đều có cả ba chuỗi này. Câu mô tả dự án của kit phân
+# biệt với CLAUDE.md riêng có /team-lead và bảng Rule ↔ Thứ thực thi do gardener hay /correct tạo.
+if LC_ALL=C grep -qsF '/team-lead <task>' "$target/CLAUDE.md" && LC_ALL=C grep -qsF 'Rule ↔ Thứ thực thi' "$target/CLAUDE.md" &&
+  LC_ALL=C grep -qsF 'Bộ khởi động đội AI agent lập trình cho Claude Code' "$target/CLAUDE.md"; then
   echo "⚠ CLAUDE.md còn quy ước đội chép từ bản kit cũ, trùng với .claude/rules/agent-team.md (bản được cập nhật mỗi lần cài)." >&2
   echo "  Xoá các dòng đó khỏi CLAUDE.md, giữ phần riêng của dự án." >&2
 fi
@@ -286,7 +288,10 @@ if [ -f "$manifest" ]; then
       kit-files: | kit-dropped:) in_list=1 ;;
       '' | '#'*) ;;
       *)
-        [ "$in_list" = 1 ] && [ -e "$target/$line" ] || continue
+        [ "$in_list" = 1 ] || continue
+        # Dòng sửa tay không phải đường file của kit trong repo (../x, /tuyệt đối, C:\x, -rf, tên thư mục): bỏ qua.
+        case "$line" in /* | -* | [A-Za-z]:* | .. | ../* | */.. | */../*) continue ;; esac
+        [ -f "$target/$line" ] || continue
         # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
         case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
         dropped="$dropped$line$nl"
@@ -305,6 +310,15 @@ fi
   printf '%s' "$dropped"
 } > "$manifest"
 short() { case "$1" in *-dirty) printf '%s-dirty' "${1:0:7}" ;; *) printf '%s' "${1:0:7}" ;; esac; }
+# Bản đã cài mới hơn kit đang dùng (kit-commit không phải tổ tiên của HEAD của kit): file trùng bản mới hơn sẽ được
+# "cập nhật" về bản cũ. Commit lạ với kit (đã xoá, kit khác) thì không kết luận.
+prev_sha="${prev%-dirty}"
+if [ -n "$kit_repo" ] && [ -n "$prev_sha" ] && [ "$prev_sha" != unknown ] &&
+  git -C "$kit" cat-file -e "$prev_sha^{commit}" 2>/dev/null &&
+  ! git -C "$kit" merge-base --is-ancestor "$prev_sha" HEAD 2>/dev/null; then
+  echo "⚠ kit đang ở bản cũ hơn bản đã cài (đã cài $(short "$prev"), kit $(short "$commit")): file kit trong repo vừa được đưa về bản này." >&2
+  echo "  Muốn giữ bản mới hơn thì git pull trong thư mục kit rồi cài lại, hoặc git restore các file đó." >&2
+fi
 was=""
 [ -n "$prev" ] && [ "$prev" != "$commit" ] && was=" (trước: $(short "$prev"))"
 echo "✔ .claude/agent-team-kit.txt: kit $(short "$commit")$was"
@@ -366,12 +380,34 @@ sh_files=()
 for f in "${files[@]}"; do
   case "$f" in *.sh) sh_files+=("$f") ;; esac
 done
-if git -C "$target" add --chmod=+x -- "${sh_files[@]}" 2>/dev/null; then
-  echo "✔ đã stage ${#sh_files[@]} script với quyền chạy (giữ được cả khi commit từ Windows)"
+# Script đã theo dõi: chỉ đặt bit chạy cho blob đang có trong index (--cacheinfo, không đọc lại file; update-index
+# --chmod thì đọc lại và stage cả nội dung), để git diff vẫn hiện thay đổi của kit. Script mới: stage với bit chạy.
+# Giữ được bit chạy cả khi commit từ Windows.
+cache=()
+untracked=()
+for f in "${sh_files[@]}"; do
+  entry="$(git -C "$target" ls-files -s -- "$f" 2>/dev/null)"
+  case "$entry" in
+    100755\ *) ;;
+    100644\ *) sha="${entry#* }"; cache+=(--cacheinfo "100755,${sha%% *},$f") ;;
+    *) untracked+=("$f") ;;
+  esac
+done
+set_x=0
+if [ "${#cache[@]}" -gt 0 ] && git -C "$target" update-index "${cache[@]}" 2>/dev/null; then
+  set_x=$((set_x + ${#cache[@]} / 2))
 fi
+if [ "${#untracked[@]}" -gt 0 ] && git -C "$target" add --chmod=+x -- "${untracked[@]}" 2>/dev/null; then
+  set_x=$((set_x + ${#untracked[@]}))
+fi
+[ "$set_x" -gt 0 ] && echo "✔ đặt quyền chạy trong git cho $set_x script (giữ được cả khi commit từ Windows)"
 
 echo
 echo "Bước tiếp theo trong $target:"
 [ -f "$target/scripts/check.local.sh" ] || echo "  1. Tạo scripts/check.local.sh (lint + test nhanh của dự án)"
 echo "  2. ./scripts/check.sh"
-echo "  3. git add -A && git commit -m \"chore: cài bộ agent team\""
+if [ -z "$(git -C "$target" status --porcelain 2>/dev/null)" ]; then
+  echo "  3. Repo không có gì đổi so với HEAD: không cần commit."
+else
+  echo "  3. git status và git diff HEAD để xem kit đổi gì, rồi git add -A && git commit -m \"chore: cài bộ agent team\""
+fi
