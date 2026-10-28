@@ -73,6 +73,7 @@ Không còn PR nào mở (21/10, sau PR #27).
 ## 4. Kit, ngoài audit
 
 ### 4.3 Guard chậm quá timeout với lệnh có hàng nghìn cd (đã thu hẹp)
+- **Git Bash (PR sửa ca A của test-install):** trên MSYS `/nope/..` vào được nên `gone()` không bỏ qua thư mục không tồn tại, đường tắt của 4.3 mất tác dụng: 1500 `cd "a b"` sát timeout 10 giây trên runner Windows (ca A đỏ ở PR #50, #53, #54). Nay `ghost()` nhận các thư mục đó và vòng gom cd chỉ nối tiếp vào tối đa 8 cái liền nhau. Giả lập trên Linux (coi `/nope/..` là vào được): 20,6 → 4,2 giây.
 - **Đã có:** PR sửa 4.3 bỏ qua thư mục POSIX tuyệt đối không tồn tại (không nối cd sau vào nó, không tốn subshell cho nó). Thư mục của phiên ở nhánh feat, cd cuối tới repo ở main, Linux bash 5.2: 1500 `cd . && ls &&` 79 → 1,7 giây, 1500 `cd "a b";` quá 120 giây (cho qua) → 3,8 giây, 1500 `cd "/tmp/d N"'x' &&` 14,7 → 4,1 giây; 3000 cd mỗi loại 2,8 / 6,8 / 8,2 giây (main quá 120 giây hoặc 31 giây). Bash 3.2 của Apple chậm hơn khoảng 30%. test-hooks có hai ca 1500 cd chạy qua `hook_limit`.
 - **Vì sao còn:** thời gian vẫn tăng theo số cd, nên từ khoảng 3000 cd có nháy (ít hơn trên Git Bash, mỗi fork đắt hơn) guard lại gần timeout 10 giây. Lệnh `;cd<NBSP>-p` ×20000 chưa đo lại. Đường có `..`, có `\` hay dạng `C:` vẫn được cd thử như trước.
 - **Xong khi:** ca 6000 cd có nháy qua `hook_limit` trên 3 OS, hoặc quyết định coi cỡ đó là ngoài phạm vi.
