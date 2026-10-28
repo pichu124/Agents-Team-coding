@@ -409,7 +409,7 @@ call("s90", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF")
 call("s91", "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF")
 # Biến thể vòng ba của 2.8 (docs/viec-can-lam.md): `kid` học phép gán mà bash không áp (tham số lệnh, gán tạm, sau `&&`, trong
 # ống, gán tạm của lệnh trước ống hay lệnh nền, tham số vị trí `bash -s`), shell con thay `$O` bằng -rf: bash 5.2 xoá /x.
-# Mục A báo được nhờ mẫu xoá đệ quy nhận `\` trước cờ (cách đọc parent_env thấy `rm \-rf /x`, PR #51), chưa phải nhờ mô hình
+# Mục A báo được nhờ mẫu xoá đệ quy nhận `\` trước cờ (cách đọc mặc định, parent_env, strict thấy `rm \-rf /x`, PR #51), không nhờ mô hình
 # env; các fixture này canh để thiết kế lại (tập ứng viên) không làm mất chúng.
 for i, body in enumerate(("echo O=-f; rm \\$O /x", "O=-f true; rm \\$O /x", "false && O=-f; rm \\$O /x",
                           "O=-f | true; rm \\$O /x")):
