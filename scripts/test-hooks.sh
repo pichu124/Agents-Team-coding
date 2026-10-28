@@ -491,6 +491,14 @@ EOF
   expect_guard ask '${SHELL} -lc '"'git -C '\\''$on_main'\\'' push'"
   # shellcheck disable=SC2016
   expect_guard ask '${SHELL:-bash} -c '"'cd '\\''$on_main'\\'' && git push'"
+  # Thân -c lấy từ biến hay lệnh lồng: guard không biết thân, lệnh có chữ push thì thư mục của push là chưa biết (4.11).
+  expect_guard ask "X='cd \"$on_main\" && git push'; bash -c \"\$X\""
+  expect_guard ask "X='cd \"$on_main\" && git push'; bash -c \$X"
+  expect_guard ask "X='cd \"$on_main\" && git push'; sh -c \"\${X}\""
+  expect_guard ask "bash -c \"\$(printf 'cd %s && git push' \"$on_main\")\""
+  expect_guard ask "bash -c \"\`printf 'cd %s && git push' \"$on_main\"\`\""
+  # shellcheck disable=SC2016
+  expect_guard allow 'X=ls; bash -c "$X"'
   # Shell có option kèm đối số, option sau -c, tên ngoài danh sách cũ, tên từ lệnh lồng, thân ANSI-C (4.11).
   expect_guard ask "bash -O extglob -c 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash +O extglob -c 'cd '\\''$on_main'\\'' && git push'"

@@ -167,8 +167,9 @@ decode_shell_c
 SHV='(^|[;&|(`{[:space:]])"?([$][{]?[A-Za-z_][A-Za-z0-9_]*([:]?[-=?+][^}[:space:]]*)?[}]?|[$][(][^)]*[)]|`[^`]*`)"?([[:space:]]+('"$SHOPT"'))*[[:space:]]+-[A-Za-z]*c'
 # Từ của thân đi qua các đoạn đã đóng ('…', "…", \x, chữ thường) rồi gặp nháy mở chưa đóng ở cuối dòng.
 SHO='([^'"'"'"[:space:]\\]|\\.|'"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*")*('"'"'[^'"'"']*|"([^"\\]|\\.)*)$'
-# Thân ANSI-C ($'…\n…') thì chưa giải: \n là xuống dòng thật trong thân.
-if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC($SHO|[$]')" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
+# Thân ANSI-C ($'…\n…') thì chưa giải: \n là xuống dòng thật trong thân. Thân lấy từ biến hay lệnh lồng ("$X", $X,
+# "$(printf …)", `…`) thì guard không biết thân.
+if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
   shc_unknown=1
 fi
 # Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
