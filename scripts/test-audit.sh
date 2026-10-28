@@ -1998,7 +1998,7 @@ MISSED_28B = [
     ("cat <<EOF; bash <<< 'rm -rf /x'\nhello\nEOF", "xoá đệ quy", "here-string cùng dòng heredoc: xoá /x"),
     ("bash <<'A'\nbash <<X -c 'rm -rf /x'\nX\nA", "xoá đệ quy", "-c của bash lồng trong thân heredoc: xoá /x"),
 ]
-MISSED_28B_PENDING = {17, 18, 19}  # lệnh lồng làm giá trị, here-string cùng dòng heredoc, -c lồng: việc (5) của 2.8
+MISSED_28B_PENDING = {17, 18, 19}  # lệnh lồng làm giá trị: việc (4) của 2.8; here-string cùng dòng heredoc, -c lồng: việc (5)
 for i, (cmd, label, why) in enumerate(MISSED_28B):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     if i in MISSED_28B_PENDING:
@@ -2117,6 +2117,24 @@ cands_of = lambda b: a.variants(b, b, [], a.candidates(b))
 linear("candidates, read lặp trên một dòng", cands_of, lambda k: "read O " * 1000 * k + "; rm <<< -f $O /x")
 linear("candidates, for lặp trên một dòng", cands_of, lambda k: "for D in a " * 1000 * k + " rm -rf $D")
 linear("candidates, ${X:- lặp không đóng trên một dòng", cands_of, lambda k: "rm " + "${O:-" * 1000 * k + " /x")
+# Reviewer PR #56: `\bread` khớp ở mỗi `-read` rồi quét cờ tới cuối mảnh (192 KB mất 63 s); và trần tính theo độ dài đoạn
+# trước khi thay, nên ứng viên dài thay ở nhiều `$A` sinh gấp 49 lần trần (bậc hai). Tổng độ dài các bản phải ≤ trần.
+linear("candidates, -read lặp trước <<< trong một mảnh", cands_of, lambda k: "read " + "-read " * 1000 * k + "<<< -f; echo $O")
+long_vals = lambda k: "".join(f"A={ch * 500 * k}; " for ch in "abcdefgh") + 'echo "' + "$A" * 40 * k + '" $A'
+linear("bản ứng viên, ứng viên dài thay ở nhiều chỗ", labels_of, long_vals)
+real_variants, made = a.variants, []
+def counted_variants(*x, **kw):
+    vs = real_variants(*x, **kw)
+    made.extend(vs)
+    return vs
+a.variants = counted_variants
+for c in [long_vals(4), "".join(f"A={ch * 8000}; " for ch in "abcdefgh") + "echo $A " * 600] + long_cmds:
+    made.clear()
+    labels_of(c)
+    size = sum(len(vp) + len(vf) for vp, vf in made)
+    check(size <= a.VARIANT_BUDGET(len(c)), f"bản ứng viên của lệnh {len(c)} byte dài {size} byte, quá trần "
+                                             f"{a.VARIANT_BUDGET(len(c))}")
+a.variants = real_variants
 HD_OPEN = ["cat <<E", "cat <<'E'", "bash <<E", "bash <<'EOF'", "cat <<-E", 'sh <<"E"', "cat <<E | bash", "cd x <<'E'",
            "cat <<E; rm -rf src", "cat << E", "x <<A <<B"]
 HD_TAIL = ["", "", "\\", "\\\\", "\\\\\\", " \\", "\\\\\\\\", "\\\\\\\\\\"]
