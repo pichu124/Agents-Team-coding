@@ -407,6 +407,16 @@ call("s88", "D=/tmp/x\nbash <<EOF-1\nEOF-1\nD=\nrm -rf $D/src")
 call("s89", "D=/tmp/x\nbash <<EOF\r\ntrue\nEOF\r\nunset D\nrm -rf $D/src")
 call("s90", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF")
 call("s91", "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF")
+# Biến thể vòng ba của 2.8 (docs/viec-can-lam.md): `kid` học phép gán mà bash không áp (tham số lệnh, gán tạm, sau `&&`, trong
+# ống, gán tạm của lệnh trước ống hay lệnh nền, tham số vị trí `bash -s`), shell con thay `$O` bằng -rf: bash 5.2 xoá /x.
+# Mục A báo được nhờ mẫu xoá đệ quy nhận `\` trước cờ (cách đọc parent_env thấy `rm \-rf /x`, PR #51), chưa phải nhờ mô hình
+# env; các fixture này canh để thiết kế lại (tập ứng viên) không làm mất chúng.
+for i, body in enumerate(("echo O=-f; rm \\$O /x", "O=-f true; rm \\$O /x", "false && O=-f; rm \\$O /x",
+                          "O=-f | true; rm \\$O /x")):
+    call(f"h28-{i}", f"export O=-rf; bash <<EOF\n{body}\nEOF")
+call("h28-4", "export O=-rf; O=-f cat <<EOF | bash\nrm \\$O /x\nEOF")
+call("h28-5", "export O=-rf; O=-f true & bash <<EOF\nrm \\$O /x\nEOF")
+call("h28-6", "export O=-rf; bash -s O=-f <<EOF\nrm \\$O /x\nEOF")
 # Các lệnh khác của blissful-dirac mà nền (mặc định + PR #5) bỏ sót, nay bắt được nhờ các bản port youthful-fermi tương
 # ứng (thân rỗng, đích còn biến, cd sau `||`/`|`/trước `&`, biến trong thân <<EOF, gán tạm/sau &&/trong ống). Bash 5.2: rm
 # chạy ở thư mục dự án hay xoá /src.
@@ -1230,6 +1240,11 @@ for must in ("bash <<EOF; D=/tmp/x\nrm -rf $D/src\nEOF", "bash <<EOF && D=/tmp/x
              "D=/tmp/x/ bash <<EOF\nrm -rf ${D}src\nEOF"):
     check(must in A, f"shell cha thay biến trong thân <<EOF tại toán tử heredoc, trước lệnh sau nó, không thấy gán tạm: {must!r}")
 check("D=/srv/x/ bash <<'EOF'\nrm -rf ${D}src\nEOF" in A, "thân <<'EOF': shell con thấy phép gán tạm của chính nó")
+for must in [f"export O=-rf; bash <<EOF\n{b}\nEOF" for b in ("echo O=-f; rm \\$O /x", "O=-f true; rm \\$O /x",
+                                                             "false && O=-f; rm \\$O /x", "O=-f | true; rm \\$O /x")] + [
+        "export O=-rf; O=-f cat <<EOF | bash\nrm \\$O /x\nEOF", "export O=-rf; O=-f true & bash <<EOF\nrm \\$O /x\nEOF",
+        "export O=-rf; bash -s O=-f <<EOF\nrm \\$O /x\nEOF"]:
+    check(must in A, f"2.8 vòng ba: phép gán bash không áp không được đổi `$O` của shell con (bash xoá /x): {must!r}")
 for must in ("\x01\ncd /tmp/x # don't\ncd proj; D=/tmp/x/ \\\\\n\x03\ncd /tmp/x # don't\nrm -rf $D/src",
              "'\necho 'a b'\n\x02\n#'\necho ${#x} | D=/tmp/x/ # x \\\nrm -rf $D/src; echo \\#z \\",
              "bash <<'EOF'\nbash <<EOF; D=/tmp/x\n\x03\n(rm -rf $D/src)"):
