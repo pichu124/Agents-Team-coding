@@ -215,6 +215,20 @@ case "$src" in
         if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
+    # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
+    # `git push -o 'a|b' --force`. Thêm một dạng thay chúng bằng _ trong đoạn nháy không có khoảng trắng (chỉ thêm chữ để
+    # khớp, lệnh gốc vẫn được so). Đoạn có khoảng trắng thường là thân lệnh (`bash -c "git push … && gh pr create --base
+    # main"`, `ssh h 'a; b'`): nối các lệnh trong đó lại thì luật khớp xuyên qua chúng (reviewer PR #53). Dòng quá 16 KB
+    # bỏ qua: substr của onetrue-awk 2 chép cả dòng, vòng match bậc hai theo độ dài.
+    if LC_ALL=C text_grep "$src" -Eq -- '"[^"[:space:]]*[;&|][^"[:space:]]*"|'"'"'[^'"'"'[:space:]]*[;&|][^'"'"'[:space:]]*'"'"''; then
+      qm="$(printf '%s\n' "$src" | LC_ALL=C awk 'length($0) > 16384 { print ""; next }
+        { s = $0; out = ""
+          while (match(s, /"[^" \t\\]*"|\047[^\047 \t]*\047/)) {
+            seg = substr(s, RSTART, RLENGTH); gsub(/[;&|]/, "_", seg)
+            out = out substr(s, 1, RSTART - 1) seg; s = substr(s, RSTART + RLENGTH) }
+          print out s }')"
+      cmd="$cmd$nl$qm"
+    fi
     ;;
 esac
 
