@@ -181,12 +181,14 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
 # Phép gán hay env (kèm phép gán) trước shell sau ống vẫn là ống vào shell (`| X=1 bash`, `| env bash`, 2.8).
-PIPE_PREFIX = r"(?:[A-Za-z_]\w*=\S*\s+)*(?:env\s+(?:[A-Za-z_]\w*=\S*\s+)*)?"
+# Giá trị gán không qua `|;&<>()`: `\S*` nuốt cả `| x=<<<a…` nên mỗi here-string quét tới cuối dòng, bậc hai (reviewer).
+PIPE_PREFIX = r"(?:[A-Za-z_]\w*=[^\s;&|<>()]*\s+)*(?:env\s+(?:[A-Za-z_]\w*=[^\s;&|<>()]*\s+)*)?"
+HS_PIPE_PREFIX = r"(?:[A-Za-z_]\w*=[^ \t\n;&|<>()]*[ \t]+)*(?:env[ \t]+(?:[A-Za-z_]\w*=[^ \t\n;&|<>()]*[ \t]+)*)?"
 PIPE_SHELL = re.compile(r"^\s*\|\s*" + PIPE_PREFIX + r"(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
 # Tên shell ở đâu đó trong đoạn (đoạn đã cắt ở `|;&` và xuống dòng): here_strings, shell_word. `| shell` ngay sau từ.
 SHELL_WORD_ANY = re.compile(r"\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
-HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*" + PIPE_PREFIX.replace(r"\s", r"[ \t]")
-                           + r"(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b", re.IGNORECASE)
+HS_PIPE_SHELL = re.compile(r"[ \t]*\|[ \t]*" + HS_PIPE_PREFIX + r"(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b",
+                           re.IGNORECASE)
 
 
 # shell_word(lead) khớp đúng những chuỗi `\b(bash|sh|zsh|dash|pwsh|powershell|cmd)(\.exe)?\b[^\n|;&]*$` khớp: tên shell trong
@@ -988,8 +990,8 @@ def agent_worktree(p):
 
 
 def brace_alts(t):
-    """Các đích bash bung từ brace `{a,b}` trong t (mỗi nhóm một tầng, có thể nhiều nhóm); [t] khi không có nhóm có dấu
-    phẩy; None khi không biết (dãy `{a..b}`, brace lồng, quá 64 đích)."""
+    """Các đích bash bung từ brace `{a,b}` trong t (nhiều nhóm, nhóm lồng bung từ trong ra); [t] khi không có nhóm có dấu
+    phẩy; None khi không biết (dãy `{a..b}`, quá 64 đích, quá 8 lượt)."""
     out = [t]
     for _ in range(8):
         nxt, changed = [], False
@@ -998,7 +1000,7 @@ def brace_alts(t):
             if not m:
                 nxt.append(x)
                 continue
-            if ".." in m[1] or "{" in m[1]:
+            if ".." in m[1]:
                 return None
             changed = True
             nxt += [x[:m.start()] + alt + x[m.end():] for alt in m[1].split(",")]
@@ -1052,13 +1054,15 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
         if t.endswith("/"):
             return False  # rm đi theo symlink ở thành phần cuối: xoá nội dung thư mục mà link trỏ tới, tên nào cũng vậy
         if "{" in t:
-            # Brace bash bung trước khi rm chạy: `{/tmp/a,/}` có /tmp/ mà vẫn xoá / (2.8). Bung một tầng `{a,b}` rồi xét
-            # từng đích; dãy `{a..b}`, brace lồng hay quá 64 đích thì không biết.
+            # Brace bash bung trước khi rm chạy: `{/tmp/a,/}` có /tmp/ mà vẫn xoá / (2.8). Bung các nhóm `{a,b}` (cả lồng)
+            # rồi xét từng đích. Không biết (không vô hại): dãy `{a..b}`, quá 64 đích, nháy hay `\` trong đích (bash bỏ
+            # chúng, `}` trong nháy là chữ; reviewer: `node_modules{\x,}` là node_modulesx), hay còn `{…,…}` không bung được.
             alts = brace_alts(t)
-            if alts is None:
+            if alts is None or re.search(r"[\\\"']", t) or (alts == [t] and re.search(r"\{[^}]*,", t)):
                 return False
             if alts != [t]:
-                if not benign_delete("rm " + " ".join(shlex_quote(x) for x in alts), ctx, worktree, tool):
+                # `--`: đích mở bằng `-` sau bung (`{-src,/tmp/a}` sau `--`) vẫn là đích.
+                if not benign_delete("rm -- " + " ".join(shlex_quote(x) for x in alts), ctx, worktree, tool):
                     return False
                 continue
         if benign_path(t):
