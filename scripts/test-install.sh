@@ -62,8 +62,10 @@ assert "A: script dò sự cố phải có quyền chạy" [ -x "$a/scripts/audi
 assert "A: thiếu sàn số ca phải hỏi" [ -f "$a/scripts/guard-ask-floor" ]
 # Bằng chứng verifier lưu ở artifacts/: phải bị ignore, không thì Stop gate chạy check ở mọi lượt.
 assert "A: artifacts/ (bằng chứng của verifier) phải bị .gitignore bỏ qua" git -C "$a" check-ignore -q artifacts/verify/x/out.txt
-(cd "$a" && ./scripts/test-hooks.sh >/dev/null 2>&1)
-assert "A: test hook trong repo đích phải xanh (sàn số ca đúng)" [ $? -eq 0 ]
+# Giữ output: lần đỏ trên runner Windows và macOS (PR #50, #53) không cho biết ca nào đỏ.
+(cd "$a" && ./scripts/test-hooks.sh > "$tmp/a-hooks.log" 2>&1)
+rc=$?
+assert "A: test hook trong repo đích phải xanh (sàn số ca đúng) → $(grep -E '✘' "$tmp/a-hooks.log" | head -n 5 | cut -c1-300)" [ "$rc" -eq 0 ]
 (cd "$a" && ./scripts/validate-kit.sh >/dev/null 2>&1)
 assert "A: validate-kit trong repo đích phải xanh" [ $? -eq 0 ]
 
