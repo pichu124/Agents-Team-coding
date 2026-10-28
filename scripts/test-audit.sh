@@ -1971,6 +1971,40 @@ MISSED_28 = [
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Lỗ còn lại của 2.8 mà không chính sách env đơn nào đọc đúng (bash 5.2 thật xoá đích ghi bên cạnh, rm thay bằng hàm in đối số):
+# phép gán có thể đã áp lẫn phép gán chắc không áp, hai heredoc trên một dòng, heredoc lồng, biến trong nháy kép ở vị trí cờ
+# hay tên lệnh, read <<<, ${O:-W}. Tập ứng viên (candidates/variants) che chúng. MISSED_28B_PENDING là chỉ số các ca bước đó
+# chưa che, chỉ được GIẢM như MISSED_VP_PENDING: ca trong đó mà đã nghi cũng đỏ.
+MISSED_28B = [
+    ("O=-f; true && O=-rf; O=-f true; rm $O /x", "xoá đệ quy", "O có thể là -rf, gán tạm không đổi: xoá /x"),
+    ("C=echo; true && C=rm; C=echo true; $C -rf /x", "xoá đệ quy", "C có thể là rm, gán tạm không đổi: xoá /x"),
+    ("bash <<'EOF'\nO=-f; true && O=-rf; O=-f true; rm $O /x\nEOF", "xoá đệ quy", "lớp trộn trong thân <<'EOF': xoá /x"),
+    ("bash <<EOF\nO=-f; true && O=-rf; O=-f true; rm \\$O /x\nEOF", "xoá đệ quy", "lớp trộn, `\\$` cho shell con: xoá /x"),
+    ("bash <<'EOF'\nC=echo; true && C=rm; C=echo true; $C -rf /x\nEOF", "xoá đệ quy", "tên lệnh, thân <<'EOF': xoá /x"),
+    ("bash <<EOF\nC=echo; true && C=rm; C=echo true; \\$C -rf /x\nEOF", "xoá đệ quy", "tên lệnh, `\\$`: xoá /x"),
+    ("D=/; bash <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "thân B do shell cha thay D=/: xoá //y"),
+    ("C=rm; bash <<A; bash <<B\ntrue\nA\nC=echo; $C -rf /y\nB", "xoá đệ quy", "thân B do shell cha thay C=rm: xoá /y"),
+    ("D=/; cat <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "cat <<A; bash <<B: xoá //y"),
+    ("D=/; true <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "true <<A; bash <<B: xoá //y"),
+    ("D=/; bash <<A <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "bash <<A <<B: thân B là stdin, xoá //y"),
+    ("D=/; bash <<'EOF'\nD=/tmp/w; bash <<EOF2\nrm -rf \\$D/x\nEOF2\nEOF", "xoá đệ quy",
+     "heredoc lồng: `$D` cho shell cháu, D không export là rỗng: xoá /x"),
+    ("O=-rf; bash <<EOF\nrm \\\\$O /x\nEOF", "xoá đệ quy", "shell cha đổi `\\\\` thành `\\`, shell con bỏ `\\`: xoá /x"),
+    ('X=-rf; rm "$X" /x', "xoá đệ quy", "cờ trong nháy kép: xoá /x"),
+    ('X=rm; "$X" -rf /x', "xoá đệ quy", "tên lệnh trong nháy kép: xoá /x"),
+    ("read O <<< -rf; rm $O /x", "xoá đệ quy", "read <<< gán O=-rf: xoá /x"),
+    ("rm ${O:--rf} /x", "xoá đệ quy", "giá trị mặc định -rf: xoá /x"),
+    ("O=$(echo -rf); rm $O /x", "xoá đệ quy", "giá trị từ lệnh lồng: xoá /x"),
+    ("cat <<EOF; bash <<< 'rm -rf /x'\nhello\nEOF", "xoá đệ quy", "here-string cùng dòng heredoc: xoá /x"),
+    ("bash <<'A'\nbash <<X -c 'rm -rf /x'\nX\nA", "xoá đệ quy", "-c của bash lồng trong thân heredoc: xoá /x"),
+]
+MISSED_28B_PENDING = {17, 18, 19}  # lệnh lồng làm giá trị, here-string cùng dòng heredoc, -c lồng: việc (5) của 2.8
+for i, (cmd, label, why) in enumerate(MISSED_28B):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    if i in MISSED_28B_PENDING:
+        check(label not in got, f"MISSED_28B[{i}] nay đã nghi: bỏ {i} khỏi MISSED_28B_PENDING để có assert canh: {cmd!r}")
+    else:
+        check(label in got, f"MISSED_28B[{i}] {why}: {cmd!r}: {got!r}")
 # Glob mở bằng `.` (`.?`, `.[.]`, `.*`) khớp cả `..` ở bash < 5.2 (chưa có globskipdots; /bin/bash của macOS là 3.2): đích
 # tương đối sau cd vào thư mục tạm hay build ra ngoài thư mục đó (bash 5.2 với `shopt -u globskipdots`, rm thay bằng echo:
 # xoá ../../home tức /home, ../src của dự án).
