@@ -307,13 +307,15 @@ fi
 
 # Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
 # cd ở mỗi cách đọc (4.3).
-# gone <đường>: đường POSIX tuyệt đối, không có .., \ hay dạng C:, mà không phải thư mục (lúc này cd tới đó lỗi). [ -d ] là
-# builtin, không fork. Đường có .. (cd -L khác -P), có \ hay dạng C: thì không kết luận: coi như có. Hệ nào bỏ `..` theo
+# gone <đường>: đường tuyệt đối (POSIX hay C:/…), không có .. hay \, mà không phải thư mục (lúc này cd tới đó lỗi). [ -d ]
+# là builtin, không fork. Dạng C:/… là cwd mà Python của Windows nhận khi Git Bash đổi đường POSIX: không kết luận được thì
+# mỗi cd vào thư mục chưa có tốn một subshell (PR #55). Trên Linux đường đó vốn không cd được. Đường có .. (cd -L khác -P),
+# có \ hay chỉ `C:` thì không kết luận: coi như có. Hệ nào bỏ `..` theo
 # chữ (/nope/.. vào được) thì cd ../M sau cd /nope vẫn tới được M: cũng coi như có.
 gone() {
   case "$1" in
-    *..* | *\\* | [A-Za-z]:*) return 1 ;;
-    /*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
+    *..* | *\\*) return 1 ;;
+    /* | [A-Za-z]:/*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
     *) return 1 ;;
   esac
 }
