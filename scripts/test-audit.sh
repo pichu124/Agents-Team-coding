@@ -2120,6 +2120,10 @@ linear("candidates, ${X:- lặp không đóng trên một dòng", cands_of, lamb
 # Reviewer PR #56: `\bread` khớp ở mỗi `-read` rồi quét cờ tới cuối mảnh (192 KB mất 63 s); và trần tính theo độ dài đoạn
 # trước khi thay, nên ứng viên dài thay ở nhiều `$A` sinh gấp 49 lần trần (bậc hai). Tổng độ dài các bản phải ≤ trần.
 linear("candidates, -read lặp trước <<< trong một mảnh", cands_of, lambda k: "read " + "-read " * 1000 * k + "<<< -f; echo $O")
+# Reviewer PR #56 vòng ba: mỗi `A+=` chép lại các giá trị cũ dài kể cả khi A đã quá trần (hay `A+=` rỗng không đổi gì).
+for tail in ("A+=yy;", "A+=;"):
+    linear(f"candidates, {tail} lặp sau giá trị dài", cands_of,
+           lambda k, tail=tail: "A=" + "x" * 20000 * k + "; " + tail * 3000 * k + " echo $A")
 long_vals = lambda k: "".join(f"A={ch * 500 * k}; " for ch in "abcdefgh") + 'echo "' + "$A" * 40 * k + '" $A'
 linear("bản ứng viên, ứng viên dài thay ở nhiều chỗ", labels_of, long_vals)
 real_variants, made = a.variants, []
