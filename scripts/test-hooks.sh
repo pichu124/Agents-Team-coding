@@ -450,6 +450,13 @@ EOF
   expect_guard allow "${cds}cd \"$work\" && git push origin HEAD"
   expect_guard ask "${cds}cd \"$on_main\" && git push origin HEAD"
   expect_guard ask "${cds}cd x; cd \"$work\" && git push origin HEAD"
+  # Trần GC_MAX (git -C × thư mục cd) và SUB_MAX (subshell đọc nhánh): lệnh thường ngày dưới trần vẫn đọc đúng.
+  gcs="$(printf 'git -C x status; %.0s' $(seq 100))"
+  expect_guard allow "cd \"$work\"; ${gcs}git push origin HEAD"
+  expect_guard ask "cd \"$work\"; ${gcs}git -C \"$on_main\" push origin HEAD"
+  ups="$(printf 'cd ..; %.0s' $(seq 20))"
+  expect_guard allow "${ups}cd \"$work\" && git push origin HEAD"
+  expect_guard ask "${ups}cd \"$on_main\" && git push origin HEAD"
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
   expect_guard ask "bash -c 'cd \"$on_main\" && git push'"
   expect_guard ask "{ cd \"$on_main\" && git push; }"
@@ -586,6 +593,16 @@ many_cd 'cd . && ls && ' > "$tmp/long-manydot.json"
 # Windows, sát timeout khi máy bận (ca A của test-install đỏ chập chờn). 6000 cd có nháy, và cd xen kẽ hai thư mục.
 many_cd 'cd \"a b\"; ' 6000 > "$tmp/long-manycd6k.json"
 many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.json"
+# Reviewer PR #55: mỗi `git -C` xét với mọi thư mục cd đã gom (299 × 250 × 4 cách đọc từng mất 16–19 giây trên Linux), và
+# mỗi thư mục có `..` tốn subshell (299 `cd ..` 4,5 giây trên Linux, fork trên Git Bash đắt hơn nhiều).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 299); do printf '%s' 'cd .; '; done
+  printf 'cd \\"%s\\"; ' "$on_main"
+  for _ in $(seq 250); do printf '%s' 'git -C x status; '; done
+  printf 'git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-manygitc.json"
+many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
 # Phép gán ~190 KB trước cd: last_arg chạy regex bậc hai theo độ dài từ không có dấu cách (reviewer 4.10).
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"x=' "$work"
@@ -651,7 +668,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-assign; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
