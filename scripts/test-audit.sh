@@ -409,7 +409,7 @@ call("s90", "D={/tmp/,/}x\nbash <<EOF\nrm -rf $D/src\nEOF")
 call("s91", "D=/tmp/x,/\nbash <<EOF\nrm -rf {$D}/src\nEOF")
 # Biến thể vòng ba của 2.8 (docs/viec-can-lam.md): `kid` học phép gán mà bash không áp (tham số lệnh, gán tạm, sau `&&`, trong
 # ống, gán tạm của lệnh trước ống hay lệnh nền, tham số vị trí `bash -s`), shell con thay `$O` bằng -rf: bash 5.2 xoá /x.
-# Mục A báo được nhờ mẫu xoá đệ quy nhận `\` trước cờ (cách đọc parent_env thấy `rm \-rf /x`, PR #51), chưa phải nhờ mô hình
+# Mục A báo được nhờ mẫu xoá đệ quy nhận `\` trước cờ (cách đọc mặc định, parent_env, strict thấy `rm \-rf /x`, PR #51), không nhờ mô hình
 # env; các fixture này canh để thiết kế lại (tập ứng viên) không làm mất chúng.
 for i, body in enumerate(("echo O=-f; rm \\$O /x", "O=-f true; rm \\$O /x", "false && O=-f; rm \\$O /x",
                           "O=-f | true; rm \\$O /x")):
@@ -1971,6 +1971,40 @@ MISSED_28 = [
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Lỗ còn lại của 2.8 mà không chính sách env đơn nào đọc đúng (bash 5.2 thật xoá đích ghi bên cạnh, rm thay bằng hàm in đối số):
+# phép gán có thể đã áp lẫn phép gán chắc không áp, hai heredoc trên một dòng, heredoc lồng, biến trong nháy kép ở vị trí cờ
+# hay tên lệnh, read <<<, ${O:-W}. Tập ứng viên (candidates/variants) che chúng. MISSED_28B_PENDING là chỉ số các ca bước đó
+# chưa che, chỉ được GIẢM như MISSED_VP_PENDING: ca trong đó mà đã nghi cũng đỏ.
+MISSED_28B = [
+    ("O=-f; true && O=-rf; O=-f true; rm $O /x", "xoá đệ quy", "O có thể là -rf, gán tạm không đổi: xoá /x"),
+    ("C=echo; true && C=rm; C=echo true; $C -rf /x", "xoá đệ quy", "C có thể là rm, gán tạm không đổi: xoá /x"),
+    ("bash <<'EOF'\nO=-f; true && O=-rf; O=-f true; rm $O /x\nEOF", "xoá đệ quy", "lớp trộn trong thân <<'EOF': xoá /x"),
+    ("bash <<EOF\nO=-f; true && O=-rf; O=-f true; rm \\$O /x\nEOF", "xoá đệ quy", "lớp trộn, `\\$` cho shell con: xoá /x"),
+    ("bash <<'EOF'\nC=echo; true && C=rm; C=echo true; $C -rf /x\nEOF", "xoá đệ quy", "tên lệnh, thân <<'EOF': xoá /x"),
+    ("bash <<EOF\nC=echo; true && C=rm; C=echo true; \\$C -rf /x\nEOF", "xoá đệ quy", "tên lệnh, `\\$`: xoá /x"),
+    ("D=/; bash <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "thân B do shell cha thay D=/: xoá //y"),
+    ("C=rm; bash <<A; bash <<B\ntrue\nA\nC=echo; $C -rf /y\nB", "xoá đệ quy", "thân B do shell cha thay C=rm: xoá /y"),
+    ("D=/; cat <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "cat <<A; bash <<B: xoá //y"),
+    ("D=/; true <<A; bash <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "true <<A; bash <<B: xoá //y"),
+    ("D=/; bash <<A <<B\ntrue\nA\nD=/tmp/w; rm -rf $D/y\nB", "xoá đệ quy", "bash <<A <<B: thân B là stdin, xoá //y"),
+    ("D=/; bash <<'EOF'\nD=/tmp/w; bash <<EOF2\nrm -rf \\$D/x\nEOF2\nEOF", "xoá đệ quy",
+     "heredoc lồng: `$D` cho shell cháu, D không export là rỗng: xoá /x"),
+    ("O=-rf; bash <<EOF\nrm \\\\$O /x\nEOF", "xoá đệ quy", "shell cha đổi `\\\\` thành `\\`, shell con bỏ `\\`: xoá /x"),
+    ('X=-rf; rm "$X" /x', "xoá đệ quy", "cờ trong nháy kép: xoá /x"),
+    ('X=rm; "$X" -rf /x', "xoá đệ quy", "tên lệnh trong nháy kép: xoá /x"),
+    ("read O <<< -rf; rm $O /x", "xoá đệ quy", "read <<< gán O=-rf: xoá /x"),
+    ("rm ${O:--rf} /x", "xoá đệ quy", "giá trị mặc định -rf: xoá /x"),
+    ("O=$(echo -rf); rm $O /x", "xoá đệ quy", "giá trị từ lệnh lồng: xoá /x"),
+    ("cat <<EOF; bash <<< 'rm -rf /x'\nhello\nEOF", "xoá đệ quy", "here-string cùng dòng heredoc: xoá /x"),
+    ("bash <<'A'\nbash <<X -c 'rm -rf /x'\nX\nA", "xoá đệ quy", "-c của bash lồng trong thân heredoc: xoá /x"),
+]
+MISSED_28B_PENDING = {17, 18, 19}  # lệnh lồng làm giá trị: việc (4) của 2.8; here-string cùng dòng heredoc, -c lồng: việc (5)
+for i, (cmd, label, why) in enumerate(MISSED_28B):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    if i in MISSED_28B_PENDING:
+        check(label not in got, f"MISSED_28B[{i}] nay đã nghi: bỏ {i} khỏi MISSED_28B_PENDING để có assert canh: {cmd!r}")
+    else:
+        check(label in got, f"MISSED_28B[{i}] {why}: {cmd!r}: {got!r}")
 # Glob mở bằng `.` (`.?`, `.[.]`, `.*`) khớp cả `..` ở bash < 5.2 (chưa có globskipdots; /bin/bash của macOS là 3.2): đích
 # tương đối sau cd vào thư mục tạm hay build ra ngoài thư mục đó (bash 5.2 với `shopt -u globskipdots`, rm thay bằng echo:
 # xoá ../../home tức /home, ../src của dự án).
@@ -2024,6 +2058,7 @@ def tool_commands(x):
         for v in x.values():
             yield from tool_commands(v)
 corpus = [c for c, _why in vp.MISSED_VP] + vp.fuzz_vp_b() + vp.fuzz_vp_c()
+n_vp = len(corpus)
 for f in glob.glob(os.path.join(sys.argv[15], "**", "*.jsonl"), recursive=True):
     with open(f, encoding="utf-8") as fh:
         for line in fh:
@@ -2031,6 +2066,82 @@ for f in glob.glob(os.path.join(sys.argv[15], "**", "*.jsonl"), recursive=True):
                 corpus += tool_commands(json.loads(line))
             except ValueError:
                 pass  # dòng hỏng có chủ ý của fixture
+# Tập ứng viên (2.8, candidates/variants): bản ứng viên chỉ thêm đoạn so sau đoạn gốc, nên nhãn khi tắt ⊆ nhãn khi bật
+# (⊇ cấu trúc) trên fixture và fuzz của vibrant-pascal; bật không làm chậm quá 1,6 lần trên lệnh fixture; tuyến tính khi
+# nhiều tên trong một đoạn, nhiều đoạn có tên nhiều ứng viên, read/for/${X:-} lặp trên một dòng.
+fixture_cmds = list(dict.fromkeys(corpus[n_vp:]))
+narrowed, widened = [], 0
+for c in dict.fromkeys(corpus):
+    a.CANDIDATES = False
+    off = set(a.suspicious_labels(c, a.SUSPICIOUS))
+    a.CANDIDATES = True
+    on = set(a.suspicious_labels(c, a.SUSPICIOUS))
+    widened += on > off
+    if off - on:
+        narrowed.append((len(c), c, sorted(off - on)))
+check(not narrowed, f"bản ứng viên làm mất nhãn ({len(narrowed)} lệnh, ngắn nhất trước): {sorted(narrowed)[:3]!r}")
+labels_all = lambda cs: [a.suspicious_labels(c, a.SUSPICIOUS) for c in cs]
+for _ in range(3):
+    a.CANDIDATES = False
+    t_off = best_time(labels_all, fixture_cmds)
+    a.CANDIDATES = True
+    t_on = best_time(labels_all, fixture_cmds)
+    if t_on < 1.6 * t_off:
+        break
+check(len(fixture_cmds) > 300 and t_on < 1.6 * t_off,
+      f"bản ứng viên: {len(fixture_cmds)} lệnh fixture mất {t_on:.3f} s khi bật, {t_off:.3f} s khi tắt (phải dưới 1,6 lần)")
+print(f"• audit: bản ứng viên: {widened}/{len(set(corpus))} lệnh fixture và fuzz thêm nhãn, không lệnh nào mất nhãn; "
+      f"{len(fixture_cmds)} lệnh fixture {t_on:.3f} s bật / {t_off:.3f} s tắt")
+labels_of = lambda c: a.suspicious_labels(c, a.SUSPICIOUS)
+# Lệnh dài, nhiều tên nhiều ứng viên (reviewer bước 2: đoạn 188 KB với 8 tên × 8 ứng viên từng chậm 7 lần vì mỗi đoạn có tới 64
+# bản đủ dài): tổng độ dài các bản ứng viên của một lệnh có trần, bật không chậm quá 2,5 lần so với tắt.
+long_cmds = ["".join(f"V{j}=-{v}; " for j in range(8) for v in "abcdefgh") + "echo " + " ".join(f"$V{j}" for j in range(8)) * 2000,
+             "".join(f"V{j}=-{v}; " for j in range(8) for v in "abcdefgh")
+             + "".join(f"echo {i} " + " ".join(f"$V{j}" for j in range(8)) + "; " for i in range(1000))]
+for c in long_cmds:
+    for _ in range(3):
+        a.CANDIDATES = False
+        t_off = best_time(labels_of, c)
+        a.CANDIDATES = True
+        t_on = best_time(labels_of, c)
+        if t_on < 2.5 * t_off:
+            break
+    check(t_on < 2.5 * t_off, f"bản ứng viên trên lệnh {len(c)} byte: {t_on:.3f} s bật, {t_off:.3f} s tắt (phải dưới 2,5 lần)")
+linear("bản ứng viên, nhiều tên hai ứng viên trong một đoạn", labels_of,
+       lambda k: "".join(f"V{i}=/tmp/a V{i}=/tmp/b; " for i in range(250 * k)) + "rm -rf " + " ".join(f"$V{i}" for i in range(250 * k)))
+linear("bản ứng viên, nhiều đoạn có tên tám ứng viên", labels_of,
+       lambda k: "".join(f"O=-{v}; " for v in "abcdefgh") + "rm $O /x; " * 250 * k)
+# Đo thẳng candidates và variants (phần còn lại của suspicious_labels che mất): regex quét từ mỗi `read` tới `<<<` hay từ mỗi
+# `${O:-` tới `}` là bậc hai khi không có chỗ khớp (đo: gấp 4 độ dài chậm ~15 lần).
+cands_of = lambda b: a.variants(b, b, [], a.candidates(b))
+linear("candidates, read lặp trên một dòng", cands_of, lambda k: "read O " * 1000 * k + "; rm <<< -f $O /x")
+linear("candidates, for lặp trên một dòng", cands_of, lambda k: "for D in a " * 1000 * k + " rm -rf $D")
+linear("candidates, ${X:- lặp không đóng trên một dòng", cands_of, lambda k: "rm " + "${O:-" * 1000 * k + " /x")
+# Reviewer PR #56: `\bread` khớp ở mỗi `-read` rồi quét cờ tới cuối mảnh (192 KB mất 63 s); và trần tính theo độ dài đoạn
+# trước khi thay, nên ứng viên dài thay ở nhiều `$A` sinh gấp 49 lần trần (bậc hai). Tổng độ dài các bản phải ≤ trần.
+linear("candidates, -read lặp trước <<< trong một mảnh", cands_of, lambda k: "read " + "-read " * 1000 * k + "<<< -f; echo $O")
+# Reviewer PR #56 vòng ba, bốn: mỗi `A+=` chép lại các giá trị cũ dài kể cả khi A đã quá trần, khi `A+=` rỗng không đổi gì,
+# hay khi giá trị có `$` (bản ghép bị bỏ nên A không bao giờ chạm trần).
+for tail in ("A+=yy;", "A+=;", "A+=$B;", 'A+="$B";'):
+    for first in ("x", "abcdefgh"):
+        linear(f"candidates, {tail} lặp sau {len(first)} giá trị dài", cands_of,
+               lambda k, tail=tail, first=first: "".join(f"A={ch * 20000 * k}; " for ch in first) + tail * 3000 * k
+               + " echo $A")
+long_vals = lambda k: "".join(f"A={ch * 500 * k}; " for ch in "abcdefgh") + 'echo "' + "$A" * 40 * k + '" $A'
+linear("bản ứng viên, ứng viên dài thay ở nhiều chỗ", labels_of, long_vals)
+real_variants, made = a.variants, []
+def counted_variants(*x, **kw):
+    vs = real_variants(*x, **kw)
+    made.extend(vs)
+    return vs
+a.variants = counted_variants
+for c in [long_vals(4), "".join(f"A={ch * 8000}; " for ch in "abcdefgh") + "echo $A " * 600] + long_cmds:
+    made.clear()
+    labels_of(c)
+    size = sum(len(vp) + len(vf) for vp, vf in made)
+    check(size <= a.VARIANT_BUDGET(len(c)), f"bản ứng viên của lệnh {len(c)} byte dài {size} byte, quá trần "
+                                             f"{a.VARIANT_BUDGET(len(c))}")
+a.variants = real_variants
 HD_OPEN = ["cat <<E", "cat <<'E'", "bash <<E", "bash <<'EOF'", "cat <<-E", 'sh <<"E"', "cat <<E | bash", "cd x <<'E'",
            "cat <<E; rm -rf src", "cat << E", "x <<A <<B"]
 HD_TAIL = ["", "", "\\", "\\\\", "\\\\\\", " \\", "\\\\\\\\", "\\\\\\\\\\"]
@@ -3498,6 +3609,16 @@ for i, (calls, err, to, no) in enumerate(results):
     danger_trap2 += cmds[i] in TRAP2
     if "xoá đệ quy" not in labels(c):
         miss.append((len(c), c, bad, err))
+# Báo thừa của tập ứng viên (người dùng chấp nhận gán lại cùng tên, 2.8): lệnh của lô chung có gọi rm mà bash không xoá gì
+# nguy, mục A báo xoá đệ quy khi tắt (base) và khi bật (head) tập ứng viên. Chỉ in, không assert.
+safe = [render(cmds[i], "rm") for i, (calls, _err, to, no) in enumerate(results)
+        if calls and not to and not no and not any(dangerous(pwd, t) for pwd, t in calls)]
+a.CANDIDATES = False
+fp_base = sum("xoá đệ quy" in a.suspicious_labels(c, a.SUSPICIOUS) for c in safe)
+a.CANDIDATES = True
+fp_head = sum("xoá đệ quy" in labels(c) for c in safe)
+print(f"• audit: oracle bash: báo thừa lô chung: {fp_base} → {fp_head} trên {len(safe)} lệnh an toàn có gọi rm "
+      "(tập ứng viên tắt → bật)")
 short = lambda s: s.replace(sbx, "$SBX")
 out = []  # dòng ✘ của lô chung, in sau dòng ✘ của lô PR8
 for c in timeouts[:5]:

@@ -413,6 +413,120 @@ def expand_body(text, outer, inner):
     return out
 
 
+# Tập ứng viên (2.8): mọi giá trị chữ mà lệnh có thể gán cho mỗi tên, không theo dòng chảy. Phép gán có thể đã áp lẫn phép gán
+# chắc không áp (`O=-f; true && O=-rf; O=-f true; rm $O /x`), hai heredoc trên một dòng, heredoc lồng: không chính sách env
+# đơn nào ra đúng giá trị, nên bản so mẫu thử thêm mọi ứng viên. Chỉ thêm đoạn: nhãn của đoạn gốc không thể mất.
+# CANDIDATES: bật/tắt để test so được (tắt thì nhãn như trước).
+CANDIDATES = True
+CAND_CAP, VARIANT_CAP, SCAN_CAP = 8, 16, 64  # ứng viên mỗi tên (quá thì tên là không biết), tích mỗi đoạn, quét từng tên
+# Trần tổng độ dài các bản ứng viên của một lệnh: mỗi bản là bản chép đủ dài của đoạn và được so với mọi mẫu, nên lệnh dài
+# nhiều tên nhiều ứng viên từng chậm 7 lần (reviewer bước 2). variants ước độ dài mỗi bản trước khi sinh (ứng viên dài thay ở
+# nhiều `$A` làm bản dài gấp nhiều lần đoạn) và dừng khi hết trần; hết trần thì đoạn sau không có bản ứng viên.
+VARIANT_BUDGET = lambda n: 2 * n + 65536
+# NAME=, NAME+= (gán, gán tạm, env, export, `bash -s NAME=`), giá trị chữ trong nháy hay tới dấu tách
+CAND_ASSIGN = re.compile(r"(?:^|(?<=[\s;&|(){}`'\"" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + r"]))"
+                         r"([A-Za-z_]\w*)(\+?)=(\"[^\"]*\"|'[^']*'|[^\s;&|()<>`]*)")
+CAND_FOR = re.compile(r"\bfor\s+([A-Za-z_]\w*)\s+in\s([^;\n&|)]*)")
+# `read` không dính `-` hay chữ phía trước: `read -read -read … <<<` chỉ quét cờ từ một chỗ (reviewer PR #56: 192 KB mất 63 s).
+CAND_READ = re.compile(r"(?<![\w-])read\s+(?:-\w+\s+)*([A-Za-z_]\w*)")
+CAND_HERESTR = re.compile(r"<<<\s*(\"[^\"]*\"|'[^']*'|[^\s;&|]+)")
+CAND_DEFAULT = re.compile(r"\$\{([A-Za-z_]\w*):?[-=]([^}$]*)\}")
+# Chỗ thay của bản ứng viên: `${NAME}`, `${NAME:-W}` (cả `-=+?`), `$NAME` (cả dãy chữ). Không quét `[^}]*` qua `$`: `${a:-`
+# lặp không đóng thì mỗi chỗ dừng ở `$` kế, tuyến tính.
+CAND_REF = re.compile(r"\$\{([A-Za-z_]\w*)(?::?[-=+?][^}$]*)?\}|\$([A-Za-z_]\w*)")
+# Chuỗi nháy kép chỉ gồm chữ không khoảng trắng và `$NAME`: bản ứng viên gỡ che (`rm "$X" /x` là `rm -rf /x`). `$NAME` khớp
+# cả dãy chữ nên không có hai cách khớp: không quay lui.
+CAND_DQ = re.compile(r'"(?:[^"\\$\s`]|\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*(?!\w))*"')
+
+
+def candidates(b):
+    """Tên -> các giá trị chữ (≤ CAND_CAP) mà lệnh b có thể gán: NAME=, NAME+=, gán tạm, env, export, `bash -s NAME=`, for,
+    read <<<, ${NAME:-W}. b là chuỗi của cách đọc bash (keep_shell_heredocs): thân dữ liệu đã bỏ, nên phép gán trong thân
+    python hay ghi chú không thành ứng viên. Giá trị có `$` hay backtick là không biết: không ghi. Tên quá trần thì bỏ: bản
+    ứng viên để nguyên `$NAME`."""
+    c = {}
+
+    def add(n, v):
+        v = v.strip("\"'")
+        if "$" in v or "`" in v:
+            return
+        s = c.setdefault(n, [])
+        if v not in s and len(s) <= CAND_CAP:
+            s.append(v)
+    for n, plus, v in CAND_ASSIGN.findall(b):
+        # Tên đã quá trần (bị bỏ ở cuối), `+=` rỗng hay có `$`/backtick (bản ghép bị bỏ, tên không chạm trần): không chép lại
+        # giá trị cũ (dài) mỗi lần, nếu không là bậc hai. Giá trị cũ không có `$` nên bỏ ở đây là bỏ đúng những bản add bỏ.
+        w = v.strip("\"'")
+        if plus and w and "$" not in w and "`" not in w and len(c.get(n, [])) <= CAND_CAP:
+            for old in c.get(n, [])[:CAND_CAP]:
+                add(n, old + w)
+        add(n, v)
+    for n, ws in CAND_FOR.findall(b):
+        for w in ws.split()[:CAND_CAP + 1]:
+            add(n, w)
+    for piece in re.split(r"[;\n|&]", b) if "<<<" in b else ():  # read NAME <<< W: tên đầu và chuỗi đầu của mỗi lệnh
+        m, h = CAND_READ.search(piece), CAND_HERESTR.search(piece)
+        if m and h:
+            add(m[1], h[1])
+    for n, w in CAND_DEFAULT.findall(b):
+        add(n, w)
+    return {k: v for k, v in c.items() if 0 < len(v) <= CAND_CAP}
+
+
+def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
+    """Các bản (so mẫu, đầy đủ) của đoạn đã thay biến bằng ứng viên. Tên một ứng viên thay ở mọi bản; tích các tên nhiều ứng
+    viên ≤ VARIANT_CAP, quá thì quét từng tên (≤ SCAN_CAP bản, tên khác để nguyên). `\\` ngay trước `$` bỏ cùng chỗ thay:
+    `\\$O` trong thân <<EOF là của shell con. Chuỗi trong nháy che bằng "" như bản so mẫu gốc, trừ nháy kép chỉ gồm chữ không
+    khoảng trắng và `$NAME` có tên thuộc cands: gỡ che để biến ở vị trí cờ hay tên lệnh khớp mẫu. room: tổng độ dài (so mẫu
+    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh."""
+    names = [n for n in dict.fromkeys(m[1] or m[2] for m in CAND_REF.finditer(raw)) if n in cands]
+    if not names:
+        return []
+    one = {n: cands[n][0] for n in names if len(cands[n]) == 1}
+    many = [n for n in names if len(cands[n]) > 1]
+    size = 1
+    for n in many:
+        size *= len(cands[n])
+        if size > VARIANT_CAP:
+            break
+    if size <= VARIANT_CAP:
+        combos = list(itertools.islice((dict(one, **dict(zip(many, vs))) for vs in itertools.product(*(cands[n] for n in many))),
+                                       limit))
+    else:
+        combos = list(itertools.islice((dict(one, **{n: v}) for n in many for v in cands[n]), min(SCAN_CAP, limit)))
+
+    def unmask(m):
+        n = m[1].lstrip("0") or "0"
+        t = store[int(n)] if len(n) < 10 and int(n) < len(store) else ""
+        ok = CAND_DQ.fullmatch(t) and any((r[1] or r[2]) in cands for r in CAND_REF.finditer(t))
+        return t[1:-1] if ok else '""'
+    plain = re.sub(r"\0(\d+)\0", unmask, seg)
+    refs = [(m, m[1] or m[2]) for m in CAND_REF.finditer(plain)], [(m, m[1] or m[2]) for m in CAND_REF.finditer(raw)]
+
+    def put(text, found, combo):
+        out, pos = [], 0
+        for m, n in found:
+            if n in combo:
+                j = m.start()
+                while j > pos and text[j - 1] == "\\":
+                    j -= 1
+                out += [text[pos:j], combo[n]]
+                pos = m.end()
+        return "".join(out) + text[pos:]
+    grow = {}  # tên -> (số chỗ thay, tổng độ dài chỗ thay) trên cả hai bản: độ dài bản = gốc + Σ số chỗ × len(giá trị) − chỗ thay
+    for m, n in refs[0] + refs[1]:
+        k, w = grow.get(n, (0, 0))
+        grow[n] = (k + 1, w + m.end() - m.start())
+    out, left = [], room
+    for c in combos:
+        if left is not None:
+            left -= len(plain) + len(raw) + sum(grow[n][0] * len(v) - grow[n][1] for n, v in c.items() if n in grow)
+            if left < 0:
+                break
+        out.append((put(plain, refs[0], c), put(raw, refs[1], c)))
+    return out
+
+
 def ansi_c(e):
     """Một ký tự thoát của $'…' (ANSI_C_X) như bash. Chỗ không chắc (NUL mà bash cắt chuỗi ở đó, ngoài ASCII tuỳ locale,
     \\cX) thành xuống dòng: tên heredoc nhiều dòng thì keep_shell_heredocs không đọc là heredoc (port 970114a)."""
@@ -606,7 +720,7 @@ def unwrap_shell_c(text, rx):
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
              strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False, strict=False, pure=False,
-             bash=False):
+             bash=False, cands=None, extra=None, budget=None):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -658,6 +772,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     không học biến nào nữa. Là một cách đọc thêm để hợp nhãn, không đổi cách đọc strict.
     bash=True (dùng với strict): nhận heredoc và here-string như bash (keep_shell_heredocs(bash=True), port vibrant-pascal
     970114a) thay cho HEREDOC_STRICT. Là một cách đọc thêm để hợp nhãn.
+    cands (tập ứng viên của candidates), extra (danh sách): ngay sau mỗi đoạn có `$`, đẩy vào extra các bản của đoạn đã thay
+    biến bằng ứng viên (variants). Đoạn trả về không đổi.
     """
     join = join and tool != "PowerShell"
     body = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
@@ -913,6 +1029,13 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if plain2 != plain:  # đoạn phụ đứng trước: out[-1] (LOCAL_SHELL đọc ở dấu mở thân) vẫn là đoạn như cũ
                 out.append((plain2, full, ctx, "$" in raw))
             out.append((plain, full, ctx, "$" in raw))
+            # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh.
+            n = budget[0] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
+            if cands and extra is not None and "$" in raw and n > 0:
+                vs = variants(seg, raw, store, cands, n, budget[0] if budget else None)
+                if budget:
+                    budget[0] -= sum(len(vp) + len(vf) for vp, vf in vs)
+                extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True) for vp, vf in vs]
         if before:
             ctx = before[1]
         elif maybe:
@@ -1188,12 +1311,17 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
-    bodies, read, segs = {}, set(), []
+    # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
+    # của cách đọc đó (thân dữ liệu đã bỏ). Các bản so sau mọi đoạn gốc, trong cùng lượt đọc: không thêm lượt segments.
+    bodies, read, segs, extra, budget = {}, set(), [], [], [VARIANT_BUDGET(len(cmd))]
     for combo in reading_combos(cmd, tool):
         key = reading_key(cmd, tool, combo, bodies)
         if key not in read:
             read.add(key)
-            segs += segments(cmd, tool, *combo)
+            cands = candidates(key[0]) if CANDIDATES and "$" in cmd and combo[10] and not combo[11] and not combo[4] \
+                and (combo[12] or "<<" not in cmd) else None
+            segs += segments(cmd, tool, *combo, cands=cands, extra=extra, budget=budget)
+    segs += extra
     done = set()
     for seg in segs:
         if seg in done:
