@@ -401,6 +401,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
+  CD_MAX=300 # số cd tối đa được đọc trong một cách đọc của lệnh push (4.3)
   # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
   # CDCUT cắt phần trước cd của mỗi kết quả grep, tuyến tính: last_arg chạy regex ($re)$ bậc hai theo độ dài từ không có
   # dấu cách, nên phép gán dài trước cd (x=<190 KB> cd M) từng quá timeout (reviewer 4.10). Kết quả bắt đầu bằng N khi cd
@@ -450,7 +451,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       fi
       cur="$base"
       cl=("$base")
+      ncd=0
       for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+        # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
+        # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
+        ncd=$((ncd + 1))
+        if [ "$ncd" -gt "$CD_MAX" ]; then
+          reason="push sau hơn $CD_MAX lần cd: không đọc hết các thư mục"
+          break 2
+        fi
         nw=""
         case "$m" in N*) nw=1 ;; esac
         m="${m#?}"
