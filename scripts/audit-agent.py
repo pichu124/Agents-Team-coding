@@ -454,7 +454,8 @@ def candidates(b):
         if v not in s and len(s) <= CAND_CAP:
             s.append(v)
     for n, plus, v in CAND_ASSIGN.findall(b):
-        if plus:
+        # Tên đã quá trần (bị bỏ ở cuối) hay `+=` rỗng: không chép lại giá trị cũ (dài) mỗi lần, nếu không là bậc hai.
+        if plus and v.strip("\"'") and len(c.get(n, [])) <= CAND_CAP:
             for old in c.get(n, [])[:CAND_CAP]:
                 add(n, old + v.strip("\"'"))
         add(n, v)
