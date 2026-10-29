@@ -442,18 +442,22 @@ CAND_DQ = re.compile(r'"(?:[^"\\$\s`]|\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*(?!\w))*"
 def candidates(b):
     """Tên -> các giá trị chữ (≤ CAND_CAP) mà lệnh b có thể gán: NAME=, NAME+=, gán tạm, env, export, `bash -s NAME=`, for,
     read <<<, ${NAME:-W}. b là chuỗi của cách đọc bash (keep_shell_heredocs): thân dữ liệu đã bỏ, nên phép gán trong thân
-    python hay ghi chú không thành ứng viên. Giá trị có `$` hay backtick là không biết: không ghi. Tên quá trần thì bỏ: bản
-    ứng viên để nguyên `$NAME`."""
-    c = {}
+    python hay ghi chú không thành ứng viên. Giá trị có `$` hay backtick là không biết: không ghi, tên vào `.unknown`. Tên
+    quá trần thì bỏ: bản ứng viên để nguyên `$NAME`."""
+    c, unk = {}, set()
 
     def add(n, v):
         v = v.strip("\"'")
         if "$" in v or "`" in v:
+            unk.add(n)
             return
         s = c.setdefault(n, [])
         if v not in s and len(s) <= CAND_CAP:
             s.append(v)
-    for n, plus, v in CAND_ASSIGN.findall(b):
+    for m in CAND_ASSIGN.finditer(b):
+        n, plus, v = m.groups()
+        if b[m.end():m.end() + 1] == "`":  # giá trị dừng ở backtick: O=`cat f`
+            unk.add(n)
         # Tên đã quá trần (bị bỏ ở cuối), `+=` rỗng hay có `$`/backtick (bản ghép bị bỏ, tên không chạm trần): không chép lại
         # giá trị cũ (dài) mỗi lần, nếu không là bậc hai. Giá trị cũ không có `$` nên bỏ ở đây là bỏ đúng những bản add bỏ.
         w = v.strip("\"'")
@@ -462,6 +466,8 @@ def candidates(b):
                 add(n, old + w)
         add(n, v)
     for n, ws in CAND_FOR.findall(b):
+        if "$" in ws or "`" in ws:  # for O in $(cat f): giá trị không biết
+            unk.add(n)
         for w in ws.split()[:CAND_CAP + 1]:
             add(n, w)
     for piece in re.split(r"[;\n|&]", b) if "<<<" in b else ():  # read NAME <<< W: tên đầu và chuỗi đầu của mỗi lệnh
@@ -470,7 +476,33 @@ def candidates(b):
             add(m[1], h[1])
     for n, w in CAND_DEFAULT.findall(b):
         add(n, w)
-    return {k: v for k, v in c.items() if 0 < len(v) <= CAND_CAP}
+    out = Cands((k, v) for k, v in c.items() if 0 < len(v) <= CAND_CAP)
+    out.unknown = unk
+    return out
+
+
+class Cands(dict):
+    """Kết quả của candidates: tên -> ứng viên, kèm .unknown (tên có phép gán mà giá trị không biết)."""
+    unknown = frozenset()
+
+
+# Lệnh rm (sau `(`, `{`, do/then/else/time/!, phép gán, sudo, command, `\`) và một từ chỉ gồm `$NAME`/`${NAME}` (có
+# thể trong nháy) đứng sau tên lệnh.
+CAND_RM = re.compile(r"[\s({]*(?:(?:do|then|else|time|!)\s+)*(?:[A-Za-z_]\w*=\S*\s+)*(?:(?:sudo|command|builtin|exec)\s+)*"
+                     r"\\?rm\s")
+CAND_WORD = re.compile(r"(?<![^\s])([\"']?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))\1(?=\s|$)")
+
+
+def unknown_flags(raw, cands):
+    """Việc (4) của 2.8: tên không có trong cands (giá trị không biết, quá trần, hay chưa gán) mà đứng riêng một từ làm tham
+    số của rm thì có thể là `-rf`. Ở vị trí tên lệnh thì không đoán (người dùng duyệt 28/10)."""
+    m = CAND_RM.match(raw)
+    # Cần một đích viết bằng chữ (không cờ, không `$`, không chuyển hướng): `rm $F` thì F nhiều khả năng là đích.
+    if not m or not any(w[0] != "-" and not re.search(r"[$`<>]", w) for w in raw[m.end():].split()):
+        return {}
+    unk = getattr(cands, "unknown", ())
+    return {n: list(cands.get(n, []))[:CAND_CAP] + ["-rf"] for w in CAND_WORD.finditer(raw, m.end())
+            for n in [w[2] or w[3]] if n not in cands or n in unk}
 
 
 def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
@@ -478,7 +510,11 @@ def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
     viên ≤ VARIANT_CAP, quá thì quét từng tên (≤ SCAN_CAP bản, tên khác để nguyên). `\\` ngay trước `$` bỏ cùng chỗ thay:
     `\\$O` trong thân <<EOF là của shell con. Chuỗi trong nháy che bằng "" như bản so mẫu gốc, trừ nháy kép chỉ gồm chữ không
     khoảng trắng và `$NAME` có tên thuộc cands: gỡ che để biến ở vị trí cờ hay tên lệnh khớp mẫu. room: tổng độ dài (so mẫu
-    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh."""
+    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh. Tên không biết ở vị trí cờ của rm có ứng viên
+    `-rf` (unknown_flags)."""
+    flags = unknown_flags(raw, cands)
+    if flags:
+        cands = dict(cands, **flags)
     names = [n for n in dict.fromkeys(m[1] or m[2] for m in CAND_REF.finditer(raw)) if n in cands]
     if not names:
         return []
@@ -1031,7 +1067,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             out.append((plain, full, ctx, "$" in raw))
             # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh.
             n = budget[0] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
-            if cands and extra is not None and "$" in raw and n > 0:
+            if cands is not None and extra is not None and "$" in raw and n > 0:
                 vs = variants(seg, raw, store, cands, n, budget[0] if budget else None)
                 if budget:
                     budget[0] -= sum(len(vp) + len(vf) for vp, vf in vs)
