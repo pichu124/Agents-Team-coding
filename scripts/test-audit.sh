@@ -1052,6 +1052,46 @@ def heredoc_grid():
                             out.append((cmd, val in bad and not (sh == "sh" and "$'" in t1),
                                         f"{pos}, {place}, X={a} rồi {b}, {t1.strip() or 'không mẹo nháy'}, {sh} <<{dash}EOF"))
     return out
+
+
+def assign_grid():
+    """Lưới thứ hai của 2.8 (bước 3): [(lệnh, nguy theo mô hình, mô tả)]. X gán chắc (`X=a`) rồi một hay hai phép gán thuộc
+    một loại mà bash có thể áp hay không (tham số lệnh, gán tạm, sau `&&`/`||`, trong ống, chạy nền, subshell, nhóm, `bash -s
+    X=`), rồi `$X` ở vị trí đích, cờ hay tên lệnh. Vỏ: lệnh ngoài cùng, thân `bash <<'EOF'`, `cat <<'EOF' | bash`, `bash -c '…'`.
+    Mô hình: giá trị là của phép gán áp sau cùng (ống chạy ở shell con vì không có lastpipe; `bash -s X=v` gán tham số vị
+    trí, không gán X)."""
+    POS = [("đích", "rm -rf {}", "/x", "/tmp/w", ("/x",)), ("cờ", "rm {} /x", "-rf", "-f", ("-rf",)),
+           ("tên lệnh", "{} -rf /x", "rm", "echo", ("rm",))]
+    # (loại, mẫu, bash có áp không)
+    KINDS = [("gán", "X={}", True), ("export", "export X={}", True), ("tham số lệnh", "echo X={}", False),
+             ("gán tạm", "X={} true", False), ("sau true &&", "true && X={}", True), ("sau false &&", "false && X={}", False),
+             ("sau false ||", "false || X={}", True), ("sau true ||", "true || X={}", False), ("trong ống", "X={} | true", False),
+             ("chạy nền", "X={} &", False), ("subshell", "(X={})", False), ("nhóm", "{{ X={}; }}", True),
+             ("bash -s", "bash -s X={} </dev/null", False)]
+    WRAP = [("ngoài cùng", "{}"), ("bash <<'EOF'", "bash <<'EOF'\n{}\nEOF"), ("cat | bash", "cat <<'EOF' | bash\n{}\nEOF"),
+            ("bash -c", "bash -c '{}'")]
+    out = []
+
+    def add(pos, body, bad, vals, kinds, wraps):
+        val = vals[0]
+        for (_k, _t, applies), v in zip(kinds, vals[1:]):
+            if applies:
+                val = v
+        parts = ["X=" + vals[0]] + [t.format(v) for (_k, t, _a), v in zip(kinds, vals[1:])] + [body.format("$X")]
+        script = "".join(p + ("" if i == len(parts) - 1 else " " if p.endswith("&") else "; ") for i, p in enumerate(parts))
+        for wname, w in wraps:
+            out.append((w.format(script), val in bad, f"{pos}, X={vals[0]} rồi "
+                        + ", ".join(f"{k} {v}" for (k, _t, _a), v in zip(kinds, vals[1:])) + f", {wname}"))
+    for pos, body, real, decoy, bad in POS:
+        for k in KINDS:
+            for vals in ((real, decoy), (decoy, real)):
+                add(pos, body, bad, vals, [k], WRAP)
+        # Lớp trộn: hai loại liền nhau, giá trị đổi qua lại (một chắc áp, một có thể không), chỉ ở lệnh ngoài cùng.
+        for k1 in KINDS:
+            for k2 in KINDS:
+                for vals in ((decoy, real, decoy), (real, decoy, real)):
+                    add(pos, body, bad, vals, [k1, k2], WRAP[:1])
+    return out
 PYEOF
 
 # Báo cáo markdown đi qua file, không qua argv: dòng lệnh trên Windows giới hạn 32767 ký tự, ba báo cáo
@@ -1919,6 +1959,11 @@ spec.loader.exec_module(hg)
 grid = [(c, why) for c, danger, why in hg.heredoc_grid() if danger]
 missed = [(len(c), c, why) for c, why in grid if "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS)]
 check(len(grid) >= 800 and not missed, f"lưới thân <<EOF ({len(grid)} lệnh nguy): mục A bỏ sót {len(missed)}, ngắn nhất: "
+      + "; ".join(f"{why}: {c!r}" for _n, c, why in sorted(missed)[:5]))
+# Lưới thứ hai (2.8 bước 3): phép gán bash có thể áp hay không, trong và ngoài thân heredoc, `bash -c`, lớp trộn.
+grid = [(c, why) for c, danger, why in hg.assign_grid() if danger]
+missed = [(len(c), c, why) for c, why in grid if "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS)]
+check(len(grid) >= 600 and not missed, f"lưới phép gán ({len(grid)} lệnh nguy): mục A bỏ sót {len(missed)}, ngắn nhất: "
       + "; ".join(f"{why}: {c!r}" for _n, c, why in sorted(missed)[:5]))
 # Thư mục cd không biết: cd ngay sau `||` chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (bash chạy rm ở thư mục dự
 # án). Đích còn `$` hay lệnh lồng sau khi thay biến đã biết có thể là đường tuyệt đối: cd vào thư mục tạm không làm nó vô hại
@@ -2857,7 +2902,7 @@ fi
 # thư mục và đích, rồi đỏ khi bash xoá đích nguy hiểm mà mục A không báo:
 #   - lô chung: ngữ pháp CHỈ gồm thứ an toàn (blissful-dirac), nguy là xoá ngoài thư mục tạm/build, sàn ORACLE_FLOOR*;
 #   - lô PR8: fuzz cố định của PR #8 (bash -c có biến và lồng nhau, nháy lẻ trong comment, heredoc chưa đóng…);
-#   - lưới thân <<EOF ($grid), cùng cổng với lô PR8.
+#   - lưới thân <<EOF và lưới phép gán ($grid), cùng cổng với lô PR8.
 # An toàn: stub là đường dẫn tuyệt đối ghi ngay trong văn bản lệnh (không đặt trên PATH: `bash -l` có thể đặt lại PATH), lệnh
 # có git, push, reset, clean, Remove-Item hay `>` bị bỏ hẳn, PATH chỉ có bash, sh, cat, rm và git là hàm báo lỗi (export và
 # BASH_ENV), lệnh gọi gián tiếp hay che tên lệnh (`r\m`, `$(`, `env`, `/bin/`…) bị từ chối, HOME nằm trong sandbox (lô PR8:
@@ -2988,7 +3033,7 @@ else:
             break
         d = os.path.dirname(d)
 if skip8:
-    print(f"• audit: oracle bash: bỏ qua lô PR8 và lưới thân <<EOF ({skip8})")
+    print(f"• audit: oracle bash: bỏ qua lô PR8, lưới thân <<EOF và lưới phép gán ({skip8})")
 
 # Bộ sinh cố định: 1–4 dòng, mỗi dòng 1–3 lệnh nối bằng && ; || |, lệnh cuối là lõi `rm -rf <đích>` hay một thân -c. Cấu
 # trúc từng làm phân tích đọc sai: nối dòng, comment có `'` lẻ, heredoc đưa vào shell hay làm dữ liệu, bash -c có biến và lồng
@@ -3469,7 +3514,7 @@ if not skip8:
     spec = importlib.util.spec_from_file_location("heredoc_grid", grid_file)
     hg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hg)
-    grid = hg.heredoc_grid()
+    grid = hg.heredoc_grid() + hg.assign_grid()
 else:
     fcmds, grid = [], []
 
@@ -3559,13 +3604,13 @@ el = time.monotonic() - t0
 # Lô PR8 và lưới.
 model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d]
 if model:
-    fails.append(f"lưới thân <<EOF: bash thật khác mô hình của lưới ở {len(model)}/{len(grid)} lệnh (sửa heredoc_grid):\n"
+    fails.append(f"lưới thân <<EOF và lưới phép gán: bash thật khác mô hình ở {len(model)}/{len(grid)} lệnh (sửa lưới):\n"
                  + "\n".join(f"  {why}: {c!r}: bash xoá đệ quy {bad or 'không gì'}" for why, c, bad in model[:5]))
 gmiss = sorted((len(c), why, c) for c, _d, why, err, _calls, bad in gres
                if not err and bad and "xoá đệ quy" not in labels(c))
 fails += [f"{c!r}: {err}" for c, _d, _why, err, _calls, _bad in gres if err]
 if gmiss:
-    fails.append(f"lưới thân <<EOF: mục A bỏ sót {len(gmiss)} lệnh mà bash xoá đệ quy ngoài thư mục tạm:\n"
+    fails.append(f"lưới thân <<EOF và lưới phép gán: mục A bỏ sót {len(gmiss)} lệnh mà bash xoá đệ quy ngoài thư mục tạm:\n"
                  + "\n".join(f"  {why}: {c!r}" for _n, why, c in gmiss[:10]))
 misses, fdanger, hit = [], 0, set()
 for c, err, _calls, bad in res:
@@ -3658,7 +3703,7 @@ if fails or out:
     sys.exit(1)
 pr8 = "" if skip8 else (
     f"; lô PR8: {len(fcmds)} lệnh fuzz, {fdanger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong "
-    f"KNOWN_MISSES; lưới thân <<EOF: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
+    f"KNOWN_MISSES; lưới thân <<EOF và lưới phép gán: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
 print(f"✔ audit: oracle bash: {len(tasks)} lệnh chạy bằng bash {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
       f"{danger} lệnh xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ "
       f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
