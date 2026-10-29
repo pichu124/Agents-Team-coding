@@ -454,10 +454,12 @@ def candidates(b):
         if v not in s and len(s) <= CAND_CAP:
             s.append(v)
     for n, plus, v in CAND_ASSIGN.findall(b):
-        # Tên đã quá trần (bị bỏ ở cuối) hay `+=` rỗng: không chép lại giá trị cũ (dài) mỗi lần, nếu không là bậc hai.
-        if plus and v.strip("\"'") and len(c.get(n, [])) <= CAND_CAP:
+        # Tên đã quá trần (bị bỏ ở cuối), `+=` rỗng hay có `$`/backtick (bản ghép bị bỏ, tên không chạm trần): không chép lại
+        # giá trị cũ (dài) mỗi lần, nếu không là bậc hai. Giá trị cũ không có `$` nên bỏ ở đây là bỏ đúng những bản add bỏ.
+        w = v.strip("\"'")
+        if plus and w and "$" not in w and "`" not in w and len(c.get(n, [])) <= CAND_CAP:
             for old in c.get(n, [])[:CAND_CAP]:
-                add(n, old + v.strip("\"'"))
+                add(n, old + w)
         add(n, v)
     for n, ws in CAND_FOR.findall(b):
         for w in ws.split()[:CAND_CAP + 1]:
