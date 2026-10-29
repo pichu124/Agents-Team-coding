@@ -2043,7 +2043,16 @@ MISSED_28B = [
     ("cat <<EOF; bash <<< 'rm -rf /x'\nhello\nEOF", "xoá đệ quy", "here-string cùng dòng heredoc: xoá /x"),
     ("bash <<'A'\nbash <<X -c 'rm -rf /x'\nX\nA", "xoá đệ quy", "-c của bash lồng trong thân heredoc: xoá /x"),
 ]
-MISSED_28B_PENDING = {17, 18, 19}  # lệnh lồng làm giá trị: việc (4) của 2.8; here-string cùng dòng heredoc, -c lồng: việc (5)
+MISSED_28B_PENDING = {18, 19}  # here-string cùng dòng heredoc, -c lồng: việc (5) của 2.8
+# Việc (4) của 2.8 (người dùng duyệt 28/10): biến không biết giá trị ở vị trí cờ của rm thì nghi (bash có thể nhận -rf),
+# ở vị trí tên lệnh thì không đoán. Biến chưa gán cũng nghi (báo thừa: bash thay rỗng).
+for cmd in ("read O < f; rm $O /x", "O=$(cat f); rm \"$O\" /x", "rm $O /x", "for O in $(cat f); do rm $O /x; done",
+            "O=`cat f`; rm -f $O /x", "bash <<'EOF'\nO=$(cat f); rm $O /x\nEOF", "bash -c 'rm $O /x'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"biến không biết ở vị trí cờ của rm (2.8 việc 4): {cmd!r}: {got!r}")
+for cmd in ("rm $F", "rm -f $F", "O=$(cat f); rm $O /tmp/x", "C=$(cat f); $C -rf /tmp/x"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"biến không biết ở vị trí cờ mà đích vô hại hay không có đích: {cmd!r}: {got!r}")
 for i, (cmd, label, why) in enumerate(MISSED_28B):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     if i in MISSED_28B_PENDING:
