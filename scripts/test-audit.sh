@@ -1963,7 +1963,7 @@ check(len(grid) >= 800 and not missed, f"lưới thân <<EOF ({len(grid)} lệnh
 # Lưới thứ hai (2.8 bước 3): phép gán bash có thể áp hay không, trong và ngoài thân heredoc, `bash -c`, lớp trộn.
 grid = [(c, why) for c, danger, why in hg.assign_grid() if danger]
 missed = [(len(c), c, why) for c, why in grid if "xoá đệ quy" not in a.suspicious_labels(c, a.SUSPICIOUS)]
-check(len(grid) >= 600 and not missed, f"lưới phép gán ({len(grid)} lệnh nguy): mục A bỏ sót {len(missed)}, ngắn nhất: "
+check(len(grid) == 663 and not missed, f"lưới phép gán ({len(grid)} lệnh nguy): mục A bỏ sót {len(missed)}, ngắn nhất: "
       + "; ".join(f"{why}: {c!r}" for _n, c, why in sorted(missed)[:5]))
 # Thư mục cd không biết: cd ngay sau `||` chỉ chạy khi lệnh trước lỗi, sau `|` chạy ở shell con (bash chạy rm ở thư mục dự
 # án). Đích còn `$` hay lệnh lồng sau khi thay biến đã biết có thể là đường tuyệt đối: cd vào thư mục tạm không làm nó vô hại
