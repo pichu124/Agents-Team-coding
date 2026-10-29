@@ -41,31 +41,6 @@ jobs:
           command -v grep && grep --version 2>&1 | head -n 1
           for c in jq python3 python py git shellcheck; do printf '%s: %s\n' "$c" "$(command -v "$c")"; done
           git config --show-origin core.autocrlf || true
-      # Chẩn đoán 4.3 (tạm, PR #55): `<không có>/..` có vào được không, và guard (bản này, bản base) mất bao lâu với
-      # 1500 `cd "a b"` rồi push lên main.
-      - name: đo cd của guard
-        if: ${{ !cancelled() }}
-        run: |
-          d="$(mktemp -d)"
-          for p in "$d/nope/.." "$d/nope/x/.." "$d/nope/../nope2/.."; do
-            if [ -d "$p" ]; then echo "vào được: $p"; else echo "không vào được: $p"; fi
-          done
-          (cd "$d/nope/.." 2>/dev/null && echo "cd vào được, pwd=$PWD") || echo "cd không vào được"
-          git init -q -b main "$d/m" && git -C "$d/m" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-          git init -q -b feat "$d/w" && git -C "$d/w" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-          {
-            printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$d/w"
-            for _ in $(seq 1500); do printf '%s' 'cd \"a b\"; '; done
-            printf 'cd \\"%s\\" && git push","description":"test"}}\n' "$d/m"
-          } > "$d/in.json"
-          git show HEAD^1:.claude/hooks/guard-irreversible.sh > .claude/hooks/guard-base.sh && chmod +x .claude/hooks/guard-base.sh
-          for g in guard-irreversible guard-base guard-irreversible guard-base; do
-            s=$(date +%s)
-            out="$(LC_ALL=C.UTF-8 .claude/hooks/$g.sh < "$d/in.json")"
-            case "$out" in *'"ask"'*) r=hỏi ;; *) r="KHÔNG hỏi" ;; esac
-            echo "$g: $(( $(date +%s) - s )) s, $r"
-          done
-          rm .claude/hooks/guard-base.sh
       - name: validate-kit
         if: ${{ !cancelled() }}
         run: ./scripts/validate-kit.sh

@@ -317,16 +317,6 @@ gone() {
     *) return 1 ;;
   esac
 }
-# ghost <đường>: như gone nhưng `<đường>/..` vào được (MSYS/Git Bash rút gọn `..` theo chữ): cd tới đó lỗi lúc này, mà
-# `cd ../M` sau một mkdir trong lệnh vẫn có thể tới M. Vòng gom cd chỉ nối tiếp vào tối đa 8 thư mục như vậy liền nhau: 1500
-# `cd "a b"` trên Git Bash từng sát timeout 10 giây (ca A của test-install, PR #54) vì đường tắt của gone không có tác dụng.
-ghost() {
-  case "$1" in
-    *..* | *\\* | [A-Za-z]:*) return 1 ;;
-    /*) [ ! -d "$1" ] && [ -d "$1/.." ] ;;
-    *) return 1 ;;
-  esac
-}
 # resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
@@ -460,7 +450,6 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       fi
       cur="$base"
       cl=("$base")
-      ng=0
       for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
         nw=""
         case "$m" in N*) nw=1 ;; esac
@@ -490,12 +479,6 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # bậc hai theo số cd, 4.3), và `cd nope; cd sub` được đọc đúng là <chỗ cũ>/sub. Thư mục lệnh tạo trước khi cd
         # (mkdir a && cd a && cd ../m) thì lúc hook chạy cd -L/-P qua nó cũng lỗi, nên nối vào cũng không hỏi thêm được.
         gone "$RD" && continue
-        if ghost "$RD"; then
-          [ "$ng" -ge 8 ] && continue
-          ng=$((ng + 1))
-        else
-          ng=0
-        fi
         cur="$RD"
         cl+=("$cur")
       done
