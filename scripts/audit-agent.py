@@ -614,10 +614,10 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
     bash (dùng với strict, port vibrant-pascal 970114a): nhận heredoc như bash, thay cho HEREDOC_STRICT: tên là cả từ shell
     (HEREDOC_X), dòng đóng đúng bằng tên đã bỏ nháy, `<<` trong nháy, comment, sau `\\` hay khi số học đang mở (ARITH_X)
     không mở heredoc. Thân dữ liệu không nháy: shell cha vẫn chạy lệnh lồng `$(…)`, `…` trong đó, mỗi lệnh thành một dòng
-    `( … )` (shell con). Here-string `<<<` đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< … | bash`): chuỗi là thân,
-    đọc sau heredoc để thân here-string không chen vào thân heredoc cùng dòng (`cat <<EOF; bash <<< '…'`). Thân đưa vào
-    shell được đọc lại như một lệnh, thêm thành khối phụ sau khối gốc (một tầng: `bash <<'A'` ⏎ `bash <<X -c '…'`, việc 5
-    của 2.8)."""
+    `( … )` (shell con). Here-string `<<<` đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< … | bash`): chuỗi là thân.
+    bash=2 (cách đọc lồng, việc 5 của 2.8; cách đọc thêm, nên cách bash=True giữ nguyên và nhãn cũ không mất):
+    here-string đọc sau heredoc, để thân của nó không chen vào thân heredoc cùng dòng (`cat <<EOF; bash <<< '…'`), và thân
+    đưa vào shell đọc lại như một lệnh (`bash <<'A'` ⏎ `bash <<X -c '…'`)."""
     def sub(m):
         return place(m.string, m.start(), m["rest"], m["body"], m["q"])
 
@@ -647,12 +647,9 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         mark = SNAP if snap and not raw_marks else ""
-        # Thân đọc lại như lệnh (một tầng): khối phụ đặt sau khối gốc, khối gốc giữ nguyên nên nhãn cũ không mất
-        # (`sh <<E | bash` ⏎ `cat <<E-X` ⏎ `rm …`: thân cat của sh chảy sang bash).
-        again = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1) \
-            if bash and not depth and "<<" in body else body
-        if again != body:
-            body += "\n" + CLOSE + "\n" + (OPEN_RAW if quoted else OPEN) + "\n" + again
+        # bash=2 (cách đọc lồng, việc 5 của 2.8): thân đưa vào shell đọc lại như một lệnh, ≤ 8 tầng
+        if bash == 2 and depth < 8 and "<<" in body:
+            body = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1)
         return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
@@ -664,6 +661,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             out += [cmd[pos:m.start()], sub(m)]
             pos = m.end()
         return "".join(out) + cmd[pos:]
+    if bash != 2:
+        cmd = here_strings(cmd)
     out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
     tok = next(toks, None)
     while m:  # thân tới dòng đúng bằng tên đã bỏ nháy (có thể rỗng), không có thì tới hết lệnh
@@ -698,7 +697,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             toks = ARITH_X.finditer(cmd, pos)
             tok = next(toks, None)
         m = HEREDOC_X.search(cmd, pos)
-    return here_strings("".join(out) + cmd[pos:])
+    out = "".join(out) + cmd[pos:]
+    return here_strings(out) if bash == 2 else out
 
 
 def here_strings(cmd):
@@ -1359,6 +1359,9 @@ def reading_combos(cmd, tool="Bash"):
     if "<<" in cmd:
         combos += [(join, True, False, True, raw_marks, False, True, False, True, False, True, pure, True)
                    for pure in ((False, True) if "$" in cmd else (False,)) for raw_marks in marks for join in joins]
+        # Cách đọc lồng (bash=2, việc 5 của 2.8): như bash, thêm here-string sau heredoc và thân lồng đọc lại. Không sinh bản
+        # ứng viên (không tiêu trần của cách bash, reviewer PR #59).
+        combos += [(join, True, False, True, False, False, True, False, True, False, True, False, 2) for join in joins]
     return combos
 
 
@@ -1375,7 +1378,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
         if key not in read:
             read.add(key)
             cands = candidates(key[0]) if CANDIDATES and "$" in cmd and combo[10] and not combo[11] and not combo[4] \
-                and (combo[12] or "<<" not in cmd) else None
+                and (combo[12] or "<<" not in cmd) and combo[12] != 2 else None
             segs += segments(cmd, tool, *combo, cands=cands, extra=extra, budget=budget)
     segs += extra
     done = set()
