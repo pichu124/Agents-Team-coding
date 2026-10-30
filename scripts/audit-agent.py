@@ -512,7 +512,9 @@ def unknown_flags(raw, cands):
         # và chính `$NAME` (không biết): hai tên không biết thì mỗi tên được thử -rf riêng (reviewer PR #58).
         old = list(cands.get(n, []))[:CAND_CAP]
         out[n] = old + [v for v in ("-rf", "$" + n) if v not in old]
-    return out
+    # Một tên: chỉ bản -rf. Bản ứng viên chữ trùng bản ở lượt ứng viên thật, bản `$tên` trùng đoạn gốc: chúng chỉ tiêu trần
+    # riêng của bản -rf (lệnh dài nhiều đoạn rm thì đoạn sau mất bản -rf, reviewer PR #58 vòng bốn).
+    return out if len(out) > 1 else {n: ["-rf"] for n in out}
 
 
 def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
