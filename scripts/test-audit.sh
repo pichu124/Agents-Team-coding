@@ -2044,6 +2044,13 @@ MISSED_28B = [
     ("bash <<'A'\nbash <<X -c 'rm -rf /x'\nX\nA", "xoá đệ quy", "-c của bash lồng trong thân heredoc: xoá /x"),
 ]
 MISSED_28B_PENDING = set()  # việc (5) của 2.8 đã che here-string cùng dòng heredoc và -c lồng
+# Reviewer PR #59: đọc lại thân lồng trong cách đọc bash đổi chẵn lẻ nháy (here-string sau khối bị nuốt) và tiêu trần của bản
+# ứng viên; việc 5 nay là một cách đọc thêm (bash=2), nên các lệnh này vẫn nghi như bản trước.
+for cmd in ("bash <<'A'\ncat <<M\ndon't\nM\nbash <<'Y'\ncat <<'N'\nit's\nN\nY\nA\nbash <<< \"rm -rf /x\"",
+            "bash <<'A'\nB=1; B=2; B=3; B=4; B=5; B=6; B=7; B=8\n" + "echo $B\n" * 500
+            + "cat <<X\nX\nA\nO=-f; true && O=-rf; O=-f true; rm $O /x"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"việc 5 của 2.8 không được làm mất nhãn: {cmd[:80]!r}: {got!r}")
 # Việc (4) của 2.8 (người dùng duyệt 28/10): biến không biết giá trị ở vị trí cờ của rm thì nghi (bash có thể nhận -rf),
 # ở vị trí tên lệnh thì không đoán. Biến chưa gán cũng nghi (báo thừa: bash thay rỗng).
 for cmd in ("read O < f; rm $O /x", "O=$(cat f); rm \"$O\" /x", "rm $O /x", "for O in $(cat f); do rm $O /x; done",
