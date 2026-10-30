@@ -2429,6 +2429,8 @@ def every_reading(cmd, tool="Bash"):
     if "<<" in cmd:  # cách đọc bash (P2): heredoc và here-string như bash, với env của strict và của pure
         segs += [s for pu in ((False, True) if "$" in cmd else (False,)) for rm in marks for j in joins
                  for s in a.segments(cmd, tool, j, raw_marks=rm, exact=True, strict=True, pure=pu, bash=True)]
+        # cách đọc lồng (việc 5 của 2.8): here-string sau heredoc, thân lồng đọc lại
+        segs += [s for j in joins for s in a.segments(cmd, tool, j, exact=True, strict=True, bash=2)]
     ifs, labels = bool(re.search(r"\bIFS\b", cmd)), []
     for plain, full, ctx, subst in segs:
         for rx, label in a.SUSPICIOUS:
