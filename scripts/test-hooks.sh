@@ -466,6 +466,13 @@ EOF
       *'"ask"'*) bad "guard không được hỏi [$mode]: 299 cd với cwd dạng C:/ → $out" ;;
       *) ok ;;
     esac
+    # Chiều ngược (reviewer PR #55): C:/m có thật và ở nhánh chính thì vẫn phải hỏi.
+    [ -d "$tmp/C:/m" ] || new_repo "$tmp/C:/m" main
+    out="$(cd "$tmp" && bash_input "${cds}cd \"C:/m\" && git push origin HEAD" "C:/w" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'"ask"'*) ok ;;
+      *) bad "guard phải hỏi [$mode]: 299 cd rồi cd C:/m (nhánh chính) với cwd dạng C:/ → $out" ;;
+    esac
   fi
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
   expect_guard ask "bash -c 'cd \"$on_main\" && git push'"
