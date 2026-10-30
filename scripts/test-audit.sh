@@ -2047,7 +2047,11 @@ MISSED_28B_PENDING = {18, 19}  # here-string cùng dòng heredoc, -c lồng: vi�
 # Việc (4) của 2.8 (người dùng duyệt 28/10): biến không biết giá trị ở vị trí cờ của rm thì nghi (bash có thể nhận -rf),
 # ở vị trí tên lệnh thì không đoán. Biến chưa gán cũng nghi (báo thừa: bash thay rỗng).
 for cmd in ("read O < f; rm $O /x", "O=$(cat f); rm \"$O\" /x", "rm $O /x", "for O in $(cat f); do rm $O /x; done",
-            "O=`cat f`; rm -f $O /x", "bash <<'EOF'\nO=$(cat f); rm $O /x\nEOF", "bash -c 'rm $O /x'"):
+            "O=`cat f`; rm -f $O /x", "bash <<'EOF'\nO=$(cat f); rm $O /x\nEOF", "bash -c 'rm $O /x'",
+            "bash <<EOF\nrm \\$O /x\nEOF", "bash <<EOF\nO=\\$(cat f); rm \\$O /x\nEOF",
+            # Reviewer PR #58: bản -rf không được tiêu trần của bản ứng viên thật (lệnh sau vẫn phải nghi như bản trước).
+            "U=/tmp/a; U=$(cat f); " + "".join(f"rm $U /tmp/lit{i}; " for i in range(3000))
+            + "C=echo; true && C=rm; C=echo true; $C -rf /x"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"biến không biết ở vị trí cờ của rm (2.8 việc 4): {cmd!r}: {got!r}")
 for cmd in ("rm $F", "rm -f $F", "O=$(cat f); rm $O /tmp/x", "C=$(cat f); $C -rf /tmp/x"):
