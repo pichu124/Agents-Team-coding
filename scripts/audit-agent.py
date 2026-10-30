@@ -599,7 +599,7 @@ def command_subs(body):
 
 
 def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_body=True, exact=False, snap=False,
-                        strict=False, bash=False):
+                        strict=False, bash=False, depth=0):
     """Thân heredoc là dữ liệu, trừ khi nó được đưa vào một shell (bash <<'X' ... X): khi đó là lệnh, đặt giữa dòng OPEN
     và dòng CLOSE. join: `\\` lẻ cuối dòng mở kéo dòng kế của thân vào lệnh như bash, thân bắt đầu sau đó.
     scoped=False: như 6f32d5a, thân đặt ngay sau dòng mở, không dấu, không kéo dòng, không nhận thân rỗng.
@@ -614,7 +614,10 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
     bash (dùng với strict, port vibrant-pascal 970114a): nhận heredoc như bash, thay cho HEREDOC_STRICT: tên là cả từ shell
     (HEREDOC_X), dòng đóng đúng bằng tên đã bỏ nháy, `<<` trong nháy, comment, sau `\\` hay khi số học đang mở (ARITH_X)
     không mở heredoc. Thân dữ liệu không nháy: shell cha vẫn chạy lệnh lồng `$(…)`, `…` trong đó, mỗi lệnh thành một dòng
-    `( … )` (shell con). Here-string `<<<` đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< … | bash`): chuỗi là thân."""
+    `( … )` (shell con). Here-string `<<<` đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< … | bash`): chuỗi là thân,
+    đọc sau heredoc để thân here-string không chen vào thân heredoc cùng dòng (`cat <<EOF; bash <<< '…'`). Thân đưa vào
+    shell được đọc lại như một lệnh, thêm thành khối phụ sau khối gốc (một tầng: `bash <<'A'` ⏎ `bash <<X -c '…'`, việc 5
+    của 2.8)."""
     def sub(m):
         return place(m.string, m.start(), m["rest"], m["body"], m["q"])
 
@@ -644,6 +647,12 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         if not (fed and scoped):
             return rest + "\n" + (body + "\n" if fed else "")
         mark = SNAP if snap and not raw_marks else ""
+        # Thân đọc lại như lệnh (một tầng): khối phụ đặt sau khối gốc, khối gốc giữ nguyên nên nhãn cũ không mất
+        # (`sh <<E | bash` ⏎ `cat <<E-X` ⏎ `rm …`: thân cat của sh chảy sang bash).
+        again = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1) \
+            if bash and not depth and "<<" in body else body
+        if again != body:
+            body += "\n" + CLOSE + "\n" + (OPEN_RAW if quoted else OPEN) + "\n" + again
         return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
@@ -655,7 +664,6 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             out += [cmd[pos:m.start()], sub(m)]
             pos = m.end()
         return "".join(out) + cmd[pos:]
-    cmd = here_strings(cmd)
     out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
     tok = next(toks, None)
     while m:  # thân tới dòng đúng bằng tên đã bỏ nháy (có thể rỗng), không có thì tới hết lệnh
@@ -690,7 +698,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             toks = ARITH_X.finditer(cmd, pos)
             tok = next(toks, None)
         m = HEREDOC_X.search(cmd, pos)
-    return "".join(out) + cmd[pos:]
+    return here_strings("".join(out) + cmd[pos:])
 
 
 def here_strings(cmd):
