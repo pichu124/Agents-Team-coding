@@ -487,22 +487,23 @@ class Cands(dict):
 
 
 # Lệnh rm (sau `(`, `{`, do/then/else/time/!, phép gán, sudo, command, `\`) và một từ chỉ gồm `$NAME`/`${NAME}` (có
-# thể trong nháy) đứng sau tên lệnh.
+# thể trong nháy, có thể `\$NAME` của shell con trong thân <<EOF) đứng sau tên lệnh.
 CAND_RM = re.compile(r"[\s({]*(?:(?:do|then|else|time|!)\s+)*(?:[A-Za-z_]\w*=\S*\s+)*(?:(?:sudo|command|builtin|exec)\s+)*"
                      r"\\?rm\s")
-CAND_WORD = re.compile(r"(?<![^\s])([\"']?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))\1(?=\s|$)")
+CAND_WORD = re.compile(r"(?<![^\s])\\?([\"']?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))\1(?=\s|$)")
 
 
 def unknown_flags(raw, cands):
     """Việc (4) của 2.8: tên không có trong cands (giá trị không biết, quá trần, hay chưa gán) mà đứng riêng một từ làm tham
-    số của rm thì có thể là `-rf`. Ở vị trí tên lệnh thì không đoán (người dùng duyệt 28/10)."""
+    số của rm thì có thể là `-rf`; tên có ứng viên mà có thêm phép gán không biết giá trị cũng vậy. Ở vị trí tên lệnh thì
+    không đoán (người dùng duyệt 28/10). Trả {tên: ["-rf"]}: segments sinh bản riêng, với trần riêng, để các bản này không
+    tiêu trần của bản ứng viên thật (reviewer PR #58)."""
     m = CAND_RM.match(raw)
     # Cần một đích viết bằng chữ (không cờ, không `$`, không chuyển hướng): `rm $F` thì F nhiều khả năng là đích.
     if not m or not any(w[0] != "-" and not re.search(r"[$`<>]", w) for w in raw[m.end():].split()):
         return {}
     unk = getattr(cands, "unknown", ())
-    return {n: list(cands.get(n, []))[:CAND_CAP] + ["-rf"] for w in CAND_WORD.finditer(raw, m.end())
-            for n in [w[2] or w[3]] if n not in cands or n in unk}
+    return {n: ["-rf"] for w in CAND_WORD.finditer(raw, m.end()) for n in [w[2] or w[3]] if n not in cands or n in unk}
 
 
 def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
@@ -510,11 +511,7 @@ def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
     viên ≤ VARIANT_CAP, quá thì quét từng tên (≤ SCAN_CAP bản, tên khác để nguyên). `\\` ngay trước `$` bỏ cùng chỗ thay:
     `\\$O` trong thân <<EOF là của shell con. Chuỗi trong nháy che bằng "" như bản so mẫu gốc, trừ nháy kép chỉ gồm chữ không
     khoảng trắng và `$NAME` có tên thuộc cands: gỡ che để biến ở vị trí cờ hay tên lệnh khớp mẫu. room: tổng độ dài (so mẫu
-    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh. Tên không biết ở vị trí cờ của rm có ứng viên
-    `-rf` (unknown_flags)."""
-    flags = unknown_flags(raw, cands)
-    if flags:
-        cands = dict(cands, **flags)
+    cộng đầy đủ) tối đa của các bản; bản nào làm vượt thì dừng, không sinh."""
     names = [n for n in dict.fromkeys(m[1] or m[2] for m in CAND_REF.finditer(raw)) if n in cands]
     if not names:
         return []
@@ -1065,13 +1062,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             if plain2 != plain:  # đoạn phụ đứng trước: out[-1] (LOCAL_SHELL đọc ở dấu mở thân) vẫn là đoạn như cũ
                 out.append((plain2, full, ctx, "$" in raw))
             out.append((plain, full, ctx, "$" in raw))
-            # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh.
-            n = budget[0] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
-            if cands is not None and extra is not None and "$" in raw and n > 0:
-                vs = variants(seg, raw, store, cands, n, budget[0] if budget else None)
-                if budget:
-                    budget[0] -= sum(len(vp) + len(vf) for vp, vf in vs)
-                extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True) for vp, vf in vs]
+            # bản ứng viên (candidates): suspicious_labels so sau đoạn gốc; budget[0] là số byte còn được sinh cho bản ứng
+            # viên thật, budget[1] cho bản `-rf` của tên không biết ở vị trí cờ của rm (unknown_flags).
+            if cands is not None and extra is not None and "$" in raw:
+                for i, cs in enumerate((cands, unknown_flags(raw, cands))):
+                    n = budget[i] // (len(seg) + len(raw) + 1) if budget else SCAN_CAP
+                    if not cs or n <= 0:
+                        continue
+                    vs = variants(seg, raw, store, cs, n, budget[i] if budget else None)
+                    if budget:
+                        budget[i] -= sum(len(vp) + len(vf) for vp, vf in vs)
+                    extra += [(re.sub(r"[\"']", " ", vp) if shell_c else vp, vf, ctx, True) for vp, vf in vs]
         if before:
             ctx = before[1]
         elif maybe:
@@ -1349,7 +1350,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
     # của cách đọc đó (thân dữ liệu đã bỏ). Các bản so sau mọi đoạn gốc, trong cùng lượt đọc: không thêm lượt segments.
-    bodies, read, segs, extra, budget = {}, set(), [], [], [VARIANT_BUDGET(len(cmd))]
+    bodies, read, segs, extra, budget = {}, set(), [], [], [VARIANT_BUDGET(len(cmd))] * 2
     for combo in reading_combos(cmd, tool):
         key = reading_key(cmd, tool, combo, bodies)
         if key not in read:
