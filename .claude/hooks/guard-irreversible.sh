@@ -307,13 +307,15 @@ fi
 
 # Các hàm dưới ghi kết quả vào biến (RD, LA, UQ, EN, EO, SD) thay vì in ra: gọi qua $(...) là một lần fork cho mỗi
 # cd ở mỗi cách đọc (4.3).
-# gone <đường>: đường POSIX tuyệt đối, không có .., \ hay dạng C:, mà không phải thư mục (lúc này cd tới đó lỗi). [ -d ] là
-# builtin, không fork. Đường có .. (cd -L khác -P), có \ hay dạng C: thì không kết luận: coi như có. Hệ nào bỏ `..` theo
+# gone <đường>: đường tuyệt đối (POSIX hay C:/…), không có .. hay \, mà không phải thư mục (lúc này cd tới đó lỗi). [ -d ]
+# là builtin, không fork. Dạng C:/… là cwd mà Python của Windows nhận khi Git Bash đổi đường POSIX: không kết luận được thì
+# mỗi cd vào thư mục chưa có tốn một subshell (PR #55). Trên Linux đường đó vốn không cd được. Đường có .. (cd -L khác -P),
+# có \ hay chỉ `C:` thì không kết luận: coi như có. Hệ nào bỏ `..` theo
 # chữ (/nope/.. vào được) thì cd ../M sau cd /nope vẫn tới được M: cũng coi như có.
 gone() {
   case "$1" in
-    *..* | *\\* | [A-Za-z]:*) return 1 ;;
-    /*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
+    *..* | *\\*) return 1 ;;
+    /* | [A-Za-z]:/*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
     *) return 1 ;;
   esac
 }
@@ -401,6 +403,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
+  CD_MAX=300 # số cd tối đa được đọc trong một cách đọc của lệnh push (4.3)
+  # Số lần ghép (git -C × thư mục cd đã gom) tối đa của cả lệnh, và số subshell đọc nhánh tối đa: 299 cd và 250 git -C từng
+  # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
+  GC_MAX=10000
+  SUB_MAX=64
   # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
   # CDCUT cắt phần trước cd của mỗi kết quả grep, tuyến tính: last_arg chạy regex ($re)$ bậc hai theo độ dài từ không có
   # dấu cách, nên phép gán dài trước cd (x=<190 KB> cd M) từng quá timeout (reviewer 4.10). Kết quả bắt đầu bằng N khi cd
@@ -432,6 +439,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # lọt qua.
   set -f
   IFS="$nl"
+  ngc=0
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
     # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
     [ -n "$reason$unknown" ] && break
@@ -450,7 +458,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       fi
       cur="$base"
       cl=("$base")
+      ncd=0
       for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+        # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
+        # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
+        ncd=$((ncd + 1))
+        if [ "$ncd" -gt "$CD_MAX" ]; then
+          reason="push sau hơn $CD_MAX lần cd: không đọc hết các thư mục"
+          break 2
+        fi
         nw=""
         case "$m" in N*) nw=1 ;; esac
         m="${m#?}"
@@ -490,6 +506,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         expand_dir "$LA" "$um" || { unknown=1; continue; }
         for c in "${cl[@]}"; do
           [ -n "$c" ] || continue
+          ngc=$((ngc + 1))
+          if [ "$ngc" -gt "$GC_MAX" ]; then
+            reason="push sau quá nhiều git -C và cd: không đọc hết các thư mục"
+            break 4
+          fi
           resolve_dir "$c" "$EO"
           dl+=("$RD")
           if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
@@ -502,7 +523,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   done
   dirs="$(printf '%s\n' "${dl[@]}" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
+  nsub=0
   for d in $dirs; do
+    [ -n "$reason" ] && break # đã hỏi chắc: khỏi tốn subshell đọc nhánh
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. Đọc theo cả hai
@@ -511,6 +534,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     gone "$d" && continue # cd tới đó lỗi: khỏi tốn một subshell (1500 `cd "a b"` từng mất 17 giây, 4.3)
     for o in -P -L; do
       case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
+      nsub=$((nsub + 1))
+      if [ "$nsub" -gt "$SUB_MAX" ]; then
+        reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
+        break 2
+      fi
       branch="$(CDPATH='' cd "$o" -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
       if text_grep "$branch" -Eqx -- "$MAIN"; then
         reason="push khi đang ở nhánh $branch"

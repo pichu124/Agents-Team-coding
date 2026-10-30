@@ -445,6 +445,36 @@ EOF
   TOOL=PowerShell expect_guard allow 'cd "D:\a b"; git push origin feat/x'
   expect_guard allow "cd \"$work\" && git push origin HEAD"
   expect_guard allow "git -C \"$work\" push -u origin feat/x"
+  # Trần CD_MAX (300) cd mỗi cách đọc (4.3): dưới trần vẫn đọc đúng thư mục, quá trần thì hỏi.
+  cds="$(printf 'cd "a b"; %.0s' $(seq 299))"
+  expect_guard allow "${cds}cd \"$work\" && git push origin HEAD"
+  expect_guard ask "${cds}cd \"$on_main\" && git push origin HEAD"
+  expect_guard ask "${cds}cd x; cd \"$work\" && git push origin HEAD"
+  # Trần GC_MAX (git -C × thư mục cd) và SUB_MAX (subshell đọc nhánh): lệnh thường ngày dưới trần vẫn đọc đúng.
+  gcs="$(printf 'git -C x status; %.0s' $(seq 100))"
+  expect_guard allow "cd \"$work\"; ${gcs}git push origin HEAD"
+  expect_guard ask "cd \"$work\"; ${gcs}git -C \"$on_main\" push origin HEAD"
+  ups="$(printf 'cd ..; %.0s' $(seq 20))"
+  expect_guard allow "${ups}cd \"$work\" && git push origin HEAD"
+  expect_guard ask "${ups}cd \"$on_main\" && git push origin HEAD"
+  # cwd dạng C:/… (Python của Windows nhận đường POSIX đã được Git Bash đổi): cd vào thư mục chưa có vẫn phải bỏ qua, không
+  # tốn subshell (299 cd từng chạm SUB_MAX và hỏi thừa trên Windows). Hệ không tạo được thư mục tên `C:` thì bỏ qua ca này.
+  # Trên Git Bash, `C:/w` là ổ C dù tạo được thư mục tên `C:`: chỉ chạy khi `C:/w` tính từ $tmp đúng là repo vừa tạo.
+  mkdir -p "$tmp/C:" 2>/dev/null && { [ -d "$tmp/C:/w" ] || new_repo "$tmp/C:/w" feat/x; }
+  if (cd "$tmp" 2>/dev/null && [ -d C:/w/.git ] && [ "$(git -C C:/w rev-parse --abbrev-ref HEAD 2>/dev/null)" = feat/x ]); then
+    out="$(cd "$tmp" && bash_input "${cds}cd \"C:/w\" && git push origin HEAD" "C:/w" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'"ask"'*) bad "guard không được hỏi [$mode]: 299 cd với cwd dạng C:/ → $out" ;;
+      *) ok ;;
+    esac
+    # Chiều ngược (reviewer PR #55): C:/m có thật và ở nhánh chính thì vẫn phải hỏi.
+    [ -d "$tmp/C:/m" ] || new_repo "$tmp/C:/m" main
+    out="$(cd "$tmp" && bash_input "${cds}cd \"C:/m\" && git push origin HEAD" "C:/w" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'"ask"'*) ok ;;
+      *) bad "guard phải hỏi [$mode]: 299 cd rồi cd C:/m (nhánh chính) với cwd dạng C:/ → $out" ;;
+    esac
+  fi
   # cd ở đầu lệnh kiểu khác, cd có option, --git-dir/--work-tree/GIT_DIR, đích chưa xác định.
   expect_guard ask "bash -c 'cd \"$on_main\" && git push'"
   expect_guard ask "{ cd \"$on_main\" && git push; }"
@@ -572,11 +602,25 @@ long_qinput 'cd x\"' "$on_main" > "$tmp/long-qcd.json"
 # cd tới repo ở main. Mỗi cd tương đối thành một thư mục khác chữ (không tồn tại), mỗi thư mục từng tốn một subshell (17 giây).
 many_cd() {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
-  for _ in $(seq 1500); do printf '%s' "$1"; done
+  for _ in $(seq "${2:-1500}"); do printf '%s' "$1"; done
   printf 'cd \\"%s\\" && git push","description":"test"}}\n' "$on_main"
 }
 many_cd 'cd \"a b\"; ' > "$tmp/long-manycd.json"
 many_cd 'cd . && ls && ' > "$tmp/long-manydot.json"
+# Thời gian mỗi cd là phần thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd mất ~7 giây trên runner
+# Windows, sát timeout khi máy bận (ca A của test-install đỏ chập chờn). 6000 cd có nháy, và cd xen kẽ hai thư mục.
+many_cd 'cd \"a b\"; ' 6000 > "$tmp/long-manycd6k.json"
+many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.json"
+# Reviewer PR #55: mỗi `git -C` xét với mọi thư mục cd đã gom (299 × 250 × 4 cách đọc từng mất 16–19 giây trên Linux), và
+# mỗi thư mục có `..` tốn subshell (299 `cd ..` 4,5 giây trên Linux, fork trên Git Bash đắt hơn nhiều).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 299); do printf '%s' 'cd .; '; done
+  printf 'cd \\"%s\\"; ' "$on_main"
+  for _ in $(seq 250); do printf '%s' 'git -C x status; '; done
+  printf 'git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-manygitc.json"
+many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
 # Phép gán ~190 KB trước cd: last_arg chạy regex bậc hai theo độ dài từ không có dấu cách (reviewer 4.10).
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"x=' "$work"
@@ -642,7 +686,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-assign; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

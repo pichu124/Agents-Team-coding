@@ -74,10 +74,12 @@ Không còn PR nào mở (21/10, sau PR #27).
 
 ## 4. Kit, ngoài audit
 
-### 4.3 Guard chậm quá timeout với lệnh có hàng nghìn cd (đã thu hẹp)
+### 4.3 Guard chậm quá timeout với lệnh có hàng nghìn cd (đã xong)
+- **Trần CD_MAX (PR #55):** mỗi cd tốn một lượt thông dịch bash (số fork không đổi theo số cd), Git Bash chậm gấp đôi Linux: 1500 `cd "a b"` mất ~7 giây trên runner Windows (đo trực tiếp; `<không có>/..` ở đó cũng không vào được, nên `gone()` vẫn có tác dụng), sát timeout 10 giây khi máy bận, ca A của test-install đỏ chập chờn ở PR #50, #53, #54. Nay guard chỉ đọc tối đa 300 cd mỗi cách đọc của lệnh push, quá thì hỏi ("push sau hơn 300 lần cd"). Linux: 6000 `cd "a b"` 11,9 → 0,35 giây, 2000 cặp cd xen kẽ 8,1 → 0,3 giây; bash 3.2 0,48 giây. Dưới trần đọc như trước (ca 299 cd trong test-hooks).
 - **Đã có:** PR sửa 4.3 bỏ qua thư mục POSIX tuyệt đối không tồn tại (không nối cd sau vào nó, không tốn subshell cho nó). Thư mục của phiên ở nhánh feat, cd cuối tới repo ở main, Linux bash 5.2: 1500 `cd . && ls &&` 79 → 1,7 giây, 1500 `cd "a b";` quá 120 giây (cho qua) → 3,8 giây, 1500 `cd "/tmp/d N"'x' &&` 14,7 → 4,1 giây; 3000 cd mỗi loại 2,8 / 6,8 / 8,2 giây (main quá 120 giây hoặc 31 giây). Bash 3.2 của Apple chậm hơn khoảng 30%. test-hooks có hai ca 1500 cd chạy qua `hook_limit`.
-- **Vì sao còn:** thời gian vẫn tăng theo số cd, nên từ khoảng 3000 cd có nháy (ít hơn trên Git Bash, mỗi fork đắt hơn) guard lại gần timeout 10 giây. Lệnh `;cd<NBSP>-p` ×20000 chưa đo lại. Đường có `..`, có `\` hay dạng `C:` vẫn được cd thử như trước.
-- **Xong khi:** ca 6000 cd có nháy qua `hook_limit` trên 3 OS, hoặc quyết định coi cỡ đó là ngoài phạm vi.
+- **Hai trần nữa (reviewer PR #55, lỗ có sẵn trên main):** mỗi `git -C` được ghép với mọi thư mục cd đã gom (299 `cd .` rồi 250 `git -C x status` mất 15 giây trên Linux, bash 3.2 quá 60 giây, push lên main lọt qua): nay quá 10000 lần ghép (`GC_MAX`) thì hỏi, 0,7 / 1,0 giây. Mỗi thư mục có `..` tốn tới hai subshell chạy git (299 `cd ..` 4,5 giây trên Linux, Git Bash fork đắt hơn): nay quá 64 subshell đọc nhánh (`SUB_MAX`) thì hỏi, 1,1 giây.
+- **Còn lại:** lệnh push có hơn 300 cd, hơn 10000 lần ghép `git -C` × thư mục, hay hơn 64 thư mục cần đọc nhánh luôn bị hỏi (hỏi thừa, chấp nhận được). Thời gian trên Git Bash của các ca trần chưa đo riêng (CI chạy chúng qua `hook_limit`). Hỏi thừa gặp được (reviewer PR #55): monorepo `cd packages/p1 && make && cd ../p2 && … && cd ../p33 && git push` cho 33 đường có `..`, mỗi đường hai subshell, vượt `SUB_MAX`; nâng trần chỉ khi đo trên Windows còn dư thời gian (ca `long-manydotdot` chạy đúng tới trần đã xanh trên CI Windows).
+- **Đã xong khi:** ca 6000 cd có nháy, 2000 cặp cd xen kẽ, 299 cd với 250 `git -C`, 299 `cd ..` qua `hook_limit` trong test-hooks (chạy trên 3 OS).
 
 ### 4.5 Nhỏ
 - Kiểm định kỳ feature map của skill verify-kit với kit, bằng `/loop` hay `/schedule` (gợi ý của PR #17).
