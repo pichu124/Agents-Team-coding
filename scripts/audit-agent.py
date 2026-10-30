@@ -496,14 +496,23 @@ CAND_WORD = re.compile(r"(?<![^\s])\\?([\"']?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]
 def unknown_flags(raw, cands):
     """Việc (4) của 2.8: tên không có trong cands (giá trị không biết, quá trần, hay chưa gán) mà đứng riêng một từ làm tham
     số của rm thì có thể là `-rf`; tên có ứng viên mà có thêm phép gán không biết giá trị cũng vậy. Ở vị trí tên lệnh thì
-    không đoán (người dùng duyệt 28/10). Trả {tên: ["-rf"]}: segments sinh bản riêng, với trần riêng, để các bản này không
+    không đoán (người dùng duyệt 28/10). Trả {tên: ứng viên chữ + ["-rf", "$tên"]}: segments sinh bản riêng, với trần riêng, để các bản này không
     tiêu trần của bản ứng viên thật (reviewer PR #58)."""
     m = CAND_RM.match(raw)
     # Cần một đích viết bằng chữ (không cờ, không `$`, không chuyển hướng): `rm $F` thì F nhiều khả năng là đích.
     if not m or not any(w[0] != "-" and not re.search(r"[$`<>]", w) for w in raw[m.end():].split()):
         return {}
     unk = getattr(cands, "unknown", ())
-    return {n: ["-rf"] for w in CAND_WORD.finditer(raw, m.end()) for n in [w[2] or w[3]] if n not in cands or n in unk}
+    out = {}
+    for w in CAND_WORD.finditer(raw, m.end()):
+        n = w[2] or w[3]
+        if n in out or (n in cands and n not in unk):
+            continue
+        # Ứng viên chữ của tên giữ nguyên (T=/srv/data hay T=$(cat f): bash có thể chạy `rm /srv/data -rf dist`), thêm `-rf`
+        # và chính `$NAME` (không biết): hai tên không biết thì mỗi tên được thử -rf riêng (reviewer PR #58).
+        old = list(cands.get(n, []))[:CAND_CAP]
+        out[n] = old + [v for v in ("-rf", "$" + n) if v not in old]
+    return out
 
 
 def variants(seg, raw, store, cands, limit=SCAN_CAP, room=None):
