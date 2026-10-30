@@ -459,8 +459,9 @@ EOF
   expect_guard ask "${ups}cd \"$on_main\" && git push origin HEAD"
   # cwd dạng C:/… (Python của Windows nhận đường POSIX đã được Git Bash đổi): cd vào thư mục chưa có vẫn phải bỏ qua, không
   # tốn subshell (299 cd từng chạm SUB_MAX và hỏi thừa trên Windows). Hệ không tạo được thư mục tên `C:` thì bỏ qua ca này.
-  if mkdir -p "$tmp/C:" 2>/dev/null && [ -d "$tmp/C:" ]; then
-    [ -d "$tmp/C:/w" ] || new_repo "$tmp/C:/w" feat/x
+  # Trên Git Bash, `C:/w` là ổ C dù tạo được thư mục tên `C:`: chỉ chạy khi `C:/w` tính từ $tmp đúng là repo vừa tạo.
+  mkdir -p "$tmp/C:" 2>/dev/null && { [ -d "$tmp/C:/w" ] || new_repo "$tmp/C:/w" feat/x; }
+  if (cd "$tmp" 2>/dev/null && [ -d C:/w/.git ] && [ "$(git -C C:/w rev-parse --abbrev-ref HEAD 2>/dev/null)" = feat/x ]); then
     out="$(cd "$tmp" && bash_input "${cds}cd \"C:/w\" && git push origin HEAD" "C:/w" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
     case "$out" in
       *'"ask"'*) bad "guard không được hỏi [$mode]: 299 cd với cwd dạng C:/ → $out" ;;
