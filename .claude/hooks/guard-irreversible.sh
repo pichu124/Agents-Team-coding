@@ -13,6 +13,7 @@ cwd="$(json_get "$input" cwd)"
 cmd="$(json_get "$input" tool_input.command)"
 # Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
+raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dưới cần `\` + xuống dòng còn nguyên
 # Nối dòng: bash dùng \ cuối dòng, PowerShell dùng `. Ở tool kia, ký tự đó cuối dòng là thứ
 # khác (C:\ trong PowerShell, dấu đóng `...` trong bash), còn \\ là dấu \ thật. grep so từng
 # dòng, nên so trên nhiều dạng: nối theo tool (đích nằm ở dòng sau), giữ dòng nhưng bỏ dấu
@@ -210,7 +211,8 @@ case "$src" in
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
       BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
               kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$" }
+              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
+      cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
       { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
         if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
@@ -231,6 +233,50 @@ case "$src" in
     fi
     ;;
 esac
+
+# Chữ lệnh bị xé theo cách khác (4.10, reviewer thử bằng bash thật): `\` nối dòng giữa chữ (`git pu\` ⏎ `sh`: bash bỏ cả `\`
+# lẫn xuống dòng, còn join_lines chèn dấu cách), mở rộng rỗng (`pu$()sh`, ``pu``sh``, `pu${X}sh`), ANSI-C (`$'\x70'ush`,
+# `$'pu\163h'`), ngoặc nhọn (`git {push,}`, `r{m,} -rf`), backtick thoát của PowerShell (``pu`sh``). Mọi luật so thêm dạng dz:
+# nối các dòng đó không chèn gì, bỏ $(…), ${…}, cặp backtick, lấy nhánh đầu của {a,b}, giải \xHH và \NNN trong $'…', rồi xoá
+# ' " \ `. Chỉ thêm chữ để khớp: hỏi thừa chứ không bỏ sót. awk, sed, tr tuyến tính; bước $'…' bỏ qua dòng quá 16 KB
+# (substr của onetrue-awk 2 chép cả dòng). Cổng push không đọc thư mục từ dạng này; ngoặc nhọn, hay thân -c dùng tham số vị
+# trí (`bash -c 'cd M && git "$@"' _ push`), thì thư mục của push là chưa biết, tức hỏi.
+case "$raw" in
+  *"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*','*'}'*)
+    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        { line = pend $0; pend = "" }
+        line ~ /\\$/ && line !~ /\\\\$/ { pend = substr(line, 1, length(line) - 1); next }
+        { print line }
+        END { if (pend != "") print pend }' |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+      LC_ALL=C awk '
+        function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+        function dec(t,   r, i, c) {
+          r = ""
+          for (i = 1; i <= length(t); i++) {
+            c = substr(t, i, 1)
+            if (c == "\\" && substr(t, i + 1, 1) == "x" && hv(substr(t, i + 2, 1)) >= 0 && hv(substr(t, i + 3, 1)) >= 0) {
+              r = r sprintf("%c", hv(substr(t, i + 2, 1)) * 16 + hv(substr(t, i + 3, 1))); i += 3; continue }
+            if (c == "\\" && substr(t, i + 1, 3) ~ /^[0-7][0-7][0-7]$/) {
+              r = r sprintf("%c", substr(t, i + 1, 1) * 64 + substr(t, i + 2, 1) * 8 + substr(t, i + 3, 1)); i += 3; continue }
+            r = r c }
+          return r }
+        length($0) > 16384 { print; next }
+        { s = $0; out = ""
+          while (match(s, /[$]\047[^\047]*\047/)) {
+            out = out substr(s, 1, RSTART - 1) dec(substr(s, RSTART + 2, RLENGTH - 3)); s = substr(s, RSTART + RLENGTH) }
+          print out s }' | LC_ALL=C tr -d "\"'\\\\\`")"
+    cmd="$cmd$nl$dz"
+    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`): thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
+    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]'; then
+      shc_unknown=1
+    fi
+    ;;
+esac
+if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC" && LC_ALL=C text_grep "$cmd" -Eq -- '[$][{]?[@*1-9]'; then
+  shc_unknown=1
+fi
 
 reason=""
 # rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy dòng khớp đầu tiên, rồi mới xét từng luật theo
