@@ -2051,7 +2051,11 @@ for cmd in ("read O < f; rm $O /x", "O=$(cat f); rm \"$O\" /x", "rm $O /x", "for
             "bash <<EOF\nrm \\$O /x\nEOF", "bash <<EOF\nO=\\$(cat f); rm \\$O /x\nEOF",
             # Reviewer PR #58: bản -rf không được tiêu trần của bản ứng viên thật (lệnh sau vẫn phải nghi như bản trước).
             "U=/tmp/a; U=$(cat f); " + "".join(f"rm $U /tmp/lit{i}; " for i in range(3000))
-            + "C=echo; true && C=rm; C=echo true; $C -rf /x"):
+            + "C=echo; true && C=rm; C=echo true; $C -rf /x",
+            # Reviewer PR #58 vòng ba: tên có ứng viên chữ lẫn giá trị không biết giữ ứng viên chữ ở bản -rf (bash: rm
+            # /srv/data -rf dist); hai tên không biết thì mỗi tên được thử -rf riêng (O=-rf, T=/srv/x).
+            "T=/srv/data; [ -f f ] && T=$(cat f); F=$(cat g); rm $T $F dist",
+            "O=$(cat f); T=$(cat g); rm $O $T dist"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"biến không biết ở vị trí cờ của rm (2.8 việc 4): {cmd!r}: {got!r}")
 for cmd in ("rm $F", "rm -f $F", "O=$(cat f); rm $O /tmp/x", "C=$(cat f); $C -rf /tmp/x"):
