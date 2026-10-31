@@ -649,6 +649,15 @@ many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
 # bằng length/substr, bậc hai theo độ dài, 278 KB mất 18 giây với bash 3.2 và awk BWK (main 1,3 giây; reviewer PR #60).
 long_input 'npm run deploy' "$work" " \$'$(printf 'A%.0s' $(seq 16370))'" 17 > "$tmp/long-ansi.json"
 long_input 'npm run deploy' "$work" " \$'$(printf '\\\\\\\\x41%.0s' $(seq 4090))'" 17 > "$tmp/long-ansiesc.json"
+# Glob ba chữ *{*,*}* của case chạy bậc ba trên bash 3.2: 4000 `{,` (8 KB) mất 22 giây, here-doc CSV 190 KB sau
+# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo %s; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf '{,%.0s' $(seq 4000))" > "$tmp/long-brace.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"awk -F, '"'"'{print $1}'"'"' <<EOF' "$work"
+  printf '\\na,b,c,d,%s' $(seq 19000)
+  printf '\\nEOF\\ngit push --force origin x","description":"test"}}\n'
+} > "$tmp/long-csv.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -708,7 +717,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
