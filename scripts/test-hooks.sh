@@ -387,6 +387,10 @@ EOF
   expect_guard ask "r\\${nl}m -rf /"
   expect_guard ask "git \$'\\x70'ush --force origin feat/x"
   expect_guard ask "git \$'pu\\163h' --force origin feat/x"
+  # Octal một hai chữ số như bash (reviewer PR #60).
+  expect_guard ask "git push \$'\\55\\55'force origin feat/x"
+  expect_guard ask "rm -rf \$'\\57'"
+  expect_guard ask "git \$'p'ush --force origin feat/x"
   expect_guard ask "git pu\$()sh --force origin feat/x"
   expect_guard ask "git pu\`\`sh --force origin feat/x"
   expect_guard ask "git pu\${X}sh --force origin feat/x"
