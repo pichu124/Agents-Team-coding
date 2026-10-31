@@ -241,13 +241,14 @@ esac
 # ' " \ `. Chỉ thêm chữ để khớp: hỏi thừa chứ không bỏ sót. awk, sed, tr tuyến tính; bước $'…' bỏ qua dòng quá 16 KB
 # (substr của onetrue-awk 2 chép cả dòng). Cổng push không đọc thư mục từ dạng này; ngoặc nhọn, hay thân -c dùng tham số vị
 # trí (`bash -c 'cd M && git "$@"' _ push`), thì thư mục của push là chưa biết, tức hỏi.
+# Chỉ `\` dính chữ trước nó (`pu\`) mới nối không chèn gì: ` \` cuối dòng là nối dòng thường, dạng nối của join_lines đã đủ,
+# và nối cả lệnh dài (long-uni, long-colon của test-hooks) thành thêm một dòng ~230 KB làm luật chậm gấp đôi (macOS quá 10 giây).
 case "$raw" in
-  *"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*','*'}'*)
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*','*'}'*)
+    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
     dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
-        { line = pend $0; pend = "" }
-        line ~ /\\$/ && line !~ /\\\\$/ { pend = substr(line, 1, length(line) - 1); next }
-        { print line }
-        END { if (pend != "") print pend }' |
+        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk '
@@ -274,9 +275,13 @@ case "$raw" in
     fi
     ;;
 esac
-if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC" && LC_ALL=C text_grep "$cmd" -Eq -- '[$][{]?[@*1-9]'; then
-  shc_unknown=1
-fi
+case "$raw" in
+  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[1-9]* | *'${'[1-9]*)
+    if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC"; then
+      shc_unknown=1
+    fi
+    ;;
+esac
 
 reason=""
 # rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy dòng khớp đầu tiên, rồi mới xét từng luật theo
