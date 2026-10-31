@@ -391,6 +391,13 @@ EOF
   expect_guard ask "git push \$'\\55\\55'force origin feat/x"
   expect_guard ask "rm -rf \$'\\57'"
   expect_guard ask "git \$'p'ush --force origin feat/x"
+  # Bộ tách nhận nhầm '$' thường là mở $'…': \0 không được cắt phần còn lại, ký tự giải ra không được là dấu ngắt lệnh
+  # (reviewer PR #60, bash thật chạy push --force và rm).
+  expect_guard ask "echo '\$' \\0; r\$()m -rf /; echo ''"
+  expect_guard ask "echo '\$' \\400; git pu\$()sh --force origin feat/x; echo ''"
+  expect_guard ask "echo \"\$'\\0\" ; git pu\$()sh --force origin feat/x; echo \"'\""
+  expect_guard ask "echo '\$'; git pu\$()sh \\73 --force origin feat/x; echo ''"
+  expect_guard ask "echo '\$'; git pu\$()sh \\12 --force origin feat/x; echo ''"
   expect_guard ask "git pu\$()sh --force origin feat/x"
   expect_guard ask "git pu\`\`sh --force origin feat/x"
   expect_guard ask "git pu\${X}sh --force origin feat/x"
