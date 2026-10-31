@@ -378,6 +378,43 @@ EOF
   expect_guard ask "cd '--' '$on_main' && git push"
   expect_guard ask "git \$'p'ush --force origin feat/x"
   expect_guard ask "git push -\\-force origin feat/x"
+  # 4.10 còn lại (reviewer, bash thật): tên shell xé, \ nối dòng giữa chữ, ANSI-C, mở rộng rỗng, ngoặc nhọn, "$@",
+  # backtick của PowerShell.
+  expect_guard ask "ba'sh' -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "\"bash\" -c 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -'c' 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "git pu\\${nl}sh --force origin feat/x"
+  expect_guard ask "r\\${nl}m -rf /"
+  expect_guard ask "git \$'\\x70'ush --force origin feat/x"
+  expect_guard ask "git \$'pu\\163h' --force origin feat/x"
+  # Octal một hai chữ số như bash (reviewer PR #60).
+  expect_guard ask "git push \$'\\55\\55'force origin feat/x"
+  expect_guard ask "rm -rf \$'\\57'"
+  expect_guard ask "git \$'p'ush --force origin feat/x"
+  # Bộ tách nhận nhầm '$' thường là mở $'…': \0 không được cắt phần còn lại, ký tự giải ra không được là dấu ngắt lệnh
+  # (reviewer PR #60, bash thật chạy push --force và rm).
+  expect_guard ask "echo '\$' \\0; r\$()m -rf /; echo ''"
+  expect_guard ask "echo '\$' \\400; git pu\$()sh --force origin feat/x; echo ''"
+  expect_guard ask "echo \"\$'\\0\" ; git pu\$()sh --force origin feat/x; echo \"'\""
+  expect_guard ask "echo '\$'; git pu\$()sh \\73 --force origin feat/x; echo ''"
+  expect_guard ask "echo '\$'; git pu\$()sh \\12 --force origin feat/x; echo ''"
+  # Nhưng $'…' thật thì bash cắt ở \0, và ; xuống dòng & | giải ra ngắt lệnh trong bash -c, eval: giữ cả cách đọc đó.
+  expect_guard ask "r\$'m\\0x' -rf /"
+  expect_guard ask "git push \$'--force\\0x' origin feat/x"
+  expect_guard ask "bash -c \$'echo\\x3brm -rf /'"
+  expect_guard ask "eval \$'echo\\73rm -rf /'"
+  expect_guard ask "bash -c \$'echo\\12rm -rf /'"
+  expect_guard ask "bash -c \$'true\\x26\\x26rm -rf /'"
+  expect_guard ask "bash -c \$'true\\174rm -rf /'"
+  expect_guard ask "git pu\$()sh --force origin feat/x"
+  expect_guard ask "git pu\`\`sh --force origin feat/x"
+  expect_guard ask "git pu\${X}sh --force origin feat/x"
+  expect_guard ask "git {push,} --force origin feat/x"
+  expect_guard ask "r{m,} -rf ~"
+  expect_guard ask "{cd,} '$on_main' && git push"
+  expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git \"\$@\"' _ push"
+  TOOL=PowerShell expect_guard ask "git pu\`sh --force origin feat/x"
+  TOOL=PowerShell expect_guard ask "r\`m -r -fo C:\\"
   expect_guard ask "git push origin \\+feat/x"
   expect_guard ask "git push origin \\:feat/x"
   expect_guard ask "rm -rf \\/*"
@@ -627,6 +664,19 @@ many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
   for _ in $(seq 1900); do printf '%s' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; done
   printf ' cd \\"%s\\" && git push","description":"test"}}\n' "$on_main"
 } > "$tmp/long-assign.json"
+# Mỗi dòng một $'…' gần 16 KB (dưới ngưỡng bỏ qua của từng dòng), 17 dòng: phép giải $'…' của dạng xé chữ đọc từng ký tự
+# bằng length/substr, bậc hai theo độ dài, 278 KB mất 18 giây với bash 3.2 và awk BWK (main 1,3 giây; reviewer PR #60).
+long_input 'npm run deploy' "$work" " \$'$(printf 'A%.0s' $(seq 16370))'" 17 > "$tmp/long-ansi.json"
+long_input 'npm run deploy' "$work" " \$'$(printf '\\\\\\\\x41%.0s' $(seq 4090))'" 17 > "$tmp/long-ansiesc.json"
+# Glob ba chữ *{*,*}* của case chạy bậc ba trên bash 3.2: 4000 `{,` (8 KB) mất 22 giây, here-doc CSV 190 KB sau
+# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo %s; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf '{,%.0s' $(seq 4000))" > "$tmp/long-brace.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"awk -F, '"'"'{print $1}'"'"' <<EOF' "$work"
+  printf '\\na,b,c,d,%s' $(seq 19000)
+  printf '\\nEOF\\ngit push --force origin x","description":"test"}}\n'
+} > "$tmp/long-csv.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -686,7 +736,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

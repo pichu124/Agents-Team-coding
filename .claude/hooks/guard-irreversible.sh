@@ -13,6 +13,7 @@ cwd="$(json_get "$input" cwd)"
 cmd="$(json_get "$input" tool_input.command)"
 # Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
+raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dưới cần `\` + xuống dòng còn nguyên
 # Nối dòng: bash dùng \ cuối dòng, PowerShell dùng `. Ở tool kia, ký tự đó cuối dòng là thứ
 # khác (C:\ trong PowerShell, dấu đóng `...` trong bash), còn \\ là dấu \ thật. grep so từng
 # dòng, nên so trên nhiều dạng: nối theo tool (đích nằm ở dòng sau), giữ dòng nhưng bỏ dấu
@@ -210,7 +211,8 @@ case "$src" in
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
       BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
               kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$" }
+              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
+      cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
       { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
         if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
     [ -z "$torn" ] || shc_unknown=1
@@ -228,6 +230,70 @@ case "$src" in
             out = out substr(s, 1, RSTART - 1) seg; s = substr(s, RSTART + RLENGTH) }
           print out s }')"
       cmd="$cmd$nl$qm"
+    fi
+    ;;
+esac
+
+# Chữ lệnh bị xé theo cách khác (4.10, reviewer thử bằng bash thật): `\` nối dòng giữa chữ (`git pu\` ⏎ `sh`: bash bỏ cả `\`
+# lẫn xuống dòng, còn join_lines chèn dấu cách), mở rộng rỗng (`pu$()sh`, ``pu``sh``, `pu${X}sh`), ANSI-C (`$'\x70'ush`,
+# `$'pu\163h'`), ngoặc nhọn (`git {push,}`, `r{m,} -rf`), backtick thoát của PowerShell (``pu`sh``). Mọi luật so thêm dạng dz:
+# nối các dòng đó không chèn gì, bỏ $(…), ${…}, cặp backtick, lấy nhánh đầu của {a,b}, giải \xHH và \NNN trong $'…', rồi xoá
+# ' " \ `. Chỉ thêm chữ để khớp: hỏi thừa chứ không bỏ sót. awk, sed, tr tuyến tính; bước $'…' bỏ qua dòng quá 16 KB
+# (substr của onetrue-awk 2 chép cả dòng). Cổng push không đọc thư mục từ dạng này; ngoặc nhọn, hay thân -c dùng tham số vị
+# trí (`bash -c 'cd M && git "$@"' _ push`), thì thư mục của push là chưa biết, tức hỏi.
+# Chỉ `\` dính chữ trước nó (`pu\`) mới nối không chèn gì: ` \` cuối dòng là nối dòng thường, dạng nối của join_lines đã đủ,
+# và nối cả lệnh dài (long-uni, long-colon của test-hooks) thành thêm một dòng ~230 KB làm luật chậm gấp đôi (macOS quá 10 giây).
+case "$raw" in
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
+    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
+    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+      LC_ALL=C awk '
+        function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+        # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
+        # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
+        # \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
+        # ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
+        # (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
+        # cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
+        function dec(t, m,   p, n, k, v, i, l) {
+          n = split(t, p, "\\")
+          printf "%s", p[1]
+          for (k = 2; k <= n; k++) {
+            if (p[k] ~ /^x[0-9A-Fa-f]/) {
+              l = p[k] ~ /^x[0-9A-Fa-f][0-9A-Fa-f]/ ? 3 : 2
+              v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1)) }
+            else if (p[k] ~ /^[0-7]/) {
+              l = p[k] ~ /^[0-7][0-7][0-7]/ ? 3 : p[k] ~ /^[0-7][0-7]/ ? 2 : 1
+              v = 0; for (i = 1; i <= l; i++) v = v * 8 + substr(p[k], i, 1); v %= 256 }
+            else { printf "\\%s", p[k]; continue }
+            if (v == 0 || v == 10 || v == 13 || v == 38 || v == 59 || v == 124) f = 1
+            if (v == 0 && !m) return
+            if (v == 0) { printf "%s", substr(p[k], l + 1); continue }
+            if (m && (v == 10 || v == 13 || v == 38 || v == 59 || v == 124)) v = 95
+            printf "%c%s", v, substr(p[k], l + 1) } }
+        length($0) > 16384 { print; next }
+        { n = split($0, q, "\047"); f = 0
+          for (m = 0; m < 1 + f; m++) {
+            k = 1
+            while (k <= n) {
+              if (k < n - 1 && q[k] ~ /[$]$/) { printf "%s", substr(q[k], 1, length(q[k]) - 1); dec(q[k + 1], m); k += 2; continue }
+              printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
+            print "" } }' | LC_ALL=C tr -d "\"'\\\\\`")"
+    cmd="$cmd$nl$dz"
+    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`): thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
+    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]'; then
+      shc_unknown=1
+    fi
+    ;;
+esac
+case "$raw" in
+  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[1-9]* | *'${'[1-9]*)
+    if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC"; then
+      shc_unknown=1
     fi
     ;;
 esac
