@@ -253,21 +253,29 @@ case "$raw" in
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk '
         function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
-        function dec(t,   r, i, c) {
-          r = ""
-          for (i = 1; i <= length(t); i++) {
-            c = substr(t, i, 1)
-            if (c == "\\" && substr(t, i + 1, 1) == "x" && hv(substr(t, i + 2, 1)) >= 0 && hv(substr(t, i + 3, 1)) >= 0) {
-              r = r sprintf("%c", hv(substr(t, i + 2, 1)) * 16 + hv(substr(t, i + 3, 1))); i += 3; continue }
-            if (c == "\\" && substr(t, i + 1, 3) ~ /^[0-7][0-7][0-7]$/) {
-              r = r sprintf("%c", substr(t, i + 1, 1) * 64 + substr(t, i + 2, 1) * 8 + substr(t, i + 3, 1)); i += 3; continue }
-            r = r c }
-          return r }
+        # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
+        # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
+        # Như bash: \xH hay \xHH, \N tới \NNN lấy 8 bit thấp, \0 kết thúc chuỗi. Không dùng match với ? liền nhau
+        # (mawk 1.3.4 cho \101 thành \10 rồi 1).
+        function dec(t,   p, n, k, v, i, l) {
+          n = split(t, p, "\\")
+          printf "%s", p[1]
+          for (k = 2; k <= n; k++) {
+            if (p[k] ~ /^x[0-9A-Fa-f]/) {
+              l = p[k] ~ /^x[0-9A-Fa-f][0-9A-Fa-f]/ ? 3 : 2
+              v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1)) }
+            else if (p[k] ~ /^[0-7]/) {
+              l = p[k] ~ /^[0-7][0-7][0-7]/ ? 3 : p[k] ~ /^[0-7][0-7]/ ? 2 : 1
+              v = 0; for (i = 1; i <= l; i++) v = v * 8 + substr(p[k], i, 1); v %= 256 }
+            else { printf "\\%s", p[k]; continue }
+            if (v == 0) return
+            printf "%c%s", v, substr(p[k], l + 1) } }
         length($0) > 16384 { print; next }
-        { s = $0; out = ""
-          while (match(s, /[$]\047[^\047]*\047/)) {
-            out = out substr(s, 1, RSTART - 1) dec(substr(s, RSTART + 2, RLENGTH - 3)); s = substr(s, RSTART + RLENGTH) }
-          print out s }' | LC_ALL=C tr -d "\"'\\\\\`")"
+        { n = split($0, q, "\047"); k = 1
+          while (k <= n) {
+            if (k < n - 1 && q[k] ~ /[$]$/) { printf "%s", substr(q[k], 1, length(q[k]) - 1); dec(q[k + 1]); k += 2; continue }
+            printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
+          print "" }' | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`): thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
     if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]'; then
