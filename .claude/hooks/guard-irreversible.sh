@@ -255,8 +255,9 @@ case "$raw" in
         function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
         # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
         # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
-        # Như bash: \xH hay \xHH, \N tới \NNN lấy 8 bit thấp, \0 kết thúc chuỗi. Không dùng match với ? liền nhau
-        # (mawk 1.3.4 cho \101 thành \10 rồi 1).
+        # Như bash: \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Bộ tách có thể nhận nhầm '$' thường là mở $'…', nên \0 không
+        # cắt phần còn lại (chỉ bỏ ký tự đó), và ký tự giải ra là ; & | hay xuống dòng thì thành _ (không ngắt luật). Không
+        # dùng match với ? liền nhau (mawk 1.3.4 cho \101 thành \10 rồi 1).
         function dec(t,   p, n, k, v, i, l) {
           n = split(t, p, "\\")
           printf "%s", p[1]
@@ -268,7 +269,8 @@ case "$raw" in
               l = p[k] ~ /^[0-7][0-7][0-7]/ ? 3 : p[k] ~ /^[0-7][0-7]/ ? 2 : 1
               v = 0; for (i = 1; i <= l; i++) v = v * 8 + substr(p[k], i, 1); v %= 256 }
             else { printf "\\%s", p[k]; continue }
-            if (v == 0) return
+            if (v == 0) { printf "%s", substr(p[k], l + 1); continue }
+            if (v == 10 || v == 13 || v == 38 || v == 59 || v == 124) v = 95
             printf "%c%s", v, substr(p[k], l + 1) } }
         length($0) > 16384 { print; next }
         { n = split($0, q, "\047"); k = 1
