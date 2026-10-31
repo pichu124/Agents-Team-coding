@@ -244,7 +244,7 @@ esac
 # Chỉ `\` dính chữ trước nó (`pu\`) mới nối không chèn gì: ` \` cuối dòng là nối dòng thường, dạng nối của join_lines đã đủ,
 # và nối cả lệnh dài (long-uni, long-colon của test-hooks) thành thêm một dòng ~230 KB làm luật chậm gấp đôi (macOS quá 10 giây).
 case "$raw" in
-  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*','*'}'*)
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
     # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
     dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
