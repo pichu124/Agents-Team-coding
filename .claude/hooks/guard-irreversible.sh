@@ -287,7 +287,7 @@ dec_awk='
               printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
             print "" } }'
 case "$raw" in
-  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]*)
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]* | *'$'[A-Za-z_]*)
     # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
     dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
@@ -301,12 +301,28 @@ case "$raw" in
     # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9
     # được thay bằng \001 TRƯỚC khi tách token: nội dung của chúng (`c$(: x)d`, `c${X:-}d`, ``c` `d``) không cắt đôi token,
     # và token vẫn mang dấu xé. Token không có dấu xé (cd thường) không qua bước này.
-    tk="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
+    # Thay trước khi tách không biết nháy: dấu mở trong nháy hay đã thoát (`echo '`'; c``d M`) ghép với dấu thật phía sau và
+    # nuốt token xé ở giữa. Nên chạy thêm đường cũ (tách token trước, rồi bỏ phần mở rộng trong token), đường nào ra từ khoá
+    # cũng hỏi; đường cũ bỏ backtick đơn ở đầu hay cuối token (mở hay đóng lệnh con, `echo "`command -v git`"`). Đường mới: \` thành \001 trước khi ghép cặp backtick (``c`echo \`:\``d``); $(…) ${…} `…` thay 8 lượt cho
+    # dạng lồng (`c$($(true))d`, `c${X:-${Y}}d`); $X thành \001 (`c$X'd'`); dãy có bước (`c{d..d..1}`). Còn lọt: lồng quá
+    # 8 tầng, ngoặc trong $(…) (`c$( (:) )d`), $(…) hay backtick trải nhiều dòng (4.10 của docs/viec-can-lam.md).
+    jn="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
           printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
-        { j = 0; print }' |
-      LC_ALL=C sed -e "s/[$](\([^()]*\))/$soh/g" -e "s/[$]{[^{}]*}/$soh/g" -e "s/\`[^\`]*\`/$soh/g" -e "s/[$][@*0-9]/$soh/g" |
+        { j = 0; print }')"
+    ex="s/[$](\([^()]*\))/$soh/g;s/[$]{[^{}]*}/$soh/g;s/\`[^\`]*\`/$soh/g"
+    tk="$(printf '%s\n' "$jn" |
+      LC_ALL=C sed -e "s/\\\\\`/$soh/g" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" \
+        -e "s/[$][@*0-9]/$soh/g" -e "s/[$][A-Za-z_][A-Za-z0-9_]*/$soh/g" |
       LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
-      LC_ALL=C sed -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' |
+      LC_ALL=C sed -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' \
+        -e 's/{\([[:alpha:]]\)[.][.]\1[.][.]-*[0-9][0-9]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
+    [ -z "$tk" ] || shc_unknown=1
+    tk="$(printf '%s\n' "$jn" | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.$soh-]+" |
+      LC_ALL=C sed -e 's/^`\([^`]*\)$/\1/' -e 's/^\([^`]*\)`$/\1/' | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' \
+        -e 's/{\([[:alpha:]]\)[.][.]\1[.][.]-*[0-9][0-9]*}/\1/g' |
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
     [ -z "$tk" ] || shc_unknown=1
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
