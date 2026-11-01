@@ -20,6 +20,7 @@ raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dướ
 # nối (lệnh ở dòng sau vẫn là đầu lệnh), nối cả hai kiểu (PowerShell lồng trong bash). Không
 # rõ tool thì so thêm bản gốc. Kiểm tra push trên nhánh chính đọc từng dạng riêng ($forms).
 nl=$'\n'
+soh=$'\001'
 tool="$(json_get "$input" tool_name)"
 # join_lines <lệnh> <dấu nối> <join|keep>: dòng có dòng sau mà kết thúc bằng dấu nối (xét lần lượt từng ký
 # tự của <dấu nối>) thì bỏ dấu đó cùng xuống dòng, thay bằng dấu cách (join), hoặc chỉ bỏ dấu và giữ xuống
@@ -203,18 +204,21 @@ fi
 # "cd", buil'ti'n, --git-dir'=', "GIT_DIR=) làm thư mục của push thành chưa biết, tức hỏi. Riêng tên lệnh cd, một nháy lẻ
 # ở đầu hay cuối token ('cd, "cd của thân bash -c) không xé gì; token của option dừng ở `=` nên không có ngoại lệ đó. Xét
 # từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
+# kw_awk: in x khi một token (mỗi dòng một token) bỏ ' " \ $ thì thành từ khoá thư mục, option của cd hay tên shell; dùng
+# cho token bị nháy xé (torn) và token bị xé theo cách của dạng dz (tk, bên dưới).
+kw_awk='
+  BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
+          kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
+          kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
+  cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
+  { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
+    if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }'
 case "$src" in
   *[\"\'\\]*)
     dq="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
       -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
     dx="$(printf '%s\n' "$src" | LC_ALL=C tr -d "\"'\\\\")"
-    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
-      BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
-              kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
-      cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
-      { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
-        if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
+    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk "$kw_awk")"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
     # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
@@ -243,22 +247,15 @@ esac
 # trí (`bash -c 'cd M && git "$@"' _ push`), thì thư mục của push là chưa biết, tức hỏi.
 # Chỉ `\` dính chữ trước nó (`pu\`) mới nối không chèn gì: ` \` cuối dòng là nối dòng thường, dạng nối của join_lines đã đủ,
 # và nối cả lệnh dài (long-uni, long-colon của test-hooks) thành thêm một dòng ~230 KB làm luật chậm gấp đôi (macOS quá 10 giây).
-case "$raw" in
-  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
-    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
-    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
-        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
-        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
-      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
-        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
-      LC_ALL=C awk '
+# dec_awk: giải $'…' của từng dòng như bash (dùng cho dạng dz và cho token bị xé, tk).
+# Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
+# (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
+# \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
+# ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
+# (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
+# cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
+dec_awk='
         function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
-        # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
-        # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
-        # \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
-        # ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
-        # (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
-        # cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
         function dec(t, m,   p, n, k, v, i, l) {
           n = split(t, p, "\\")
           printf "%s", p[1]
@@ -282,16 +279,35 @@ case "$raw" in
             while (k <= n) {
               if (k < n - 1 && q[k] ~ /[$]$/) { printf "%s", substr(q[k], 1, length(q[k]) - 1); dec(q[k + 1], m); k += 2; continue }
               printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
-            print "" } }' | LC_ALL=C tr -d "\"'\\\\\`")"
+            print "" } }'
+case "$raw" in
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
+    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
+    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
-    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`): thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
-    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]'; then
+    # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ, đánh dấu
+    # bằng \001) mà xé xong thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`)
+    # làm thư mục của push thành chưa biết, tức hỏi. Token không có dấu xé (cd thường) không qua bước này.
+    tk="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ { printf "%s\001", substr($0, 1, length($0) - 1); next }
+        { print }' | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
+    [ -z "$tk" ] || shc_unknown=1
+    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
+    # thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
+    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]|(^|[^[:alnum:]_-])(cd|chdir|pushd|sl|set-location|push-location|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)([[:space:]=]+-[^[:space:]]*)*[[:space:]=]+[^[:space:];&|]*[{][^}]*,'; then
       shc_unknown=1
     fi
     ;;
 esac
 case "$raw" in
-  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[1-9]* | *'${'[1-9]*)
+  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[0-9]* | *'${'[0-9]*)
     if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC"; then
       shc_unknown=1
     fi
