@@ -1760,6 +1760,16 @@ for make in (lambda k: " ".join("v%d=1" % i for i in range(625 * k)) + "; " + "e
              lambda k: "D=$H " + " ".join("v%d=1" % i for i in range(625 * k)) + "; " + "echo $D; " * 625 * k,
              lambda k: " ".join("v%d=1" % i for i in range(625 * k)) + "; " + "echo $v1$v2; " * 625 * k):
     linear("suspicious_labels trên nhiều biến rồi nhiều đoạn có `$`", lambda c: a.suspicious_labels(c, a.SUSPICIOUS), make)
+# 2.4: nhiều biến rồi nhiều heredoc vào shell từng chép và so cả env vài lần mỗi heredoc (V biến, H heredoc: V·H). Assert
+# tỉ lệ: V biến cùng H heredoc phải dưới 1,6 lần tổng của từng phần riêng (V biến 5 heredoc, 5 biến H heredoc); bản cũ ~2,8.
+hd = lambda v, h: " ".join("v%d=1" % i for i in range(v)) + "; " + "bash <<E\necho $x\nE\n" * h
+sl = lambda c: a.suspicious_labels(c, a.SUSPICIOUS)
+for _ in range(3):
+    t_vh, t_v, t_h = best_time(sl, hd(2500, 500), runs=2), best_time(sl, hd(2500, 5)), best_time(sl, hd(5, 500))
+    if t_vh < 1.6 * (t_v + t_h):
+        break
+check(t_vh < 1.6 * (t_v + t_h), f"nhiều biến rồi nhiều heredoc: 2500 biến 500 heredoc mất {t_vh:.3f} s, 2500 biến 5 heredoc "
+                                f"{t_v:.3f} s, 5 biến 500 heredoc {t_h:.3f} s (phải dưới 1,6 lần tổng)")
 # Thân `bash -c '…'` (cả cờ gộp -lc) là chương trình của shell con: biến không export của shell cha là rỗng trong thân, biến
 # gán trong thân không ra ngoài. Đích ghi bên cạnh là đích bash 5.2 xoá thật (rm thay bằng echo), thư mục /tmp/w không có.
 for cmd in ("D=/tmp/w; bash -c 'D=/; rm -rf $D'",               # xoá /
