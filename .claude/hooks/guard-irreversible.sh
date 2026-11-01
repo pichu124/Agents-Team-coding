@@ -209,7 +209,7 @@ fi
 kw_awk='
   BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
           kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-          kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
+          kw = kw "|-p|-l|--|-passthru|-path|-literalpath|eval)$"
   cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
   { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
     if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }'
@@ -250,19 +250,25 @@ esac
 # dec_awk: giải $'…' của từng dòng như bash (dùng cho dạng dz và cho token bị xé, tk).
 # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
 # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
-# \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
+# \xH hay \xHH, \N tới \NNN lấy 8 bit thấp; \uHHHH, \UHHHHHHHH dưới 128 ra ký tự đó, còn lại thành _ (không là chữ
+# của luật nào). Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
 # ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
 # (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
 # cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
 dec_awk='
         function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
-        function dec(t, m,   p, n, k, v, i, l) {
+        function dec(t, m,   p, n, k, v, i, l, mx) {
           n = split(t, p, "\\")
           printf "%s", p[1]
           for (k = 2; k <= n; k++) {
             if (p[k] ~ /^x[0-9A-Fa-f]/) {
               l = p[k] ~ /^x[0-9A-Fa-f][0-9A-Fa-f]/ ? 3 : 2
               v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1)) }
+            else if (p[k] ~ /^[uU][0-9A-Fa-f]/) {
+              mx = p[k] ~ /^u/ ? 5 : 9; l = 2
+              while (l < mx && substr(p[k], l + 1, 1) ~ /[0-9A-Fa-f]/) l++
+              v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1))
+              if (v >= 128) v = 95 }
             else if (p[k] ~ /^[0-7]/) {
               l = p[k] ~ /^[0-7][0-7][0-7]/ ? 3 : p[k] ~ /^[0-7][0-7]/ ? 2 : 1
               v = 0; for (i = 1; i <= l; i++) v = v * 8 + substr(p[k], i, 1); v %= 256 }
@@ -281,7 +287,7 @@ dec_awk='
               printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
             print "" } }'
 case "$raw" in
-  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]*)
     # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
     dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
@@ -290,13 +296,17 @@ case "$raw" in
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
-    # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ, đánh dấu
-    # bằng \001) mà xé xong thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`)
-    # làm thư mục của push thành chưa biết, tức hỏi. Token không có dấu xé (cd thường) không qua bước này.
-    tk="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ { printf "%s\001", substr($0, 1, length($0) - 1); next }
-        { print }' | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
-      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
-        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+    # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
+    # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
+    # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9
+    # được thay bằng \001 TRƯỚC khi tách token: nội dung của chúng (`c$(: x)d`, `c${X:-}d`, ``c` `d``) không cắt đôi token,
+    # và token vẫn mang dấu xé. Token không có dấu xé (cd thường) không qua bước này.
+    tk="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
+          printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
+        { j = 0; print }' |
+      LC_ALL=C sed -e "s/[$](\([^()]*\))/$soh/g" -e "s/[$]{[^{}]*}/$soh/g" -e "s/\`[^\`]*\`/$soh/g" -e "s/[$][@*0-9]/$soh/g" |
+      LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' |
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
     [ -z "$tk" ] || shc_unknown=1
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
