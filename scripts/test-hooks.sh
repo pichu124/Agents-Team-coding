@@ -413,6 +413,17 @@ EOF
   expect_guard ask "r{m,} -rf ~"
   expect_guard ask "{cd,} '$on_main' && git push"
   expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git \"\$@\"' _ push"
+  # 4.10, reviewer PR #60 (bash thật): cổng push với cd hay -C bị xé bằng \ nối dòng, mở rộng rỗng, ANSI-C; ngoặc nhọn ở
+  # đối số của cd; thân -c dùng $0.
+  expect_guard ask "c\\${nl}d '$on_main' && git push"
+  expect_guard ask "c\$()d '$on_main' && git push"
+  expect_guard ask "c\`\`d '$on_main' && git push"
+  expect_guard ask "\$'\\x63'd '$on_main' && git push"
+  expect_guard ask "git -\$'\\x43' '$on_main' push"
+  expect_guard ask "git -\\${nl}C '$on_main' push"
+  expect_guard ask "cd {'$on_main',} && git push"
+  expect_guard ask "git -C {'$on_main',} push"
+  expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git \"\$0\"' push"
   TOOL=PowerShell expect_guard ask "git pu\`sh --force origin feat/x"
   TOOL=PowerShell expect_guard ask "r\`m -r -fo C:\\"
   expect_guard ask "git push origin \\+feat/x"
