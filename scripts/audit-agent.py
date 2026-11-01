@@ -868,12 +868,22 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     # shell con. groups: ngăn xếp (dấu mở, env lúc mở) của nhóm đang mở; lst: env lúc mở danh sách ở ngoài mọi nhóm;
     # bg: phần trước có `&` chạy nền (lệnh sau nó mở danh sách mới). Mở danh sách không chép env (chép mỗi đoạn là O(số biến)
     # mỗi đoạn: bậc hai trên vài nghìn phép gán rồi vài nghìn lệnh): lst là chính env, own() chép trước khi đổi nó tại chỗ.
-    groups, lst, bg = [], {}, False
+    # pre, các dict của snap (env trước và sau đoạn có SNAP) và env chụp vào saved khi mở thân cũng là chính env tới khi env bị
+    # đổi tại chỗ: own() chép cho chúng trước (2.4: chép và so cả env mỗi heredoc). keep=False: saved cũng bị xoá cùng d.
+    groups, lst, bg, pre = [], {}, False, None
 
-    def own(d):
-        nonlocal lst
+    def own(d, keep=True):
+        nonlocal lst, pre, snap, saved
+        if keep and any(x is d for x in saved):
+            c = dict(d)
+            saved = [c if x is d else x for x in saved]
         if lst is d:
             lst = dict(d)
+        if pre is d:
+            pre = dict(d)
+        if snap and any(x is d for x in snap):
+            c = dict(d)
+            snap = tuple(c if x is d else x for x in snap)
 
     # strict: ngăn xếp song song với saved: env mà shell cha đã thay vào thân <<EOF đang mở (None: thân không bị thay), gồm
     # env lúc mở thân, env tại toán tử chỉ giữ biến có cùng giá trị lúc mở thân, env tại toán tử, và env của shell con (kid:
@@ -910,9 +920,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         snapped = scoped and not raw_marks and SNAP in raw
         if snapped:
             op = raw[:raw.index(SNAP)]
-            seg, raw, pre = seg.replace(SNAP, "").strip(), raw.replace(SNAP, "").strip(), dict(env)
+            seg, raw, pre = seg.replace(SNAP, "").strip(), raw.replace(SNAP, "").strip(), env
             if not seg:
-                snap = pre, pre, pre
+                snap, pre = (pre, pre, pre), None
                 continue
         mark_only = scoped and not raw.strip(OPEN + OPEN_RAW + CLOSE + NOT_LAST)
         # pipe_scope (PR #8): một khâu của ống chạy ở shell con, phép gán và cd trong đoạn ngay trước hay ngay sau `|`
@@ -997,7 +1007,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             called = funcs & (set(toks) | set(words)) or (funcs and words[:1] and re.search(r"[$`]", words[0]))
             if ifs_dirty or (not sure and called):
                 for x in [env, kid] + (saved if ifs_dirty else []) + [y for p in pinned if p for y in p]:
-                    own(x)
+                    own(x, not ifs_dirty)
                     x.clear()  # sau IFS cả env đã chụp (thân heredoc, phạm vi lồng) cũng thành không biết
             elif not sure:
                 drop = set(re.findall(r"\$\{#?([A-Za-z_]\w*):?=", code))
@@ -1011,8 +1021,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                         elif named and re.fullmatch(r"-[A-Za-z]+", t):
                             drop.update(t[k:] for k in range(1, len(t)))
                 for name in drop:
-                    own(env)
-                    env.pop(name, None)
+                    if name in env:  # chỉ chép (own) khi thật sự đổi env
+                        own(env)
+                        env.pop(name)
                     kid.pop(name, None)
         for name, val in ((ASSIGN_EMPTY if pure else ASSIGN).findall(full) if assigns and not frozen and sure else ()):
             own(env)
@@ -1022,7 +1033,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
             else:
                 env[name] = kid[name] = val.strip("\"'")
         if snapped:
-            snap = pre, dict(env), {**pre, **{n: v.strip("\"'") for n, v in ASSIGN.findall(expand(op, values))}}
+            temp = {n: v.strip("\"'") for n, v in ASSIGN.findall(expand(op, values))}
+            snap, pre = (pre, env, {**pre, **temp} if temp else pre), None  # các dict của snap chỉ bị đọc
         if before:  # khâu của ống: phép gán trong đoạn không ra ngoài. Trả env trước khi `)` đóng nhóm lấy env lúc mở nhóm
             env = before[0]
         for _c in closes:  # subshell đóng, hay nhóm chạy nền: phép gán bên trong không ra ngoài
@@ -1107,7 +1119,11 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         # scoped=False không đặt dấu: byte \x01–\x04 có sẵn trong lệnh là ký tự thường như ở 6f32d5a.
         for mark in (re.findall("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "]", raw) if scoped else ()):
             if mark == CLOSE:  # biến chỉ gán trong thân là rỗng ở shell cha, biến có từ trước lấy lại giá trị đã chụp
-                ctx, env, inherit, frozen = "", {**dict.fromkeys(env, ""), **(saved.pop() if saved else {})}, False, False
+                # Thân không đổi env (vẫn là env đã chụp), hay không thêm tên nào (cùng tên, cùng thứ tự): kết quả chính là
+                # env đã chụp, khỏi dựng lại (2.4)
+                back = saved.pop() if saved else {}
+                ctx, env, inherit, frozen = "", back if back is env or list(back) == list(env) else \
+                    {**dict.fromkeys(env, ""), **back}, False, False
                 if pinned:
                     pinned.pop()
             elif mark == NOT_LAST:
@@ -1127,17 +1143,29 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                     # dùng) thì bản đầy đủ không thay. Shell con bắt đầu với env tại toán tử cộng gán tạm của lệnh nhận thân
                     # (snap[2]; lệnh sau toán tử chưa chạy), coi như mọi biến đã export. SNAP có thể đứng trước thân -c gỡ ra
                     # sau toán tử: dấu mở của thân -c không bỏ nó.
+                    # Bộ ba đầu của pinned chỉ bị đọc (và bị xoá cả khi IFS đổi), nên dùng chung được: env tại toán tử bằng env
+                    # lúc mở thân (thường gặp) thì bản lọc theo giá trị chính là bản chép của env tại toán tử, khỏi so từng
+                    # biến (2.4: vài nghìn biến × vài trăm heredoc).
                     at, top = snap[0] if snap else env, pinned[-1] if pinned else None
-                    pinned.append(top[:3] + (dict(top[3]),) if top else
-                                  (dict(env), {k: v for k, v in at.items() if env.get(k) == v}, dict(at),
-                                   dict(snap[2] if snap else env)) if mark == OPEN else None)
-                env = dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else dict(env)
-                if parent_env and snap:
-                    env = dict(snap[1] if mark == OPEN_RAW else snap[0])
-                if mark == OPEN or not strict:
-                    snap = None
+                    if top:
+                        pinned.append(top[:3] + (dict(top[3]),))
+                    elif mark == OPEN and at is env:
+                        same = dict(env)
+                        pinned.append((same, same, same, dict(snap[2] if snap else env)))
+                    elif mark == OPEN:
+                        same = dict(at) if at == env else {k: v for k, v in at.items() if env.get(k) == v}
+                        pinned.append((dict(env), same, same if at == env else dict(at), dict(snap[2] if snap else env)))
+                    else:
+                        pinned.append(None)
+                # Chỉ dựng env của thân một lần (blank thắng parent_env như trước)
                 if blank and mark == OPEN:
                     env = {}
+                elif parent_env and snap:
+                    env = dict(snap[1] if mark == OPEN_RAW else snap[0])
+                else:
+                    env = dict.fromkeys(env, "") if mark == OPEN_RAW and not parent_env else env  # saved giữ chung
+                if mark == OPEN or not strict:
+                    snap = None
                 frozen = parent_env and mark == OPEN
                 inherit = bool(out and LOCAL_SHELL.match(out[-1][0]))
     return out

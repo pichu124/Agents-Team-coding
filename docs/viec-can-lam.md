@@ -17,10 +17,11 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
 
 ## 2. Audit: `scripts/audit-agent.py`, mục A
 
-### 2.4 Đường chậm bậc hai có từ trước (đã thu hẹp)
+### 2.4 Đường chậm bậc hai có từ trước (đã xong phần heredoc)
 - **Đã có:** PR sửa 2.4 cho `expand` (giá trị thay vào có `$` hay chỗ thay đứng sát nhau) chỉ xét các tên đứng ngay sau `$` trong đoạn, tìm theo thứ tự env bằng filter chạy trong C, thay vì duyệt cả env mỗi đoạn. `"D=$H v0=1 … v4999=1; " + "echo $D; " * 5000` 10,5 → 0,97 giây, `"v0=1 … v4999=1; " + "echo $v1$v2; " * 5000` 11 → 1,2 giây (với 5 biến, main mất 0,74 và 0,86 giây: phần còn lại là chi phí của 5000 đoạn, không theo số biến). Hai assert tỉ lệ mới đỏ với bản cũ; fuzz so `expand` với vòng cũ nay có env quá 64 tên.
-- **Vì sao còn:** nhiều biến rồi nhiều heredoc vào shell, `V + "bash <<E\necho $x\nE\n" * (n//5)`, vẫn 3,2 giây ở n=2500 (reviewer PR #45): thời gian nằm ở bản chép env cho mỗi heredoc, `pinned` và `dict.fromkeys`. Các assert tốc độ khác của test-audit.sh có ngưỡng tuyệt đối (1–6 giây, và `slow` > 3 giây) chỉ in thời gian khi đỏ; cái nào đỏ oan trên runner chậm thì đổi sang tỉ lệ.
-- **Xong khi:** lệnh heredoc trên dưới 1 giây, có assert tỉ lệ đỏ với bản hiện tại, nhãn không đổi.
+- **Đã có thêm:** nhiều biến rồi nhiều heredoc vào shell, `V + "bash <<E\necho $x\nE\n" * (n//5)`, 2,3 → 0,9 giây ở n=2500 (5 biến 500 heredoc mất 0,57, 2500 biến 5 heredoc 0,25): `segments` không chép và không so cả env mỗi heredoc khi env không đổi (pre, snap và env chụp vào saved dùng chung env, `own()` chép trước khi đổi tại chỗ; đóng thân mà env vẫn là env đã chụp thì khỏi dựng lại). Assert tỉ lệ mới: V biến cùng H heredoc dưới 1,6 lần tổng hai phần riêng (bản cũ ~2,7, nay ~1,1). Fuzz so `segments()` mọi tổ hợp cờ và nhãn với main: 0 khác biệt.
+- **Vì sao còn:** các assert tốc độ khác của test-audit.sh có ngưỡng tuyệt đối (1–6 giây, và `slow` > 3 giây) chỉ in thời gian khi đỏ; cái nào đỏ oan trên runner chậm thì đổi sang tỉ lệ. Thân heredoc thật sự đổi env (gán, unset trong thân) vẫn chép env một lần mỗi heredoc.
+- **Xong khi:** (phần heredoc đã xong; mục giữ lại cho các ngưỡng tuyệt đối.)
 
 ### 2.5 Chưa kiểm chứng
 - `git-bash.exe` của Git for Windows có chạy thân `-lc '…'` không.
