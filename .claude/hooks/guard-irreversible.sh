@@ -279,7 +279,7 @@ lex_awk='BEGIN { hh = 1 }
       j = i + 2; t = 0; w = ""
       if (ch[j] == "-") { t = 1; j++ }
       while (j <= n && (ch[j] == " " || ch[j] == "\t")) j++
-      for (; j <= n && !index(" \t;&|<>()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) < 256) w = w ch[j]
+      for (; j <= n && !index(" \t;&|\074\076()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) < 256) w = w ch[j]
       if (w != "") { nh++; hq[nh] = w; ht[nh] = t }
       for (; i < j; i++) printf "%s", ch[i]
       i--; continue
