@@ -262,7 +262,7 @@ lex_awk='BEGIN { hh = 1 }
     if (l == hq[hh]) { hh++; print; next }
     gsub(/[`$(){}\\]/, "_"); print; next
   }
-  nh = 0; hh = 1; pd = 0; bd = 0; sb = 0; pp = 0
+  nh = 0; hh = 1; pd = 0; bd = 0; pp = 0
   n = split($0, ch, "")
   if (st == 4) st = 0
   for (i = 1; i <= n; i++) {
