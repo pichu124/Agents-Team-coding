@@ -253,7 +253,7 @@ esac
 # hai trên awk BWK. Thân here-doc (<<W, <<-W, <<'W', cả nhiều here-doc một dòng) tới dòng đúng bằng W: ` $ ( ) { } \
 # thành _, không đổi trạng thái nháy (nháy đơn trong `don't` không mở nháy).
 # $( mở tầng mới (nháy trong đó tính riêng, `"$(echo "it's")"`), ) cùng tầng đóng; trong backtick chỉ tìm backtick đóng.
-# Không nhận here-doc ở <<< hay trong ((…)) hay $[…] (`1<<2`; (( tắt khi ) đưa độ sâu ngoặc về mức lúc mở, $[ tắt ở ]), dấu phân cách quá 256 ký tự; $' chỉ khi $
+# Không nhận here-doc ở <<< hay trong ((…)) hay $[…] (`1<<2`; (( tắt khi ) đưa độ sâu ngoặc về mức lúc mở, (( trong ${…} không tính; $[ tắt ở ] khớp, đếm [ ]), dấu phân cách quá 256 ký tự; $' chỉ khi $
 # chưa thoát, không thuộc $$; # sau ) mở comment, trừ ) đóng $(…) (`$(x)#y` là một từ) và trong ${…}. Bộ đọc này vẫn có thể đọc sai, nên tk chạy thêm một lượt không qua nó.
 lex_awk='BEGIN { hh = 1 }
 {
@@ -281,12 +281,16 @@ lex_awk='BEGIN { hh = 1 }
     }
     else if (c == "`") { bq = st; st = 5 }
     else if (st == 2) { if (c == "\"") st = 0 }
-    else if (c == "$") { pd = (pd && pd == i - 1) ? 0 : i; if (ch[i + 1] == "{") bd++; else if (ch[i + 1] == "[") sb = 1 }
-    else if (c == "]" && sb) sb = 0
+    else if (c == "$") {
+      pd = (pd && pd == i - 1) ? 0 : i; if (ch[i + 1] == "{") bd++
+      else if (ch[i + 1] == "[") { sb++; printf "%s", "$["; i++; continue }
+    }
+    else if (c == "[" && sb) sb++
+    else if (c == "]" && sb) sb--
     else if (c == "\047") st = (pd && pd == i - 1) ? 3 : 1
     else if (c == "\"") st = 2
     else if (c == "}" && bd) bd--
-    else if (c == "(") { if (ch[i + 1] == "(" && !ar) { ar = 1; ad = gd }; gd++; if (sp) pc[sp]++ }
+    else if (c == "(") { if (ch[i + 1] == "(" && !ar && !bd) { ar = 1; ad = gd }; gd++; if (sp) pc[sp]++ }
     else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; sp--; pp = i } }
     else if (c == "#" && !bd && pp != i - 1 && (i == 1 || index(" \t;&|()", ch[i - 1]))) { st = 4; break }
     else if (c == "<" && !ar && !sb && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<" && (i == 1 || ch[i - 1] != "<")) {
@@ -392,8 +396,9 @@ case "$raw" in
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
     [ -z "$tk" ] || shc_unknown=1
     # Tên shell rồi một từ do lệnh con sinh ra (`bash `echo -c` 'cd M && git push'`, `sh $(echo -c) …`): cờ và thân là chưa
-    # biết, thư mục của push cũng vậy.
-    if LC_ALL=C text_grep "$raw" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?[[:space:]]+(`|[$][(])'; then
+    # biết, thư mục của push cũng vậy. Có thể có cờ xen giữa (`bash -e`, `bash -o errexit`) hay nháy kép (`bash "$(…)"`); đọc
+    # trên $cmd để thấy dạng đã nối dòng (`bash \⏎`…``).
+    if LC_ALL=C text_grep "$cmd" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
       shc_unknown=1
     fi
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
