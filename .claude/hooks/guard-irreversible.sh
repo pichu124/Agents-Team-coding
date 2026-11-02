@@ -252,6 +252,9 @@ esac
 # đơn thành \_; comment (# đầu từ ngoài nháy) bỏ tới hết dòng. Ký tự lấy bằng split(s, a, ""): substr từng ký tự là bậc
 # hai trên awk BWK. Thân here-doc (<<W, <<-W, <<'W', cả nhiều here-doc một dòng) tới dòng đúng bằng W: ` $ ( ) { } \
 # thành _, không đổi trạng thái nháy (nháy đơn trong `don't` không mở nháy).
+# $( mở tầng mới (nháy trong đó tính riêng, `"$(echo "it's")"`), ) cùng tầng đóng; trong backtick chỉ tìm backtick đóng.
+# Không nhận here-doc ở <<< hay trong ((…)) (`1<<2`), dấu phân cách quá 256 ký tự; $' chỉ khi $ chưa thoát, không thuộc $$;
+# # sau ) mở comment, trong ${…} thì không. Bộ đọc này vẫn có thể đọc sai, nên tk chạy thêm một lượt không qua nó.
 lex_awk='BEGIN { hh = 1 }
 {
   if (hh <= nh) {
@@ -259,7 +262,7 @@ lex_awk='BEGIN { hh = 1 }
     if (l == hq[hh]) { hh++; print; next }
     gsub(/[`$(){}\\]/, "_"); print; next
   }
-  nh = 0; hh = 1
+  nh = 0; hh = 1; pd = 0; bd = 0
   n = split($0, ch, "")
   if (st == 4) st = 0
   for (i = 1; i <= n; i++) {
@@ -271,16 +274,26 @@ lex_awk='BEGIN { hh = 1 }
       else if (index("`$(){}", c)) c = "_"
     }
     else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; c = c d }
+    else if (st == 5) { if (c == "`") st = bq }
+    else if (c == "$" && ch[i + 1] == "(") {
+      sp++; sk[sp] = st; pc[sp] = 0; st = 0; if (ch[i + 2] == "(") ar = 1
+      printf "%s", "$("; i++; continue
+    }
+    else if (c == "`") { bq = st; st = 5 }
     else if (st == 2) { if (c == "\"") st = 0 }
-    else if (c == "\047") st = (i > 1 && ch[i - 1] == "$") ? 3 : 1
+    else if (c == "$") { pd = (pd && pd == i - 1) ? 0 : i; if (ch[i + 1] == "{") bd++ }
+    else if (c == "\047") st = (pd && pd == i - 1) ? 3 : 1
     else if (c == "\"") st = 2
-    else if (c == "#" && (i == 1 || index(" \t;&|(", ch[i - 1]))) { st = 4; break }
-    else if (c == "<" && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<") {
+    else if (c == "}" && bd) bd--
+    else if (c == "(") { if (ch[i + 1] == "(") ar = 1; if (sp) pc[sp]++ }
+    else if (c == ")") { if (ch[i + 1] == ")") ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; sp-- } }
+    else if (c == "#" && !bd && (i == 1 || index(" \t;&|()", ch[i - 1]))) { st = 4; break }
+    else if (c == "<" && !ar && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<" && (i == 1 || ch[i - 1] != "<")) {
       j = i + 2; t = 0; w = ""
       if (ch[j] == "-") { t = 1; j++ }
       while (j <= n && (ch[j] == " " || ch[j] == "\t")) j++
-      for (; j <= n && !index(" \t;&|\074\076()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) < 256) w = w ch[j]
-      if (w != "") { nh++; hq[nh] = w; ht[nh] = t }
+      for (; j <= n && !index(" \t;&|\074\076()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) <= 256) w = w ch[j]
+      if (w != "" && length(w) <= 256) { nh++; hq[nh] = w; ht[nh] = t }
       for (; i < j; i++) printf "%s", ch[i]
       i--; continue
     }
@@ -346,14 +359,16 @@ case "$raw" in
     # nuốt token xé ở giữa. Nên chạy thêm đường cũ (tách token trước, rồi bỏ phần mở rộng trong token), đường nào ra từ khoá
     # cũng hỏi; đường cũ bỏ backtick đơn ở đầu token (mở lệnh con, `echo "`command -v git`"`) và token là trọn một lệnh con
     # (``bash`` trong commit message), xoá $X $@ $1 $!. Đường mới qua lex_awk (nháy, here-doc, comment) rồi mới ghép cặp
-    # (``c`echo \`:\``d``, `echo '`'; cd`:` M`); $(…) ${…} `…` thay 8 lượt cho
+    # (``c`echo \`:\``d``, `echo '`'; cd`:` M`), và thêm một lượt không qua lex_awk (chỉ \` thành \001, như trước) để lex đọc
+# sai không làm lọt thứ đã bắt; đường cũ bỏ cả backtick đơn ở cuối token (`` `mkdir -p` `` trong commit message); $(…) ${…} `…` thay 8 lượt cho
     # dạng lồng (`c$($(true))d`, `c${X:-${Y}}d`); $X, $! thành \001 (`c$X'd'`, `c$!d`); dãy có bước (`c{d..d..1}`, `..+1`). Còn lọt: lồng quá
     # 8 tầng, ngoặc trong $(…) (`c$( (:) )d`), $(…) hay backtick trải nhiều dòng (4.10 của docs/viec-can-lam.md).
     jn="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
           printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
         { j = 0; print }')"
     ex="s/[$](\([^()]*\))/$soh/g;s/[$]{[^{}]*}/$soh/g;s/\`[^\`]*\`/$soh/g"
-    tk="$(printf '%s\n' "$jn" | LC_ALL=C awk "$lex_awk" |
+    for lx in "$lex_awk" '{ gsub(/\\`/, "\001"); print }'; do
+    tk="$(printf '%s\n' "$jn" | LC_ALL=C awk "$lx" |
       LC_ALL=C sed -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" \
         -e "s/[$][@*0-9!]/$soh/g" -e "s/[$][A-Za-z_][A-Za-z0-9_]*/$soh/g" |
       LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.+$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
@@ -361,8 +376,9 @@ case "$raw" in
         -e 's/{\([[:alpha:]]\)[.][.]\1[.][.][-+]*[0-9][0-9]*}/\1/g' |
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
     [ -z "$tk" ] || shc_unknown=1
+    done
     tk="$(printf '%s\n' "$jn" | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.+@*!$soh-]+" |
-      LC_ALL=C sed -e 's/^`\([^`]*\)$/\1/' -e '/^["'"'"']*`[^`]*`["'"'"']*$/d' | LC_ALL=C grep -E -- "[\$][({'A-Za-z_@*0-9!]|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/^`\([^`]*\)$/\1/' -e 's/^\([^`]*\)`$/\1/' -e '/^["'"'"']*`[^`]*`["'"'"']*$/d' | LC_ALL=C grep -E -- "[\$][({'A-Za-z_@*0-9!]|\`|[{]|$soh" |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/[$][A-Za-z_][A-Za-z0-9_]*//g' -e 's/[$][@*0-9!]//g' \
         -e 's/``//g' \
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' \
