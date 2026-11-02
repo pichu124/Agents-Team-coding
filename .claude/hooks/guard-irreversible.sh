@@ -20,6 +20,7 @@ raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dướ
 # nối (lệnh ở dòng sau vẫn là đầu lệnh), nối cả hai kiểu (PowerShell lồng trong bash). Không
 # rõ tool thì so thêm bản gốc. Kiểm tra push trên nhánh chính đọc từng dạng riêng ($forms).
 nl=$'\n'
+soh=$'\001'
 tool="$(json_get "$input" tool_name)"
 # join_lines <lệnh> <dấu nối> <join|keep>: dòng có dòng sau mà kết thúc bằng dấu nối (xét lần lượt từng ký
 # tự của <dấu nối>) thì bỏ dấu đó cùng xuống dòng, thay bằng dấu cách (join), hoặc chỉ bỏ dấu và giữ xuống
@@ -203,18 +204,21 @@ fi
 # "cd", buil'ti'n, --git-dir'=', "GIT_DIR=) làm thư mục của push thành chưa biết, tức hỏi. Riêng tên lệnh cd, một nháy lẻ
 # ở đầu hay cuối token ('cd, "cd của thân bash -c) không xé gì; token của option dừng ở `=` nên không có ngoại lệ đó. Xét
 # từng token của chính lệnh, nên không có phép so hai dạng nào để biến đổi bù nhau (cd$'x'; c'd') vượt qua.
+# kw_awk: in x khi một token (mỗi dòng một token) bỏ ' " \ $ thì thành từ khoá thư mục, option của cd hay tên shell; dùng
+# cho token bị nháy xé (torn) và token bị xé theo cách của dạng dz (tk, bên dưới).
+kw_awk='
+  BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
+          kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
+          kw = kw "|-p|-l|--|-passthru|-path|-literalpath|eval)$"
+  cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
+  { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
+    if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }'
 case "$src" in
   *[\"\'\\]*)
     dq="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
       -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
     dx="$(printf '%s\n' "$src" | LC_ALL=C tr -d "\"'\\\\")"
-    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk '
-      BEGIN { cd = "^(cd|chdir|pushd|sl|set-location|push-location)$"; q = "\047"
-              kw = "^(builtin|command|-c|--chdir|--git-dir|--work-tree|git_dir|git_work_tree"
-              kw = kw "|-p|-l|--|-passthru|-path|-literalpath)$"
-      cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
-      { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
-        if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }')"
+    torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk "$kw_awk")"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
     # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
@@ -243,29 +247,92 @@ esac
 # trí (`bash -c 'cd M && git "$@"' _ push`), thì thư mục của push là chưa biết, tức hỏi.
 # Chỉ `\` dính chữ trước nó (`pu\`) mới nối không chèn gì: ` \` cuối dòng là nối dòng thường, dạng nối của join_lines đã đủ,
 # và nối cả lệnh dài (long-uni, long-colon của test-hooks) thành thêm một dòng ~230 KB làm luật chậm gấp đôi (macOS quá 10 giây).
-case "$raw" in
-  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'*)
-    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
-    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
-        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
-        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
-      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
-        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
-      LC_ALL=C awk '
+# lex_awk: cho đường thay-trước-khi-tách của tk. Trong '…' và $'…' (kể cả trải nhiều dòng), ` $ ( ) { } thành _ (trong '…'
+# cả \): chữ, không mở gì, nên `echo '`'; cd`:` M` không ghép backtick trong nháy với backtick thật. \` và \$ ngoài nháy
+# đơn thành \_; comment (# đầu từ ngoài nháy) bỏ tới hết dòng. Ký tự lấy bằng split(s, a, ""): substr từng ký tự là bậc
+# hai trên awk BWK. Thân here-doc (<<W, <<-W, <<'W', cả nhiều here-doc một dòng) tới dòng đúng bằng W: ` $ ( ) { } \
+# thành _, không đổi trạng thái nháy (nháy đơn trong `don't` không mở nháy).
+# $( mở tầng mới (nháy trong đó tính riêng, `"$(echo "it's")"`), ) cùng tầng đóng; trong backtick chỉ tìm backtick đóng.
+# Không nhận here-doc ở <<< hay trong ((…)) hay $[…] (`1<<2`; (( tắt khi ) đưa độ sâu ngoặc về mức lúc mở, (( trong ${…} không tính; $[ tắt ở ] khớp, đếm [ ]), dấu phân cách quá 256 ký tự; $' chỉ khi $
+# chưa thoát, không thuộc $$; # sau ) mở comment, trừ ) đóng $(…) (`$(x)#y` là một từ) và trong ${…}. Bộ đọc này vẫn có thể đọc sai, nên tk chạy thêm một lượt không qua nó.
+lex_awk='BEGIN { hh = 1 }
+{
+  if (hh <= nh) {
+    l = $0; if (ht[hh]) sub(/^\t+/, "", l)
+    if (l == hq[hh]) { hh++; print; next }
+    gsub(/[`$(){}\\]/, "_"); print; next
+  }
+  nh = 0; hh = 1; pd = 0; bd = 0; pp = 0
+  n = split($0, ch, "")
+  if (st == 4) st = 0
+  for (i = 1; i <= n; i++) {
+    c = ch[i]
+    if (st == 1) { if (c == "\047") st = 0; else if (index("`$(){}\\", c)) c = "_" }
+    else if (st == 3) {
+      if (c == "\\" && i < n) { i++; d = ch[i]; if (index("`$(){}", d)) d = "_"; c = c d }
+      else if (c == "\047") st = 0
+      else if (index("`$(){}", c)) c = "_"
+    }
+    else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; c = c d }
+    else if (st == 5) { if (c == "`") st = bq }
+    else if (c == "$" && ch[i + 1] == "(") {
+      sp++; sk[sp] = st; pc[sp] = 0; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
+      printf "%s", "$("; i++; continue
+    }
+    else if (c == "`") { bq = st; st = 5 }
+    else if (st == 2) { if (c == "\"") st = 0 }
+    else if (c == "$") {
+      pd = (pd && pd == i - 1) ? 0 : i; if (ch[i + 1] == "{") bd++
+      else if (ch[i + 1] == "[") { sb++; printf "%s", "$["; i++; continue }
+    }
+    else if (c == "[" && sb) sb++
+    else if (c == "]" && sb) sb--
+    else if (c == "\047") st = (pd && pd == i - 1) ? 3 : 1
+    else if (c == "\"") st = 2
+    else if (c == "}" && bd) bd--
+    else if (c == "(") { if (ch[i + 1] == "(" && !ar && !bd) { ar = 1; ad = gd }; gd++; if (sp) pc[sp]++ }
+    else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; sp--; pp = i } }
+    else if (c == "#" && !bd && pp != i - 1 && (i == 1 || index(" \t;&|()", ch[i - 1]))) { st = 4; break }
+    else if (c == "<" && !ar && !sb && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<" && (i == 1 || ch[i - 1] != "<")) {
+      j = i + 2; t = 0; w = ""
+      if (ch[j] == "-") { t = 1; j++ }
+      while (j <= n && (ch[j] == " " || ch[j] == "\t")) j++
+      for (; j <= n && !index(" \t;&|\074\076()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) <= 256) w = w ch[j]
+      if (w != "" && length(w) <= 256) { nh++; hq[nh] = w; ht[nh] = t }
+      for (; i < j; i++) printf "%s", ch[i]
+      i--; continue
+    }
+    printf "%s", c
+  }
+  print ""
+}'
+# tb_awk: bỏ backtick đơn ở cuối token (`` `mkdir -p` `` trong commit message), trừ khi phần còn lại là từ khoá thư mục:
+# `` `echo cd` M ``, `` git `echo -C` M push `` là cd, -C do lệnh con sinh ra.
+tb_awk='/^[^`]*`$/ { s = substr($0, 1, length($0) - 1); t = tolower(s)
+    if (s != "-C" && t !~ /^(cd|chdir|pushd|sl|set-location|push-location|--chdir|--git-dir|--work-tree|git_dir|git_work_tree|eval|builtin|command)$/) $0 = s }
+  { print }'
+# dec_awk: giải $'…' của từng dòng như bash (dùng cho dạng dz và cho token bị xé, tk).
+# Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
+# (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
+# \xH hay \xHH, \N tới \NNN lấy 8 bit thấp; \uHHHH, \UHHHHHHHH dưới 128 ra ký tự đó, còn lại thành _ (không là chữ
+# của luật nào). Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
+# ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
+# (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
+# cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
+dec_awk='
         function hv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
-        # Cắt theo \ và theo nháy rồi in từng mảnh: đọc từng ký tự bằng length/substr hay ghép chuỗi dần là bậc hai
-        # (awk BWK của macOS: 17 dòng \x41 ×4090 mất 21 giây).
-        # \xH hay \xHH, \N tới \NNN lấy 8 bit thấp. Mỗi dòng in hai lần: m = 0 như bash ($'…' thật: \0 cắt phần còn lại,
-        # ; & | xuống dòng giải ra ngắt lệnh trong bash -c, eval), m = 1 cho khi bộ tách nhận nhầm '$' thường là mở $'…'
-        # (\0 chỉ bỏ ký tự đó, ; & | xuống dòng thành _ để không ngắt luật). Không dùng match với ? liền nhau (mawk 1.3.4
-        # cho \101 thành \10 rồi 1). Dòng m = 1 chỉ in khi khác dòng m = 0 (gặp \0 hay dấu ngắt giải ra: f).
-        function dec(t, m,   p, n, k, v, i, l) {
+        function dec(t, m,   p, n, k, v, i, l, mx) {
           n = split(t, p, "\\")
           printf "%s", p[1]
           for (k = 2; k <= n; k++) {
             if (p[k] ~ /^x[0-9A-Fa-f]/) {
               l = p[k] ~ /^x[0-9A-Fa-f][0-9A-Fa-f]/ ? 3 : 2
               v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1)) }
+            else if (p[k] ~ /^[uU][0-9A-Fa-f]/) {
+              mx = p[k] ~ /^u/ ? 5 : 9; l = 2
+              while (l < mx && substr(p[k], l + 1, 1) ~ /[0-9A-Fa-f]/) l++
+              v = 0; for (i = 2; i <= l; i++) v = v * 16 + hv(substr(p[k], i, 1))
+              if (v >= 128) v = 95 }
             else if (p[k] ~ /^[0-7]/) {
               l = p[k] ~ /^[0-7][0-7][0-7]/ ? 3 : p[k] ~ /^[0-7][0-7]/ ? 2 : 1
               v = 0; for (i = 1; i <= l; i++) v = v * 8 + substr(p[k], i, 1); v %= 256 }
@@ -282,16 +349,67 @@ case "$raw" in
             while (k <= n) {
               if (k < n - 1 && q[k] ~ /[$]$/) { printf "%s", substr(q[k], 1, length(q[k]) - 1); dec(q[k + 1], m); k += 2; continue }
               printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
-            print "" } }' | LC_ALL=C tr -d "\"'\\\\\`")"
+            print "" } }'
+case "$raw" in
+  *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]* | *'$'[A-Za-z_]* | *'$!'*)
+    # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
+    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
-    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`): thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
-    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]'; then
+    # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
+    # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
+    # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9
+    # được thay bằng \001 TRƯỚC khi tách token: nội dung của chúng (`c$(: x)d`, `c${X:-}d`, ``c` `d``) không cắt đôi token,
+    # và token vẫn mang dấu xé. Token không có dấu xé (cd thường) không qua bước này.
+    # Thay trước khi tách không biết nháy: dấu mở trong nháy hay đã thoát (`echo '`'; c``d M`) ghép với dấu thật phía sau và
+    # nuốt token xé ở giữa. Nên chạy thêm đường cũ (tách token trước, rồi bỏ phần mở rộng trong token), đường nào ra từ khoá
+    # cũng hỏi; đường cũ bỏ backtick đơn ở đầu token (mở lệnh con, `echo "`command -v git`"`) và token là trọn một lệnh con
+    # (``bash`` trong commit message), xoá $X $@ $1 $!. Đường mới qua lex_awk (nháy, here-doc, comment) rồi mới ghép cặp
+    # (``c`echo \`:\``d``, `echo '`'; cd`:` M`), và thêm một lượt không qua lex_awk (chỉ \` thành \001, như trước) để lex đọc
+# sai không làm lọt thứ đã bắt; đường cũ bỏ cả backtick đơn ở cuối token trừ từ khoá thư mục (tb_awk); $(…) ${…} `…` thay 8 lượt cho
+    # dạng lồng (`c$($(true))d`, `c${X:-${Y}}d`); $X, $! thành \001 (`c$X'd'`, `c$!d`); dãy có bước (`c{d..d..1}`, `..+1`). Còn lọt: lồng quá
+    # 8 tầng, ngoặc trong $(…) (`c$( (:) )d`), $(…) hay backtick trải nhiều dòng (4.10 của docs/viec-can-lam.md).
+    jn="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
+          printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
+        { j = 0; print }')"
+    ex="s/[$](\([^()]*\))/$soh/g;s/[$]{[^{}]*}/$soh/g;s/\`[^\`]*\`/$soh/g"
+    for lx in "$lex_awk" '{ gsub(/\\`/, "\001"); print }'; do
+    tk="$(printf '%s\n' "$jn" | LC_ALL=C awk "$lx" |
+      LC_ALL=C sed -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" \
+        -e "s/[$][@*0-9!]/$soh/g" -e "s/[$][A-Za-z_][A-Za-z0-9_]*/$soh/g" |
+      LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.+$soh-]+" | LC_ALL=C grep -E -- "[\$][({']|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' \
+        -e 's/{\([[:alpha:]]\)[.][.]\1[.][.][-+]*[0-9][0-9]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
+    [ -z "$tk" ] || shc_unknown=1
+    done
+    tk="$(printf '%s\n' "$jn" | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.+@*!$soh-]+" |
+      LC_ALL=C sed -e 's/^`\([^`]*\)$/\1/' -e '/^["'"'"']*`[^`]*`["'"'"']*$/d' | LC_ALL=C awk "$tb_awk" | LC_ALL=C grep -E -- "[\$][({'A-Za-z_@*0-9!]|\`|[{]|$soh" |
+      LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/[$][A-Za-z_][A-Za-z0-9_]*//g' -e 's/[$][@*0-9!]//g' \
+        -e 's/``//g' \
+        -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' -e 's/{\([[:alpha:]]\)[.][.]\1}/\1/g' \
+        -e 's/{\([[:alpha:]]\)[.][.]\1[.][.][-+]*[0-9][0-9]*}/\1/g' |
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
+    [ -z "$tk" ] || shc_unknown=1
+    # Tên shell rồi một từ do lệnh con sinh ra (`bash `echo -c` 'cd M && git push'`, `sh $(echo -c) …`): cờ và thân là chưa
+    # biết, thư mục của push cũng vậy. Có thể có cờ xen giữa (`bash -e`, `bash -o errexit`) hay nháy kép (`bash "$(…)"`); đọc
+    # trên $cmd để thấy dạng đã nối dòng (`bash \⏎`…``).
+    if LC_ALL=C text_grep "$cmd" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
+      shc_unknown=1
+    fi
+    # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
+    # thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
+    if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]|(^|[^[:alnum:]_-])(cd|chdir|pushd|sl|set-location|push-location|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)([[:space:]=]+-[^[:space:]]*)*[[:space:]=]+[^[:space:];&|]*[{][^}]*,'; then
       shc_unknown=1
     fi
     ;;
 esac
 case "$raw" in
-  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[1-9]* | *'${'[1-9]*)
+  *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[0-9]* | *'${'[0-9]*)
     if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC"; then
       shc_unknown=1
     fi
