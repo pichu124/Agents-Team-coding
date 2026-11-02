@@ -474,6 +474,27 @@ EOF
   expect_guard ask "echo \"don't\"; c\`\`d '$on_main' && git push"
   expect_guard ask "c\$!d '$on_main' && git push"
   expect_guard ask "c{d..d..+1} '$on_main' && git push"
+  # Reviewer PR #62 lần 4: lex đọc sai trạng thái sau <<<, <<, $'..' giả, nháy lồng trong $(..), # sau ), dấu phân cách
+  # dài: phần sau bị bỏ, dạng xé mà bản không lex vẫn bắt thì lọt.
+  expect_guard ask "cat <<< hi${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "read -r a <<< \"\$HOME\"${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \$((1<<2))${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "(( x = 1<<2 ))${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \\\$'\\'' x'; c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \$\$'\\'' x'; c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \\\$'\\'' x'; git \`:\`-C '$on_main' push"
+  expect_guard ask "echo \"\$(echo \"it's\")\"${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \`echo '\`; c\$(: x)d '$on_main' && git push"
+  expect_guard ask "(true)#it's${nl}c\$(: x)d '$on_main' && git push"
+  expect_guard ask "echo \${x:- #}; c\$(: x)d '$on_main' && git push"
+  expect_guard ask "git commit -m \"\$(cat <<'EOF'${nl}Fix 5\" display${nl}don't${nl}EOF${nl})\"${nl}c\$(: x)d '$on_main' && git push"
+  long_delim=EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+  long_delim=$long_delim$long_delim$long_delim
+  expect_guard ask "cat <<$long_delim${nl}x${nl}$long_delim${nl}c\$(: x)d '$on_main' && git push"
+  # Code inline trong commit message / thân PR kết thúc bằng cờ: không hỏi.
+  expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}use \`mkdir -p\` here, \`ls -l\` too${nl}EOF${nl})\" && git push origin feat/x"
+  expect_guard allow "git commit -F - <<'EOF'${nl}see \`bash -c\` and \`python -c\`${nl}EOF${nl}git push origin feat/x"
+  expect_guard allow "gh pr create --draft --body \"\$(cat <<'EOF'${nl}Run \`exec bash\`, \`npm test --\`, \`run.sh -l\`.${nl}EOF${nl})\""
   expect_guard allow "git commit -m 'docs: mention \`bash\`' && git push origin feat/x"
   expect_guard allow "gh pr create --draft --body \"\$(cat <<'EOF'${nl}Run \`bash\` scripts, \`cd\` first.${nl}EOF${nl})\""
   expect_guard allow "echo \$HOME \"\$PWD\" && git push origin feat/x"
