@@ -506,6 +506,7 @@ EOF
   expect_guard ask "((1${nl}<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "x=\$((1${nl}<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$[1]; cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask ": \$[1${nl}<<2]${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "((true); true); cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "bash \`echo -c\` 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "sh \`printf -- -c\` 'cd '\\''$on_main'\\'' && git push'"
