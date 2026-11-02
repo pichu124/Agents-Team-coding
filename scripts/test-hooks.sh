@@ -491,6 +491,16 @@ EOF
   long_delim=EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
   long_delim=$long_delim$long_delim$long_delim
   expect_guard ask "cat <<$long_delim${nl}x${nl}$long_delim${nl}c\$(: x)d '$on_main' && git push"
+  # Reviewer PR #62 lần 5: bỏ backtick cuối không được xoá dấu xé của cd`/-C` (tên do lệnh con sinh ra); # sau ) của $(…)
+  # không mở comment; (( của lệnh con lồng không giữ cờ số học qua dòng.
+  expect_guard ask "\`echo cd\` '$on_main' && git push"
+  expect_guard ask "\`printf cd\` '$on_main'${nl}git push"
+  expect_guard ask "git \`echo -C\` '$on_main' push"
+  expect_guard ask "echo \$[1<<2]${nl}echo '\`'; cd\` \` '$on_main' && git push"
+  expect_guard ask "echo \"\$(case x in x) echo '\"' ;; esac)\"${nl}echo '\`'; cd\` \` '$on_main' && git push"
+  expect_guard ask "echo \$(date)#x; echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "echo \$(date)#x; echo '\`'; cd\`:\` '$on_main' && git push"
+  expect_guard ask "((true); true)${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   # Code inline trong commit message / thân PR kết thúc bằng cờ: không hỏi.
   expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}use \`mkdir -p\` here, \`ls -l\` too${nl}EOF${nl})\" && git push origin feat/x"
   expect_guard allow "git commit -F - <<'EOF'${nl}see \`bash -c\` and \`python -c\`${nl}EOF${nl}git push origin feat/x"
