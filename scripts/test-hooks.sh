@@ -502,6 +502,15 @@ EOF
   expect_guard ask "echo \$(date)#x; echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$(date)#x; echo '\`'; cd\`:\` '$on_main' && git push"
   expect_guard ask "((true); true)${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  # Reviewer PR #62 lần 6: cờ số học theo độ sâu ngoặc (không theo dòng), $[ tắt ở ]; cờ shell do lệnh con sinh ra.
+  expect_guard ask "((1${nl}<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "x=\$((1${nl}<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "echo \$[1]; cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "((true); true); cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "bash \`echo -c\` 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "sh \`printf -- -c\` 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \`echo -c\` \$'\\x63d '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
   # Code inline trong commit message / thân PR kết thúc bằng cờ: không hỏi.
   expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}use \`mkdir -p\` here, \`ls -l\` too${nl}EOF${nl})\" && git push origin feat/x"
   expect_guard allow "git commit -F - <<'EOF'${nl}see \`bash -c\` and \`python -c\`${nl}EOF${nl}git push origin feat/x"
