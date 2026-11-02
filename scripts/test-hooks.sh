@@ -521,6 +521,15 @@ EOF
   expect_guard ask "bash -o errexit \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash \"\$(echo -c)\" 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash \\${nl}\`echo -c\` 'cd '\\''$on_main'\\'' && git push'"
+  # Reviewer PR #62 lần 8: $ thứ hai của $$ không mở ${ hay $[; [ và ${ trong $(…) không tính vào $[ hay ${ bên ngoài.
+  expect_guard ask "echo \$\$[; [[ -n a ]]${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "echo \$[ \$(: [; echo 1) ]${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "echo \$\${; ((x=1<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "echo \$\${x; ((x=1<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  # Tên shell nằm trong chuỗi có nháy (tiêu đề PR, commit message) rồi tới cờ "$(…)": không phải lệnh shell, không hỏi.
+  expect_guard allow "git push -u origin feat/x && gh pr create --title \"fix(guard): support zsh\" --body \"\$(cat <<'EOF'${nl}## Summary${nl}- x${nl}EOF${nl})\""
+  expect_guard allow "git commit -m \"fix: support fish\" -m \"\$(cat <<'EOF'${nl}body${nl}EOF${nl})\" && git push origin feat/x"
+  expect_guard allow "echo \"using zsh\" \"\$(git rev-parse HEAD)\" && git push origin feat/x"
   # Code inline trong commit message / thân PR kết thúc bằng cờ: không hỏi.
   expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}use \`mkdir -p\` here, \`ls -l\` too${nl}EOF${nl})\" && git push origin feat/x"
   expect_guard allow "git commit -F - <<'EOF'${nl}see \`bash -c\` and \`python -c\`${nl}EOF${nl}git push origin feat/x"
