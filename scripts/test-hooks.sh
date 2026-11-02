@@ -497,6 +497,7 @@ EOF
   expect_guard ask "\`printf cd\` '$on_main'${nl}git push"
   expect_guard ask "git \`echo -C\` '$on_main' push"
   expect_guard ask "echo \$[1<<2]${nl}echo '\`'; cd\` \` '$on_main' && git push"
+  expect_guard ask "echo \$[1<<2]${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \"\$(case x in x) echo '\"' ;; esac)\"${nl}echo '\`'; cd\` \` '$on_main' && git push"
   expect_guard ask "echo \$(date)#x; echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$(date)#x; echo '\`'; cd\`:\` '$on_main' && git push"
