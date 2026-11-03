@@ -570,6 +570,10 @@ EOF
   expect_guard ask "bash --rcfile \\' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash --rcfile \"'\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash --rcfile \\  \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  # Reviewer PR #63 lần 5: ) trong ${…} trong $(…) làm bộ đọc đóng $( sớm hay muộn; bản đọc như main vẫn chạy (hợp hai đường).
+  expect_guard ask "echo \$(echo \${x:-) #}; echo '\`'; c\`:\`d '$on_main' && git push)"
+  expect_guard ask "echo \$[ \$(echo \${x:+(}1) << 2 ]${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  expect_guard ask "y=\$[ \$(echo \${x:+(}1) << 2 ]${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   # Tên shell nằm trong chuỗi có nháy (tiêu đề PR, commit message) rồi tới cờ "$(…)": hỏi thừa có chủ ý, vì luật tên shell
   # đọc dx/dz (bỏ hết nháy) để không lọt các ca ở trên (docs/viec-can-lam.md 4.10).
   expect_guard ask "git push -u origin feat/x && gh pr create --title \"fix(guard): support zsh\" --body \"\$(cat <<'EOF'${nl}## Summary${nl}- x${nl}EOF${nl})\""
