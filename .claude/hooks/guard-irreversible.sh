@@ -359,13 +359,7 @@ case "$raw" in
         j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
-      LC_ALL=C awk "$dec_awk")"
-    # dzq: dz còn giữ nháy (chỉ bỏ cặp nháy rỗng), cho luật tên shell: `bash -e"$(:)" $(…)` thành `bash -e $(…)`, còn
-    # `--title "fix zsh" --body "$(…)"` vẫn có nháy nên không khớp.
-    dzq="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\\\\\`" | LC_ALL=C sed -e 's/""//g' -e "s/''//g")"
-    # Cờ xé bởi cả nháy lẫn phần mở rộng (`-"e"$()`, `'-o'$() errexit`, `{"-e",}`): thêm dzq đã bỏ nháy như dq.
-    dzq="$dzq$nl$(printf '%s\n' "$dzq" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g')"
-    dz="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\"'\\\\\`")"
+      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
     # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
@@ -404,10 +398,11 @@ case "$raw" in
     [ -z "$tk" ] || shc_unknown=1
     # Tên shell rồi một từ do lệnh con sinh ra (`bash `echo -c` 'cd M && git push'`, `sh $(echo -c) …`): cờ và thân là chưa
     # biết, thư mục của push cũng vậy. Có thể có cờ xen giữa (`bash -e`, `bash -o errexit`) hay nháy kép (`bash "$(…)"`); đọc
-    # trên $raw, dạng đã nối dòng (`bash \⏎`…``), dq (bỏ nháy quanh đoạn không khoảng trắng: `bash '-e' $(…)`, `bash \-e $(…)`)
-    # dzq (cờ xé bởi $(…), ${…}, cặp backtick, \ nối dòng, $'…', {a,}: `bash -e$(true) $(echo $(echo -c))`) và các dạng trong forms
-    # (thân -c đã giải); không trên dx hay dz (bỏ hết nháy): `--title "fix zsh" --body "$(…)"` không phải lệnh.
-    if LC_ALL=C text_grep "$raw$nl${joined-}$nl${dq-}$nl${dzq-}$nl$(printf '%s\n' "${forms[@]}")" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
+    # trên $cmd để thấy dạng đã nối dòng (`bash \⏎`…``).
+    # Đọc mọi dạng của $cmd (cả dx, dz đã bỏ hết nháy): bỏ dạng nào cũng làm lọt lệnh main vẫn hỏi (đường dẫn shell có
+    # khoảng trắng trong nháy, đối số --rcfile có nháy lẻ, cờ xé cả nháy lẫn $(…); reviewer PR #63), nên chịu hỏi thừa
+    # `--title "fix zsh" --body "$(…)"`.
+    if LC_ALL=C text_grep "$cmd" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
       shc_unknown=1
     fi
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
