@@ -526,6 +526,18 @@ EOF
   expect_guard ask "echo \$[ \$(: [; echo 1) ]${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$\${; ((x=1<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$\${x; ((x=1<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
+  # Reviewer PR #63: cờ có nháy hay \ trước lệnh con chỉ khớp ở dạng bỏ nháy (dq); tên shell rồi $( chỉ thấy trong thân -c.
+  expect_guard ask "bash '-e' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \"-e\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -e\"\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \\-e \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \$'-e' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -o 'errexit' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash '-o' errexit \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -o \"errexit\" \`echo -c\` 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -O 'extglob' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \\${nl}'-e' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c \"bash \\\$(echo -c) 'cd '\\\\''$on_main'\\\\'' && git push'\""
   # Tên shell nằm trong chuỗi có nháy (tiêu đề PR, commit message) rồi tới cờ "$(…)": không phải lệnh shell, không hỏi.
   expect_guard allow "git push -u origin feat/x && gh pr create --title \"fix(guard): support zsh\" --body \"\$(cat <<'EOF'${nl}## Summary${nl}- x${nl}EOF${nl})\""
   expect_guard allow "git commit -m \"fix: support fish\" -m \"\$(cat <<'EOF'${nl}body${nl}EOF${nl})\" && git push origin feat/x"
