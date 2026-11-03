@@ -550,6 +550,17 @@ EOF
   expect_guard ask "bash -o err\$()exit \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -O ext\${X}glob \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard allow "gh pr create --title \"fix zsh\" --body \"\$(cat <<'EOF'${nl}body${nl}EOF${nl})\" && git push origin feat/x"
+  # Reviewer PR #63 lần 3: cờ xé bởi cả nháy lẫn $(…), ${…}, \ nối dòng, $'…', {a,}: luật đọc dzq đã bỏ nháy như dq.
+  expect_guard ask "bash -\"e\"\$() \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash '-o'\$() errexit \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -o \"err\"\$()exit \$( (echo -c) ) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \"-e\$()\" \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -\"e\"\${X:-} \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash \$'\\x2d'\"e\" \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -\\${nl}\"e\" \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash {\"-e\",} \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "sh -\"e\"\$() \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash -c \"bash -\\\"e\\\"\\\$() \\\$(echo \\\$(echo -c)) 'cd '\\\\''$on_main'\\\\'' && git push'\""
   # Tên shell nằm trong chuỗi có nháy (tiêu đề PR, commit message) rồi tới cờ "$(…)": không phải lệnh shell, không hỏi.
   expect_guard allow "git push -u origin feat/x && gh pr create --title \"fix(guard): support zsh\" --body \"\$(cat <<'EOF'${nl}## Summary${nl}- x${nl}EOF${nl})\""
   expect_guard allow "git commit -m \"fix: support fish\" -m \"\$(cat <<'EOF'${nl}body${nl}EOF${nl})\" && git push origin feat/x"
