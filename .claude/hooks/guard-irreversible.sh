@@ -363,6 +363,8 @@ case "$raw" in
     # dzq: dz còn giữ nháy (chỉ bỏ cặp nháy rỗng), cho luật tên shell: `bash -e"$(:)" $(…)` thành `bash -e $(…)`, còn
     # `--title "fix zsh" --body "$(…)"` vẫn có nháy nên không khớp.
     dzq="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\\\\\`" | LC_ALL=C sed -e 's/""//g' -e "s/''//g")"
+    # Cờ xé bởi cả nháy lẫn phần mở rộng (`-"e"$()`, `'-o'$() errexit`, `{"-e",}`): thêm dzq đã bỏ nháy như dq.
+    dzq="$dzq$nl$(printf '%s\n' "$dzq" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g')"
     dz="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
