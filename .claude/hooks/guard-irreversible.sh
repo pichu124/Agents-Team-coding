@@ -398,8 +398,9 @@ case "$raw" in
     [ -z "$tk" ] || shc_unknown=1
     # Tên shell rồi một từ do lệnh con sinh ra (`bash `echo -c` 'cd M && git push'`, `sh $(echo -c) …`): cờ và thân là chưa
     # biết, thư mục của push cũng vậy. Có thể có cờ xen giữa (`bash -e`, `bash -o errexit`) hay nháy kép (`bash "$(…)"`); đọc
-    # trên $raw và dạng đã nối dòng (`bash \⏎`…``), không trên dạng đã bỏ nháy: `--title "fix zsh" --body "$(…)"` không phải lệnh.
-    if LC_ALL=C text_grep "$raw$nl${joined-}" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
+    # trên $raw, dạng đã nối dòng (`bash \⏎`…``), dq (bỏ nháy quanh đoạn không khoảng trắng: `bash '-e' $(…)`, `bash \-e $(…)`)
+    # và các dạng trong forms (thân -c đã giải); không trên dx: `--title "fix zsh" --body "$(…)"` không phải lệnh.
+    if LC_ALL=C text_grep "$raw$nl${joined-}$nl${dq-}$nl$(printf '%s\n' "${forms[@]}")" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
       shc_unknown=1
     fi
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
