@@ -561,6 +561,15 @@ EOF
   expect_guard ask "bash {\"-e\",} \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "sh -\"e\"\$() \$(echo \$(echo -c)) 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "bash -c \"bash -\\\"e\\\"\\\$() \\\$(echo \\\$(echo -c)) 'cd '\\\\''$on_main'\\\\'' && git push'\""
+  # Reviewer PR #63 lần 4: đường dẫn shell có khoảng trắng trong nháy, đối số --rcfile có nháy lẻ hay khoảng trắng: main đọc dx nên hỏi.
+  expect_guard ask "\"/c/Program Files/Git/usr/bin/bash\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "\"C:/Program Files/Git/bin/bash.exe\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "'/opt/sp dir/bash' -e \`echo -c\` 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --rcfile '-x -y' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --init-file '- -' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --rcfile \\' \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --rcfile \"'\" \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
+  expect_guard ask "bash --rcfile \\  \$(echo -c) 'cd '\\''$on_main'\\'' && git push'"
   # Tên shell nằm trong chuỗi có nháy (tiêu đề PR, commit message) rồi tới cờ "$(…)": không phải lệnh shell, không hỏi.
   expect_guard allow "git push -u origin feat/x && gh pr create --title \"fix(guard): support zsh\" --body \"\$(cat <<'EOF'${nl}## Summary${nl}- x${nl}EOF${nl})\""
   expect_guard allow "git commit -m \"fix: support fish\" -m \"\$(cat <<'EOF'${nl}body${nl}EOF${nl})\" && git push origin feat/x"
