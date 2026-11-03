@@ -276,14 +276,15 @@ lex_awk='BEGIN { hh = 1 }
     else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; c = c d }
     else if (st == 5) { if (c == "`") st = bq }
     else if (c == "$" && ch[i + 1] == "(") {
-      sp++; sk[sp] = st; pc[sp] = 0; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
+      sp++; sk[sp] = st; pc[sp] = 0; if (!ov) { sv[sp] = sb; bv[sp] = bd; sb = 0; bd = 0 }; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
       printf "%s", "$("; i++; continue
     }
     else if (c == "`") { bq = st; st = 5 }
     else if (st == 2) { if (c == "\"") st = 0 }
     else if (c == "$") {
-      pd = (pd && pd == i - 1) ? 0 : i; if (ch[i + 1] == "{") bd++
-      else if (ch[i + 1] == "[") { sb++; printf "%s", "$["; i++; continue }
+      pd = (pd && pd == i - 1) ? 0 : i
+      if ((pd || ov) && ch[i + 1] == "{") bd++
+      else if ((pd || ov) && ch[i + 1] == "[") { sb++; printf "%s", "$["; i++; continue }
     }
     else if (c == "[" && sb) sb++
     else if (c == "]" && sb) sb--
@@ -291,7 +292,7 @@ lex_awk='BEGIN { hh = 1 }
     else if (c == "\"") st = 2
     else if (c == "}" && bd) bd--
     else if (c == "(") { if (ch[i + 1] == "(" && !ar && !bd) { ar = 1; ad = gd }; gd++; if (sp) pc[sp]++ }
-    else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; sp--; pp = i } }
+    else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; if (!ov) { sb = sv[sp]; bd = bv[sp] }; sp--; pp = i } }
     else if (c == "#" && !bd && pp != i - 1 && (i == 1 || index(" \t;&|()", ch[i - 1]))) { st = 4; break }
     else if (c == "<" && !ar && !sb && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<" && (i == 1 || ch[i - 1] != "<")) {
       j = i + 2; t = 0; w = ""
@@ -377,7 +378,9 @@ case "$raw" in
           printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
         { j = 0; print }')"
     ex="s/[$](\([^()]*\))/$soh/g;s/[$]{[^{}]*}/$soh/g;s/\`[^\`]*\`/$soh/g"
-    for lx in "$lex_awk" '{ gsub(/\\`/, "\001"); print }'; do
+    # lex_awk chạy hai lần: bản mới, và bản ov = 1 đọc $$, $( như main (không lưu/xoá sb, bd ở $(; $$[, $${ vẫn mở $[, ${).
+    # Bộ đếm ngoặc không biết ) trong ${…} (`$(echo ${x:-) #})`), nên mỗi bản đọc sai một kiểu; đường nào ra từ khoá cũng hỏi.
+    for lx in "$lex_awk" "BEGIN { ov = 1 }$lex_awk" '{ gsub(/\\`/, "\001"); print }'; do
     tk="$(printf '%s\n' "$jn" | LC_ALL=C awk "$lx" |
       LC_ALL=C sed -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" \
         -e "s/[$][@*0-9!]/$soh/g" -e "s/[$][A-Za-z_][A-Za-z0-9_]*/$soh/g" |
@@ -398,6 +401,9 @@ case "$raw" in
     # Tên shell rồi một từ do lệnh con sinh ra (`bash `echo -c` 'cd M && git push'`, `sh $(echo -c) …`): cờ và thân là chưa
     # biết, thư mục của push cũng vậy. Có thể có cờ xen giữa (`bash -e`, `bash -o errexit`) hay nháy kép (`bash "$(…)"`); đọc
     # trên $cmd để thấy dạng đã nối dòng (`bash \⏎`…``).
+    # Đọc mọi dạng của $cmd (cả dx, dz đã bỏ hết nháy): bỏ dạng nào cũng làm lọt lệnh main vẫn hỏi (đường dẫn shell có
+    # khoảng trắng trong nháy, đối số --rcfile có nháy lẻ, cờ xé cả nháy lẫn $(…); reviewer PR #63), nên chịu hỏi thừa
+    # `--title "fix zsh" --body "$(…)"`.
     if LC_ALL=C text_grep "$cmd" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
       shc_unknown=1
     fi
