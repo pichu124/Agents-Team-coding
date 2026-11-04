@@ -1307,7 +1307,8 @@ git -C "$pt" update-index --chmod=-x -- "$pin_sh"
 idx_sh="$(git -C "$pt" ls-files -s -- "$pin_sh")"
 { printf '%s\n' kit-pinned: "$pin_old" "$pin_mod" "$pin_gone" "$pin_sh" "$pin_x" '# ghi chú' ''; } >> "$pt/$man"
 "$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
-assert "AV: file ghim (dự án đã sửa) không được làm installer dừng → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AV: file ghim (dự án đã sửa) không được làm installer dừng → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AV: file ghim trùng bản kit cũ phải giữ nguyên" cmp -s "$tmp/pin-old" "$pt/$pin_old"
 assert "AV: file ghim dự án đã sửa phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
 assert "AV: script ghim phải giữ nguyên" cmp -s "$tmp/pin-sh" "$pt/$pin_sh"
@@ -1348,9 +1349,17 @@ assert "AV: bỏ ghim file dự án đã sửa thì phải dừng như trước"
 # Header gõ có dấu cách cuối (manifest cũ người dùng tự thêm mục): vẫn đọc là kit-pinned:, không mất ghim.
 sed 's/^kit-pinned:$/kit-pinned: /' "$tmp/man-AV" > "$pt/$man"
 "$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
-assert "AV: header 'kit-pinned: ' có dấu cách cuối vẫn phải giữ ghim → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AV: header 'kit-pinned: ' có dấu cách cuối vẫn phải giữ ghim → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AV: header có dấu cách cuối: file ghim phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
 assert "AV: header có dấu cách cuối: manifest ghi lại phải về đúng dạng" cmp -s "$tmp/man-AV" "$pt/$man"
+# Dòng ghim gõ có dấu cách, tab cuối: vẫn là file đó, manifest ghi lại không còn khoảng trắng (reviewer PR #66 vòng 2).
+awk -v f="$pin_mod" '$0 == f { print f "  \t"; next } { print }' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+rc=$?
+assert "AV: dòng ghim có dấu cách cuối vẫn phải ghim → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AV: dòng ghim có dấu cách cuối: file ghim phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: dòng ghim có dấu cách cuối: manifest ghi lại phải bỏ khoảng trắng" cmp -s "$tmp/man-AV" "$pt/$man"
 # File kit đã bỏ mà dự án ghim: vẫn ở kit-dropped (bỏ ghim sau đó còn được báo), không báo "kit đã bỏ".
 pin_drop=.claude/agents/pin-drop.md
 echo "file kit cũ dự án vẫn dùng" > "$pt/$pin_drop"
