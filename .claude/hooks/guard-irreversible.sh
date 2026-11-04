@@ -368,8 +368,8 @@ case "$raw" in
     # dz giữ nguyên (backtick có nội dung có thể ghép nhầm với backtick trong nháy), dz2 chỉ thêm dòng.
     # Biến chỉ bỏ khi dính sau chữ (`pu$X''sh`); `rm -rf "$dir"/*`, `$OUT/*` giữ nguyên như main. Dòng mở ngoặc nhọn bỏ qua dòng
     # quá 4 KB, dừng khi dòng ra quá 4 lần dòng vào cộng 256 (`{a,…×3000}{b,…×3000}` là 9 triệu từ) và ngừng mở khi
-    # tổng đã ra quá 64 KB (950 dòng ngắn làm $cmd thành 7,5 MB, bash 3.2 quét lại quá 10 giây), biên từ tìm bằng match (substr từng ký tự là
-    # bậc hai trên awk BWK; reviewer PR #64).
+    # tổng đã ra quá 64 KB (950 dòng ngắn làm $cmd thành 7,5 MB, bash 3.2 quét lại quá 10 giây), biên từ tìm bằng match bắt đầu ở khoảng trắng (substr từng ký tự,
+    # hay match kết bằng $ không neo, là bậc hai trên awk BWK và mawk; reviewer PR #64).
     xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
     bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
     vz='s/\([[:alnum:]_]\)[$][@*0-9!]/\1/g;s/\([[:alnum:]_]\)[$][A-Za-z_][A-Za-z0-9_]*/\1/g'
@@ -382,7 +382,7 @@ case "$raw" in
         l = $0; cap = 4 * length($0) + 256
         for (it = 0; it < 8 && match(l, /[{][^{}[:space:]]*,[^{}[:space:]]*[}]/); it++) {
           st = RSTART; ln = RLENGTH; h = substr(l, 1, st - 1); t = substr(l, st + ln)
-          match(h, /[^[:space:]]*$/); a = RSTART; pre = substr(h, a)
+          a = match(h, /[[:space:]][^[:space:]]*$/) ? RSTART + 1 : 1; pre = substr(h, a)
           match(t, /^[^[:space:]]*/); suf = substr(t, 1, RLENGTH); t = substr(t, RLENGTH + 1)
           n = split(substr(l, st + 1, ln - 2), br, ","); out = ""
           for (k = 1; k <= n && length(out) <= cap; k++) out = out (k > 1 ? " " : "") pre br[k] suf
