@@ -1210,7 +1210,8 @@ rm -f "$ap/scripts/validate-kit.sh"
 git -C "$ap" rm -q --cached scripts/validate-kit.sh
 git -C "$ap" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "bỏ validate-kit"
 run_install "$ap" --force
-assert "AP: cài lại --force phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AP: cài lại --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 nl=$'\n'
 unstaged="$(git -C "$ap" diff --name-only)"
 case "$nl$unstaged$nl" in
@@ -1265,12 +1266,14 @@ git -C "$ask" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q
 ast="$tmp/rollback target"
 new_repo "$ast"
 "$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
-assert "AS: cài từ kit2 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AS: cài từ kit2 phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AS: kit mới hơn bản đã cài thì không được cảnh báo bản cũ → $(cat "$tmp/err")" \
   sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
 git -C "$ask" checkout -q "$ask1"
 "$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
-assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AS: kit cũ hơn bản đã cài phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q '^⚠.*cũ hơn' "$tmp/err"
 
 # AT. Bản chép CLAUDE.md của kit cũ mà người dùng đã điền TODO (thay câu mô tả dự án của kit): vẫn là quy ước đội
@@ -1302,7 +1305,8 @@ git -C "$au_up" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit 
 git -C "$au_k" fetch -q --depth 1 origin
 git -C "$au_k" reset -q --hard FETCH_HEAD
 "$au_k/scripts/install-kit.sh" "$au_t" > "$tmp/out" 2> "$tmp/err"
-assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AU: kit nông mới hơn thì không được báo kit cũ hơn → $(cat "$tmp/err")" sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
 
 if [ "$fails" -gt 0 ]; then

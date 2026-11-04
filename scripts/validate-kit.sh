@@ -185,6 +185,13 @@ for sh in "${shell_files[@]}"; do
     err "$sh:$n: grep -q nhận stdin từ pipe, pipefail đọc SIGPIPE (141) của lệnh trước thành \"không khớp\". Dùng text_grep (lib.sh) hoặc [ -n \"\$(...)\" ]"
   done < <(grep -nE -- "$pipe_quiet_grep" "$sh" | grep -Ev '^[0-9]+:[[:space:]]*#')
 done
+# $? sau một $(...) trong cùng lệnh (không có ; & | ở giữa) là mã thoát của $(...): `assert "… $(cat err)" [ $? -eq 0 ]`
+# luôn pass (reviewer PR #66, ca AP AS AU của test-install). Lưu rc=$? ngay sau lệnh rồi dùng "$rc".
+for sh in "${shell_files[@]}"; do
+  while IFS=: read -r n _; do
+    err "$sh:$n: \$? đứng sau \$(...) trong cùng lệnh là mã thoát của \$(...), không phải của lệnh trước; lưu rc=\$? ngay sau lệnh rồi dùng \"\$rc\""
+  done < <(grep -nE -- '\$\([^;&|]*\$\?' "$sh" | grep -Ev '^[0-9]+:[[:space:]]*#')
+done
 # Hook không dùng here-doc, <<<, <(...) hay >(...): bash đi qua file tạm hay /dev/fd, đĩa đầy hay TMPDIR không ghi
 # được thì vòng đọc không chạy lần nào và guard cho qua (PR #21), hay hook của plugin không chạy (PR #35). Duyệt
 # chuỗi trong bộ nhớ (text_grep của lib.sh). Báo theo dòng: dịch bit $((a << 2)) cũng bị báo, viết bằng phép nhân.
