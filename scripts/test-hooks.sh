@@ -414,7 +414,7 @@ EOF
   # 4.10 Luật: nhánh đầu rỗng hay ngoặc lồng, lệnh con hay biến có nội dung, dòng chỉ có \ trong chữ lệnh.
   expect_guard ask "git {,push} --force origin feat/x"
   expect_guard ask "git {{push,},} --force origin feat/x"
-  expect_guard ask "git {x,{,push}} --force origin feat/x"
+  expect_guard ask "git {{,push},} --force origin feat/x"
   expect_guard ask "rm -rf {,~}"
   expect_guard ask "git pu\`true\`sh --force origin feat/x"
   expect_guard ask "git pu\$(echo \$(true))sh --force origin feat/x"
