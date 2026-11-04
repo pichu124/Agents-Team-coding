@@ -424,6 +424,39 @@ out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
 assert "NB: validate-kit không được báo comment, < đơn, <> trong regex → $out" [ $? -eq 0 ]
 cp "$tmp/lib.sh.orig" "$lib"
 
+# NC. $? đứng sau một $(...) trong cùng lệnh là mã thoát của $(...), không phải của lệnh trước:
+#     `assert "… $(cat err)" [ $? -eq 0 ]` luôn pass (reviewer PR #66; ca AP, AS, AU từng như vậy). validate-kit đỏ,
+#     nêu file:dòng. `: "$(x)"; : "$?"`, `: "$?"`, có `&&` hay `;` ở giữa, comment thì không bị báo. Dòng vi phạm
+#     dựng bằng $d để chính file này không vi phạm.
+d='$('
+first=$(($(wc -l < "$lib") + 1))
+printf '%s\n' "assert \"x → ${d}cat f)\" [ \$? -eq 0 ]" "echo \"${d}date)\" \$?" >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+rc=$?
+assert "NC: validate-kit phải đỏ khi \$? đứng sau \$(...) trong cùng lệnh → $out" [ "$rc" -ne 0 ]
+for i in 0 1; do
+  case "$out" in
+    *".claude/hooks/lib.sh:$((first + i)): "*) ok ;;
+    *) bad "NC: phải báo .claude/hooks/lib.sh:$((first + i)) → $out" ;;
+  esac
+done
+assert "NC: chỉ báo đúng 2 dòng vi phạm → $out" [ "$(grep -c 'lib\.sh:[0-9]*: ' <<<"$out")" = 2 ]
+case "$out" in
+  *'rc=$?'*) ok ;;
+  *) bad "NC: thông báo phải nêu cách sửa (lưu rc=\$? ngay sau lệnh) → $out" ;;
+esac
+msg="$(grep -m 1 'lib\.sh:[0-9]*: ' <<<"$out")"
+cp "$tmp/lib.sh.orig" "$lib"
+# Dùng : (shellcheck của validate-kit báo biến gán không dùng SC2034, $? sau echo SC2320, sau test SC2319).
+printf '%s\n' ": \"${d}true)\"; : \"\$?\"" ': "$?"' ": \"${d}true)\" && : \"\$?\"" "# assert \"${d}x)\" \$?" \
+  "  # echo \"${d}x)\" \$?" >> "$lib"
+case "$msg" in *"'"*) bad "NC: thông báo của lint không được có nháy đơn → $msg" ;; esac
+printf ": '%s'\n" "$msg" >> "$lib"
+out="$(cd "$n" && ./scripts/validate-kit.sh 2>&1)"
+rc=$?
+assert "NC: validate-kit không được báo ; hay && ở giữa, rc=\$?, comment, thông báo của lint → $out" [ "$rc" -eq 0 ]
+cp "$tmp/lib.sh.orig" "$lib"
+
 # O. File shell chỉ repo kit mới có (installer không chép): ở repo đích, file cùng tên là của dự án,
 #    validate-kit không kiểm (lint, bash -n, shellcheck). Ở bản chép repo kit thì vẫn kiểm.
 repo_only="scripts/install-kit.sh scripts/test-install.sh scripts/test-plugin.sh plugin/run-hook.sh
@@ -1178,7 +1211,8 @@ rm -f "$ap/scripts/validate-kit.sh"
 git -C "$ap" rm -q --cached scripts/validate-kit.sh
 git -C "$ap" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m "bỏ validate-kit"
 run_install "$ap" --force
-assert "AP: cài lại --force phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AP: cài lại --force phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 nl=$'\n'
 unstaged="$(git -C "$ap" diff --name-only)"
 case "$nl$unstaged$nl" in
@@ -1233,12 +1267,14 @@ git -C "$ask" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q
 ast="$tmp/rollback target"
 new_repo "$ast"
 "$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
-assert "AS: cài từ kit2 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AS: cài từ kit2 phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AS: kit mới hơn bản đã cài thì không được cảnh báo bản cũ → $(cat "$tmp/err")" \
   sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
 git -C "$ask" checkout -q "$ask1"
 "$ask/scripts/install-kit.sh" "$ast" > "$tmp/out" 2> "$tmp/err"
-assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AS: cài từ kit1 phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AS: kit cũ hơn bản đã cài phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q '^⚠.*cũ hơn' "$tmp/err"
 
 # AT. Bản chép CLAUDE.md của kit cũ mà người dùng đã điền TODO (thay câu mô tả dự án của kit): vẫn là quy ước đội
@@ -1270,7 +1306,8 @@ git -C "$au_up" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit 
 git -C "$au_k" fetch -q --depth 1 origin
 git -C "$au_k" reset -q --hard FETCH_HEAD
 "$au_k/scripts/install-kit.sh" "$au_t" > "$tmp/out" 2> "$tmp/err"
-assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ $? -eq 0 ]
+rc=$?
+assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AU: kit nông mới hơn thì không được báo kit cũ hơn → $(cat "$tmp/err")" sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
 
 # AV. Mục kit-pinned: của manifest (4.9): file kit ghim giữ nguyên khi cài lại, kể cả khi trùng một bản kit cũ (lẽ ra

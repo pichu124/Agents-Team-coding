@@ -40,6 +40,7 @@ Bộ khởi động đội AI agent lập trình cho Claude Code (`.claude/agent
 | Format theo cấu hình của dự án | `.claude/hooks/post-edit-format.sh` (PostToolUse) |
 | Agent và skill có frontmatter hợp lệ, link không gãy | `scripts/validate-kit.sh` (trong `check.sh` và CI) |
 | Script của kit không cho `grep -q` đọc stdin từ pipe (pipefail đọc SIGPIPE thành "không khớp") | `scripts/validate-kit.sh` (báo file:dòng, sửa bằng `text_grep` của `lib.sh`) |
+| Không dùng `$?` sau một `$(...)` trong cùng lệnh (`assert "… $(cat err)" [ $? -eq 0 ]` luôn pass) | `scripts/validate-kit.sh` (báo file:dòng, sửa bằng `rc=$?` ngay sau lệnh) |
 | Không bớt ca "phải hỏi" của guard để cho dễ | `scripts/guard-ask-floor` (test-hooks đỏ khi số ca dưới sàn) |
 | Kit chạy được trên macOS (`/bin/bash` 3.2, BSD grep, awk BWK) và Git Bash Windows (gawk bỏ `\r` khi đọc, `core.autocrlf=true`) | CI job `portable` trong `.github/workflows/check.yml` (macOS và Windows thật) |
 | Guard trả lời trong timeout của hook với lệnh dài và lệnh nối dòng dài (quá timeout thì Claude Code cho lệnh chạy mà không hỏi): thay chuỗi trên lệnh dài bằng awk, không dùng `${x//a/b}` (bash 3.2 chậm bậc hai, giữ dấu nháy của chuỗi thay) | `scripts/test-hooks.sh` (lệnh ~190 KiB, có và không có `\` nối dòng, chạy với timeout trong `settings.json`; ca nối dòng chạy thêm với `BASH_COMPAT=42`). ca 1500 và 6000 `cd`, cd xen kẽ, nhiều `git -C`, nhiều `cd ..` qua `hook_limit`; guard có trần số cd, số lần ghép `git -C` và số subshell, quá thì hỏi (4.3 của `docs/viec-can-lam.md`) |
