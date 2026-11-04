@@ -87,9 +87,12 @@ if [ -f "$manifest" ]; then
   in_pin=0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%"$cr"}"
+    hdr="${line%"${line##*[! 	]}"}" # bỏ dấu cách, tab cuối (header gõ tay)
+    case "$hdr" in
+      kit-pinned:) in_pin=1; continue ;;
+      kit-commit:* | kit-files: | kit-dropped:) in_pin=0; continue ;;
+    esac
     case "$line" in
-      kit-pinned:) in_pin=1 ;;
-      kit-commit:* | kit-files: | kit-dropped:) in_pin=0 ;;
       '' | '#'*) ;;
       *)
         [ "$in_pin" = 1 ] || continue
@@ -101,15 +104,15 @@ if [ -f "$manifest" ]; then
 fi
 listed() { case "$nl$2$nl" in *"$nl$1$nl"*) return 0 ;; esac; return 1; } # listed <dòng> <danh sách mỗi dòng một mục>
 kit_list="$(printf '%s\n' "${files[@]}")"
-kept=""   # file ghim đang có trong repo: không chép, không so
+pin_kept=""   # file ghim đang có trong repo: không chép, không so, không đụng index (tên riêng: kept là biến báo CLAUDE.md)
 for f in "${files[@]}"; do
-  listed "$f" "$pinned" && [ -e "$target/$f" ] && kept="$kept$f$nl"
+  listed "$f" "$pinned" && [ -e "$target/$f" ] && pin_kept="$pin_kept$f$nl"
 done
 
 conflicts=0
 updated=()
 for f in "${files[@]}"; do
-  listed "$f" "$kept" && continue
+  listed "$f" "$pin_kept" && continue
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
     if kit_had "$f"; then
       updated+=("$f")
@@ -191,7 +194,7 @@ fi
 
 ncopied=0
 for f in "${files[@]}"; do
-  listed "$f" "$kept" && continue
+  listed "$f" "$pin_kept" && continue
   listed "$f" "$pinned" && echo "⚠ $f có trong kit-pinned nhưng chưa có trong repo: đã chép bản của kit" >&2
   mkdir -p "$target/$(dirname "$f")"
   cp "$kit/$f" "$target/$f"
@@ -199,13 +202,13 @@ for f in "${files[@]}"; do
   ncopied=$((ncopied + 1))
 done
 echo "✔ đã chép $ncopied file của kit"
-if [ -n "$kept" ]; then
-  echo "• giữ nguyên $(printf '%s' "$kept" | grep -c .) file ghim trong kit-pinned: của .claude/agent-team-kit.txt"
+if [ -n "$pin_kept" ]; then
+  echo "• giữ nguyên $(printf '%s' "$pin_kept" | grep -c .) file ghim trong kit-pinned: của .claude/agent-team-kit.txt"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if cmp -s "$kit/$f" "$target/$f"; then echo "  $f"; else echo "  $f (khác bản kit hiện tại)"; fi
   done <<EOF
-$kept
+$pin_kept
 EOF
 fi
 while IFS= read -r f; do
@@ -326,26 +329,31 @@ fi
 # xoá, ghi vào kit-dropped để lần sau vẫn báo. Chỉ đọc đường dẫn, không thực thi gì trong file.
 prev=""
 dropped=""
+dropwarn=""
 ndropped=0
 if [ -f "$manifest" ]; then
   in_list=0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%"$cr"}"
+    hdr="${line%"${line##*[! 	]}"}"
+    case "$hdr" in
+      kit-files: | kit-dropped:) in_list=1; continue ;;
+      kit-pinned:) in_list=0; continue ;;
+    esac
     case "$line" in
       'kit-commit: '*) prev="${line#kit-commit: }" ;;
-      kit-files: | kit-dropped:) in_list=1 ;;
-      kit-pinned:) in_list=0 ;;
       '' | '#'*) ;;
       *)
         [ "$in_list" = 1 ] || continue
         # Dòng sửa tay không phải đường file của kit trong repo (../x, /tuyệt đối, C:\x, -rf, tên thư mục): bỏ qua.
         case "$line" in /* | -* | [A-Za-z]:* | .. | ../* | */.. | */../* | ./* | */./* | *//*) continue ;; esac
         [ -f "$target/$line" ] || continue
-        # Người dùng ghim: không báo xoá.
-        case "$nl$pinned" in *"$nl$line$nl"*) continue ;; esac
         # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
         case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
         dropped="$dropped$line$nl"
+        # Người dùng ghim: vẫn ghi trong kit-dropped (bỏ ghim thì lần sau còn báo), không báo xoá.
+        case "$nl$pinned" in *"$nl$line$nl"*) continue ;; esac
+        dropwarn="$dropwarn$line$nl"
         ndropped=$((ndropped + 1))
         ;;
     esac
@@ -379,7 +387,7 @@ was=""
 echo "✔ .claude/agent-team-kit.txt: kit $(short "$commit")$was"
 if [ "$ndropped" -gt 0 ]; then
   echo "⚠ kit đã bỏ $ndropped file mà repo này vẫn còn. Dự án không dùng thì xoá (git rm):" >&2
-  printf '%s' "$dropped" | sed 's/^/  /' >&2
+  printf '%s' "$dropwarn" | sed 's/^/  /' >&2
 fi
 
 attrs="$target/.gitattributes"
@@ -433,7 +441,7 @@ fi
 
 sh_files=()
 for f in "${files[@]}"; do
-  listed "$f" "$kept" && continue
+  listed "$f" "$pin_kept" && continue
   case "$f" in *.sh) sh_files+=("$f") ;; esac
 done
 # Script đã theo dõi: chỉ đặt bit chạy cho blob đang có trong index (--cacheinfo, không đọc lại file; update-index
