@@ -689,6 +689,37 @@ EOF
   ups="$(printf 'cd ..; %.0s' $(seq 20))"
   expect_guard allow "${ups}cd \"$work\" && git push origin HEAD"
   expect_guard ask "${ups}cd \"$on_main\" && git push origin HEAD"
+  # Nhiều cách viết cùng về một thư mục thật (299 `cd ..` qua gốc): guard chạy git một lần cho mỗi thư mục thật, không phải
+  # cho mỗi cách viết. Trước đây mỗi đường có `..` tốn hai subshell chạy git, tới SUB_MAX (64) mới thôi: ~10 giây trên Git
+  # Bash, ca long-manydotdot của test-install đỏ chập chờn trên Windows. git giả ghi lại mỗi lần đọc nhánh.
+  if [ ! -x "$tmp/gitlog/git" ]; then
+    mkdir -p "$tmp/gitlog"
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$tmp/gitlog.txt" "$(command -v git)" > "$tmp/gitlog/git"
+    chmod +x "$tmp/gitlog/git"
+  fi
+  : > "$tmp/gitlog.txt"
+  dd="$(printf 'cd ..; %.0s' $(seq 299))"
+  out="$(bash_input "${dd}cd \"$on_main\" && git push origin HEAD" "$work" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  depth="$(cd "$work" && pwd -P | awk -F/ '{ print NF }')"
+  assert "guard chỉ được đọc nhánh mỗi thư mục thật một lần [$mode]: 299 cd .. rồi cd nhánh chính → $nrev lần (sâu $depth)" \
+    [ "$nrev" -le $((depth + 2)) ]
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "guard phải hỏi vì nhánh main [$mode], không vì trần số thư mục: 299 cd .. rồi cd nhánh chính → $out" ;;
+  esac
+  # Monorepo (reviewer PR #55): cd packages/p1 rồi cd ../p2 … ../p40, mỗi đường có `..` khác chữ nhau nhưng là 40 thư mục
+  # thật: dưới SUB_MAX nên đọc đủ, không hỏi thừa; cuối cùng cd vào repo ở nhánh chính thì phải hỏi.
+  mono="$tmp/mono"
+  [ -d "$mono/packages/p40" ] || { new_repo "$mono" feat/x && for i in $(seq 40); do mkdir -p "$mono/packages/p$i"; done; }
+  mc="cd packages/p1 && make"
+  for i in $(seq 2 40); do mc="$mc && cd ../p$i && make"; done
+  expect_guard allow "$mc && git push origin HEAD" "$mono"
+  expect_guard ask "$mc && cd \"$on_main\" && git push origin HEAD" "$mono"
+  # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
+  gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
+  expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
   # cwd dạng C:/… (Python của Windows nhận đường POSIX đã được Git Bash đổi): cd vào thư mục chưa có vẫn phải bỏ qua, không
   # tốn subshell (299 cd từng chạm SUB_MAX và hỏi thừa trên Windows). Hệ không tạo được thư mục tên `C:` thì bỏ qua ca này.
   # Trên Git Bash, `C:/w` là ổ C dù tạo được thư mục tên `C:`: chỉ chạy khi `C:/w` tính từ $tmp đúng là repo vừa tạo.
