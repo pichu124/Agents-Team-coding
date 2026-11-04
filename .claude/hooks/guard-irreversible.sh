@@ -363,7 +363,8 @@ case "$raw" in
     cmd="$cmd$nl$dz"
     # dz2 (4.10, Luật): như dz, thêm dòng chỉ có \ sau dòng nối (`git pu\` ⏎ `\` ⏎ `sh`), $(…) và ${…} lồng (8 lượt:
     # `pu$(echo $(true))sh`, `pu${X:-${Y}}sh`), backtick có nội dung (``pu`true`sh``), biến (`pu$@sh`, `pu$9sh`, `pu$!sh`,
-    # `pu$X''sh`), ngoặc nhọn lồng (nhánh đầu, 4 lượt) và một dòng coi mọi nhánh là từ riêng (`git {,push}`, `rm -rf {,~}`).
+    # `pu$X''sh`), ngoặc nhọn lồng (nhánh đầu, 4 lượt) và một dòng mở ngoặc nhọn như bash, mỗi nhánh một từ có kèm tiền tố, hậu tố
+    # (`git {,push}` thành `git push`, `rm -rf {,~}` thành `rm -rf ~`, `{/,}src` thành `/src src`; 8 lượt, trong cùng trước).
     # dz giữ nguyên (backtick có nội dung có thể ghép nhầm với backtick trong nháy), dz2 chỉ thêm dòng.
     xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
     bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
@@ -373,7 +374,16 @@ case "$raw" in
       LC_ALL=C sed -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" \
         -e 's/[$][@*0-9!]//g' -e 's/[$][A-Za-z_][A-Za-z0-9_]*//g')"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C sed -e "$bz" -e "$bz" -e "$bz" -e "$bz"
-      printf '%s\n' "$dz2" | LC_ALL=C awk '/[{][^{}]*,/' | LC_ALL=C tr ',{}' '   ')"
+      printf '%s\n' "$dz2" | LC_ALL=C awk '/[{][^{}]*,/ {
+        for (it = 0; it < 8 && match($0, /[{][^{}[:space:]]*,[^{}[:space:]]*[}]/); it++) {
+          st = RSTART; ln = RLENGTH; a = st; b = st + ln
+          while (a > 1 && substr($0, a - 1, 1) !~ /[[:space:]]/) a--
+          while (b <= length($0) && substr($0, b, 1) !~ /[[:space:]]/) b++
+          pre = substr($0, a, st - a); suf = substr($0, st + ln, b - st - ln)
+          n = split(substr($0, st + 1, ln - 2), br, ","); out = ""
+          for (k = 1; k <= n; k++) out = out (k > 1 ? " " : "") pre br[k] suf
+          $0 = substr($0, 1, a - 1) out substr($0, b) }
+        print }')"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz2"
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
