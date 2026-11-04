@@ -190,6 +190,8 @@ git -C /c/tools/Agents-Team-coding log --oneline <kit-commit>..HEAD -- .claude s
 
 Kit bỏ hoặc đổi tên một file thì bản cũ vẫn nằm lại trong repo. Installer không tự xoá mà báo `⚠ kit đã bỏ N file mà repo này vẫn còn` kèm tên từng file, và báo lại ở mọi lần cài cho tới khi file đó không còn. Dự án không dùng file nào thì tự `git rm` file đó.
 
+Mục `kit-pinned:` ở cuối file là phần duy nhất được sửa tay: mỗi dòng một đường file kit (như `.claude/agents/architect.md`) mà dự án muốn giữ ở bản của mình. Installer giữ nguyên file ghim đang có trong repo, kể cả khi chạy với `--force`, và không đụng tới index của nó. File ghim chưa có trong repo thì được chép bản kit, kèm cảnh báo `⚠`. Dòng không phải file của kit (gõ sai, hay kit đã bỏ file đó) thì installer cảnh báo `⚠` và vẫn giữ dòng đó trong mục. Mục chỉ áp cho file kit được chép (agents, hooks, skills, scripts); `.claude/settings.json`, `.claude/rules/agent-team.md` và `CLAUDE.md` có cách gộp riêng.
+
 File `.claude/rules/agent-team.md` chỉ bị thay phần của kit, từ đầu file tới dòng `<!-- agent-team:kit-end ... -->`. Quy ước riêng của dự án (ví dụ bộ check nhanh) thì viết dưới dòng đó, installer giữ nguyên. Bản cài cũ chưa có dòng này thì installer giữ các mục `#`/`##` không có trong template, phần còn lại bị thay. Xem `git diff HEAD` trước khi commit.
 
 ## 5. Chạy check
@@ -375,7 +377,7 @@ Làm trên **từng máy có mở Claude trong ngày** (ở `C:\vnstock-trial`, 
    ```powershell
    & $bash /c/tools/Agents-Team-coding/scripts/install-kit.sh /c/vnstock-trial
    ```
-   Exit 0 (không có dòng `✘ dừng: ...`): installer đã cập nhật các file kit mà dự án chưa sửa. Nó in tên từng file đó, mỗi file một dòng ngay dưới dòng `✔ cập nhật N file kit mà dự án chưa sửa`. Dự án cố ý giữ một bản kit cũ thì file đó cũng bị cập nhật, vì nó trùng một bản của kit: muốn giữ thì thêm một dòng comment riêng vào file để nó khác mọi bản kit, khi đó installer dừng ở bước 3. Xem thay đổi, chạy check, rồi commit. Dùng `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`, nên `git diff` không hiện chúng. Dòng `kit-commit:` của `.claude/agent-team-kit.txt` trong diff cho thấy commit kit cũ và mới. `git status --short` không in gì thì kit không đổi, hết việc.
+   Exit 0 (không có dòng `✘ dừng: ...`): installer đã cập nhật các file kit mà dự án chưa sửa. Nó in tên từng file đó, mỗi file một dòng ngay dưới dòng `✔ cập nhật N file kit mà dự án chưa sửa`. Dự án cố ý giữ một bản kit cũ (hay đã `git revert` commit cập nhật kit) thì ghim file đó: thêm đường dẫn của nó, mỗi file một dòng, dưới dòng `kit-pinned:` ở cuối `.claude/agent-team-kit.txt`, rồi commit. Từ đó installer giữ nguyên file ghim, không cập nhật, không dừng vì nó khác bản kit, và in `• giữ nguyên N file ghim` kèm tên từng file (thêm `(khác bản kit hiện tại)` nếu khác). Bỏ ghim thì xoá dòng đó. Xem thay đổi, chạy check, rồi commit. Dùng `git diff HEAD`, không phải `git diff`: installer đã stage các script `.sh`, nên `git diff` không hiện chúng. Dòng `kit-commit:` của `.claude/agent-team-kit.txt` trong diff cho thấy commit kit cũ và mới. `git status --short` không in gì thì kit không đổi, hết việc.
    ```powershell
    git status --short
    git diff HEAD
