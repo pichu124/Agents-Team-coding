@@ -426,7 +426,7 @@ cp "$tmp/lib.sh.orig" "$lib"
 
 # NC. $? đứng sau một $(...) trong cùng lệnh là mã thoát của $(...), không phải của lệnh trước:
 #     `assert "… $(cat err)" [ $? -eq 0 ]` luôn pass (reviewer PR #66; ca AP, AS, AU từng như vậy). validate-kit đỏ,
-#     nêu file:dòng. `echo "$(x)"; echo $?`, `echo $?`, có `&&` hay `;` ở giữa, comment thì không bị báo. Dòng vi phạm
+#     nêu file:dòng. `: "$(x)"; : "$?"`, `: "$?"`, có `&&` hay `;` ở giữa, comment thì không bị báo. Dòng vi phạm
 #     dựng bằng $d để chính file này không vi phạm.
 d='$('
 first=$(($(wc -l < "$lib") + 1))
@@ -447,8 +447,8 @@ case "$out" in
 esac
 msg="$(grep -m 1 'lib\.sh:[0-9]*: ' <<<"$out")"
 cp "$tmp/lib.sh.orig" "$lib"
-# Không gán biến (shellcheck SC2034 của validate-kit báo biến không dùng).
-printf '%s\n' "echo \"${d}true)\"; echo \$?" 'echo $?' "echo \"${d}true)\" && echo \$?" "# assert \"${d}x)\" \$?" \
+# Dùng : (shellcheck của validate-kit báo biến gán không dùng SC2034, $? sau echo SC2320, sau test SC2319).
+printf '%s\n' ": \"${d}true)\"; : \"\$?\"" ': "$?"' ": \"${d}true)\" && : \"\$?\"" "# assert \"${d}x)\" \$?" \
   "  # echo \"${d}x)\" \$?" >> "$lib"
 case "$msg" in *"'"*) bad "NC: thông báo của lint không được có nháy đơn → $msg" ;; esac
 printf ": '%s'\n" "$msg" >> "$lib"
