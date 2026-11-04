@@ -361,6 +361,36 @@ case "$raw" in
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
+    # dz2 (4.10, Luật): như dz, thêm dòng chỉ có \ sau dòng nối (`git pu\` ⏎ `\` ⏎ `sh`), $(…) và ${…} lồng (8 lượt:
+    # `pu$(echo $(true))sh`, `pu${X:-${Y}}sh`), backtick có nội dung (``pu`true`sh``), biến (`pu$@sh`, `pu$9sh`, `pu$!sh`,
+    # `pu$X''sh`), ngoặc nhọn lồng (nhánh đầu, 4 lượt) và một dòng mở ngoặc nhọn như bash, mỗi nhánh một từ có kèm tiền tố, hậu tố
+    # (`git {,push}` thành `git push`, `rm -rf {,~}` thành `rm -rf ~`, `{/,}src` thành `/src src`; 8 lượt, trong cùng trước).
+    # dz giữ nguyên (backtick có nội dung có thể ghép nhầm với backtick trong nháy), dz2 chỉ thêm dòng.
+    # Biến chỉ bỏ khi dính sau chữ (`pu$X''sh`); `rm -rf "$dir"/*`, `$OUT/*` giữ nguyên như main. Dòng mở ngoặc nhọn bỏ qua dòng
+    # quá 4 KB, dừng khi dòng ra quá 4 lần dòng vào cộng 256 (`{a,…×3000}{b,…×3000}` là 9 triệu từ) và ngừng mở khi
+    # tổng đã ra quá 64 KB (950 dòng ngắn làm $cmd thành 7,5 MB, bash 3.2 quét lại quá 10 giây), biên từ tìm bằng match bắt đầu ở khoảng trắng (substr từng ký tự,
+    # hay match kết bằng $ không neo, là bậc hai trên awk BWK và mawk; reviewer PR #64).
+    xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
+    bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
+    vz='s/\([[:alnum:]_]\)[$][@*0-9!]/\1/g;s/\([[:alnum:]_]\)[$][A-Za-z_][A-Za-z0-9_]*/\1/g'
+    dz2="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/ { print; j = 0 }' |
+      LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$vz")"
+    dz2="$(printf '%s\n' "$dz2" | LC_ALL=C sed -e "$bz" -e "$bz" -e "$bz" -e "$bz"
+      printf '%s\n' "$dz2" | LC_ALL=C awk 'tot <= 65536 && length($0) <= 4096 && /[{][^{}]*,/ {
+        l = $0; cap = 4 * length($0) + 256
+        for (it = 0; it < 8 && match(l, /[{][^{}[:space:]]*,[^{}[:space:]]*[}]/); it++) {
+          st = RSTART; ln = RLENGTH; h = substr(l, 1, st - 1); t = substr(l, st + ln)
+          a = match(h, /[[:space:]][^[:space:]]*$/) ? RSTART + 1 : 1; pre = substr(h, a)
+          match(t, /^[^[:space:]]*/); suf = substr(t, 1, RLENGTH); t = substr(t, RLENGTH + 1)
+          n = split(substr(l, st + 1, ln - 2), br, ","); out = ""
+          for (k = 1; k <= n && length(out) <= cap; k++) out = out (k > 1 ? " " : "") pre br[k] suf
+          l = substr(h, 1, a - 1) out t
+          if (length(l) > cap) break }
+        tot += length(l); print l }')"
+    dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
+    cmd="$cmd$nl$dz2"
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
     # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
     # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9

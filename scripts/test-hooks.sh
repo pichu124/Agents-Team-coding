@@ -411,6 +411,26 @@ EOF
   expect_guard ask "git pu\${X}sh --force origin feat/x"
   expect_guard ask "git {push,} --force origin feat/x"
   expect_guard ask "r{m,} -rf ~"
+  # 4.10 Luật: nhánh đầu rỗng hay ngoặc lồng, lệnh con hay biến có nội dung, dòng chỉ có \ trong chữ lệnh.
+  expect_guard ask "git {,push} --force origin feat/x"
+  expect_guard ask "git {{push,},} --force origin feat/x"
+  expect_guard ask "git {{,push},} --force origin feat/x"
+  expect_guard ask "rm -rf {,~}"
+  expect_guard ask "git pu\`true\`sh --force origin feat/x"
+  expect_guard ask "git pu\$(echo \$(true))sh --force origin feat/x"
+  expect_guard ask "git pu\${X:-\${Y}}sh --force origin feat/x"
+  expect_guard ask "git pu\$@sh --force origin feat/x"
+  expect_guard ask "git pu\$9sh --force origin feat/x"
+  expect_guard ask "git pu\$!sh --force origin feat/x"
+  expect_guard ask "git pu\$X''sh --force origin feat/x"
+  expect_guard ask "git pu\\${nl}\\${nl}sh --force origin feat/x"
+  # Reviewer PR #64: dz2 chỉ bỏ biến dính sau chữ (`pu$X''sh`), không bỏ biến đầu đường dẫn (main không hỏi).
+  expect_guard allow "rm -rf \"\$dir\"/*"
+  expect_guard allow "rm -rf \$OUT/*"
+  expect_guard allow "rm -rf \"\$TMP_DIR\"/*"
+  expect_guard allow "rm -rf \"\$WORKDIR/\$name\""
+  expect_guard ask "git pu\$X\$(true)sh --force origin feat/x"
+  expect_guard ask "git pu\$X\`true\`sh --force origin feat/x"
   expect_guard ask "{cd,} '$on_main' && git push"
   expect_guard ask "bash -c 'cd '\\''$on_main'\\'' && git \"\$@\"' _ push"
   # 4.10, reviewer PR #60 (bash thật): cổng push với cd hay -C bị xé bằng \ nối dòng, mở rộng rỗng, ANSI-C; ngoặc nhọn ở
@@ -852,6 +872,35 @@ printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_inpu
   printf '\\na,b,c,d,%s' $(seq 19000)
   printf '\\nEOF\\ngit push --force origin x","description":"test"}}\n'
 } > "$tmp/long-csv.json"
+# Reviewer PR #64: dòng mở ngoặc nhọn của dz2 phình theo tích (`{a,…×3000}{b,…×3000}` thành 9 triệu từ), và tìm biên từ
+# bằng substr từng ký tự là bậc hai trên awk BWK (dòng JSON 60 KB có `{…,…}`, 2000 `{a,b}` liền nhau).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo {%s}{%s}; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'a,%.0s' $(seq 3000))a" "$(printf 'b,%.0s' $(seq 3000))b" > "$tmp/long-braceprod.json"
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo %s; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf '{a,b}%.0s' $(seq 2000))" > "$tmp/long-bracewords.json"
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"curl -d '"'"'{\\"m\\":{\\"w\\":1,\\"h\\":2},\\"i\\":\\"%s\\"}'"'"' https://example.com; git push --force origin x","description":"test"}}\n' \
+  "$work" "$(printf 'QUJD%.0s' $(seq 15000))" > "$tmp/long-bracejson.json"
+# Reviewer PR #64 lần 2: trần từng dòng không đủ, 950 dòng ngắn mỗi dòng mở ra ~9 KB làm $cmd thành 7,5 MB, bash 3.2 quét
+# lại ba lần quá 10 giây (main 1,8 giây). Đuôi force-push, và đuôi cd vào repo ở main rồi push.
+bl="echo $(printf 'p%.0s' $(seq 30)){$(printf 'a,%.0s' $(seq 31))a}$(printf '{b,b,b,b,b,b,b,b}%.0s' $(seq 8))"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf "$bl"'\\n%.0s' $(seq 950)
+  printf 'git push --force origin x","description":"test"}}\n'
+} > "$tmp/long-bracelines.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf "$bl"'\\n%.0s' $(seq 843)
+  printf 'cd \\"%s\\" \\u0026\\u0026 git push","description":"test"}}\n' "$on_main"
+} > "$tmp/long-bracelinesm.json"
+# Reviewer PR #64 lần 3: match(h, /[^[:space:]]*$/) bậc hai trên awk BWK và mawk (không neo được regex kết bằng $). 17 dòng
+# `echo A×4059 {,}×8` (mỗi dòng 4096 ký tự) rồi `rm -rf ~`: 69 KB mà quá 10 giây (main 0,3 giây với mawk).
+bq="echo $(printf 'A%.0s' $(seq 4059))$(printf ' {,}%.0s' $(seq 8))"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf "$bq"'\\n%.0s' $(seq 17)
+  printf 'rm -rf ~","description":"test"}}\n'
+} > "$tmp/long-bracepre.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -911,7 +960,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
