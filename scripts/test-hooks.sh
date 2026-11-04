@@ -880,6 +880,19 @@ printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_inpu
   "$work" "$(printf '{a,b}%.0s' $(seq 2000))" > "$tmp/long-bracewords.json"
 printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"curl -d '"'"'{\\"m\\":{\\"w\\":1,\\"h\\":2},\\"i\\":\\"%s\\"}'"'"' https://example.com; git push --force origin x","description":"test"}}\n' \
   "$work" "$(printf 'QUJD%.0s' $(seq 15000))" > "$tmp/long-bracejson.json"
+# Reviewer PR #64 lần 2: trần từng dòng không đủ, 950 dòng ngắn mỗi dòng mở ra ~9 KB làm $cmd thành 7,5 MB, bash 3.2 quét
+# lại ba lần quá 10 giây (main 1,8 giây). Đuôi force-push, và đuôi cd vào repo ở main rồi push.
+bl="echo $(printf 'p%.0s' $(seq 30)){$(printf 'a,%.0s' $(seq 31))a}$(printf '{b,b,b,b,b,b,b,b}%.0s' $(seq 8))"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf "$bl"'\\n%.0s' $(seq 950)
+  printf 'git push --force origin x","description":"test"}}\n'
+} > "$tmp/long-bracelines.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  printf "$bl"'\\n%.0s' $(seq 843)
+  printf 'cd \\"%s\\" \\u0026\\u0026 git push","description":"test"}}\n' "$on_main"
+} > "$tmp/long-bracelinesm.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -939,7 +952,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
