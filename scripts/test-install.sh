@@ -1301,6 +1301,9 @@ rm "$pt/$pin_gone"
 cp "$pt/$pin_old" "$tmp/pin-old"
 cp "$pt/$pin_mod" "$tmp/pin-mod"
 cp "$pt/$pin_sh" "$tmp/pin-sh"
+# Index ở 100644 (commit từ Windows, core.fileMode=false): không ghim thì installer đặt lại 100755, nên ca này mới
+# kiểm được "không đụng index" (reviewer PR #66).
+git -C "$pt" update-index --chmod=-x -- "$pin_sh"
 idx_sh="$(git -C "$pt" ls-files -s -- "$pin_sh")"
 { printf '%s\n' kit-pinned: "$pin_old" "$pin_mod" "$pin_gone" "$pin_sh" "$pin_x" '# ghi chú' ''; } >> "$pt/$man"
 "$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
@@ -1323,6 +1326,7 @@ assert "AV: file ghim chưa có trong repo phải cảnh báo ⚠ → $(cat "$tm
 assert "AV: file ghim không được báo là kit đã bỏ → $(cat "$tmp/err")" no_dropped_warning
 assert "AV: script ghim không được bị đụng tới index → $(git -C "$pt" ls-files -s -- "$pin_sh")" \
   [ "$(git -C "$pt" ls-files -s -- "$pin_sh")" = "$idx_sh" ]
+if grep -q 'đặt quyền chạy' "$tmp/out"; then bad "AV: không script nào ngoài script ghim cần đặt quyền chạy → $(cat "$tmp/out")"; else ok; fi
 pins="$(printf '%s\n' "$pin_old" "$pin_mod" "$pin_gone" "$pin_sh" "$pin_x")"
 assert "AV: mục kit-pinned phải giữ đúng các dòng ghim → $(section "$pt/$man" kit-pinned)" [ "$(section "$pt/$man" kit-pinned)" = "$pins" ]
 assert "AV: kit-pinned phải là mục cuối → $(grep '^kit-' "$pt/$man")" \
@@ -1341,6 +1345,25 @@ assert "AV: manifest CRLF: ghi lại phải đúng bản LF" cmp -s "$tmp/man-AV
 awk -v f="$pin_mod" '$0 != f' "$tmp/man-AV" > "$pt/$man"
 "$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
 assert "AV: bỏ ghim file dự án đã sửa thì phải dừng như trước" [ $? -ne 0 ]
+# Header gõ có dấu cách cuối (manifest cũ người dùng tự thêm mục): vẫn đọc là kit-pinned:, không mất ghim.
+sed 's/^kit-pinned:$/kit-pinned: /' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: header 'kit-pinned: ' có dấu cách cuối vẫn phải giữ ghim → $(cat "$tmp/err")" [ $? -eq 0 ]
+assert "AV: header có dấu cách cuối: file ghim phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: header có dấu cách cuối: manifest ghi lại phải về đúng dạng" cmp -s "$tmp/man-AV" "$pt/$man"
+# File kit đã bỏ mà dự án ghim: vẫn ở kit-dropped (bỏ ghim sau đó còn được báo), không báo "kit đã bỏ".
+pin_drop=.claude/agents/pin-drop.md
+echo "file kit cũ dự án vẫn dùng" > "$pt/$pin_drop"
+awk -v f="$pin_drop" '{ print } $0 == "kit-dropped:" || $0 == "kit-pinned:" { print f }' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: ghim file kit đã bỏ: phải exit 0" [ $? -eq 0 ]
+assert "AV: file kit đã bỏ mà dự án ghim thì không được báo kit đã bỏ → $(cat "$tmp/err")" no_dropped_warning
+assert "AV: file kit đã bỏ mà dự án ghim vẫn phải nằm trong kit-dropped → $(section "$pt/$man" kit-dropped)" \
+  [ "$(section "$pt/$man" kit-dropped)" = "$pin_drop" ]
+awk -v f="$pin_drop" '!(on && $0 == f) { print } $0 == "kit-pinned:" { on = 1 }' "$pt/$man" > "$tmp/man-unpin"
+cp "$tmp/man-unpin" "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: bỏ ghim file kit đã bỏ thì phải lại báo kit đã bỏ → $(cat "$tmp/err")" grep -qxF "  $pin_drop" "$tmp/err"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
