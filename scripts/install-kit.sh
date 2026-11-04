@@ -87,17 +87,17 @@ if [ -f "$manifest" ]; then
   in_pin=0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%"$cr"}"
-    hdr="${line%"${line##*[! 	]}"}" # bỏ dấu cách, tab cuối (header gõ tay)
+    hdr="${line%"${line##*[! 	]}"}" # bỏ dấu cách, tab cuối (gõ tay): cả tên mục lẫn dòng ghim
     case "$hdr" in
       kit-pinned:) in_pin=1; continue ;;
       kit-commit:* | kit-files: | kit-dropped:) in_pin=0; continue ;;
     esac
-    case "$line" in
+    case "$hdr" in
       '' | '#'*) ;;
       *)
         [ "$in_pin" = 1 ] || continue
-        case "$nl$pinned" in *"$nl$line$nl"*) continue ;; esac
-        pinned="$pinned$line$nl"
+        case "$nl$pinned" in *"$nl$hdr$nl"*) continue ;; esac
+        pinned="$pinned$hdr$nl"
         ;;
     esac
   done < "$manifest"
