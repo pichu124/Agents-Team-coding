@@ -9,6 +9,8 @@
 #   (tới dòng <!-- agent-team:kit-end ... -->), giữ quy ước riêng dự án viết dưới dòng đó.
 # - Ghi .claude/agent-team-kit.txt: commit kit đã cài và danh sách file của kit. Cài lại thì báo ⚠ file mà kit
 #   đã bỏ nhưng repo vẫn còn (không tự xoá), báo tiếp ở mọi lần cài cho tới khi người dùng xoá.
+# - Mục kit-pinned: của .claude/agent-team-kit.txt (người dùng sửa tay, mỗi dòng một đường file kit): file kit có tên ở
+#   đó và đang có trong repo thì giữ nguyên, không cập nhật, không coi là trùng (kể cả với --force), không đụng index.
 # - Thêm "*.sh text eol=lf" vào .gitattributes; thêm ngoại lệ .gitignore nếu kit bị ignore; ignore artifacts/.
 # - File của kit mà repo đã có và khác bản kit hiện tại: trùng một bản đã commit trong lịch sử kit (dự án chưa
 #   sửa; chỉ khác dòng kết thúc cũng tính là trùng) thì cập nhật luôn. Không trùng bản nào (dự án đã sửa, hoặc
@@ -75,9 +77,42 @@ kit_had() {
   return 1
 }
 
+# Mục kit-pinned: của manifest (người dùng sửa tay): đọc trước khi so file, để file ghim không bị cập nhật hay tính là
+# trùng. Chỉ đọc đường dẫn, không thực thi gì trong file. Dòng trống, dòng # và dòng lặp bỏ qua; CRLF đọc được.
+manifest="$target/.claude/agent-team-kit.txt"
+nl=$'\n'
+cr=$'\r'
+pinned=""
+if [ -f "$manifest" ]; then
+  in_pin=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%"$cr"}"
+    hdr="${line%"${line##*[! 	]}"}" # bỏ dấu cách, tab cuối (gõ tay): cả tên mục lẫn dòng ghim
+    case "$hdr" in
+      kit-pinned:) in_pin=1; continue ;;
+      kit-commit:* | kit-files: | kit-dropped:) in_pin=0; continue ;;
+    esac
+    case "$hdr" in
+      '' | '#'*) ;;
+      *)
+        [ "$in_pin" = 1 ] || continue
+        case "$nl$pinned" in *"$nl$hdr$nl"*) continue ;; esac
+        pinned="$pinned$hdr$nl"
+        ;;
+    esac
+  done < "$manifest"
+fi
+listed() { case "$nl$2$nl" in *"$nl$1$nl"*) return 0 ;; esac; return 1; } # listed <dòng> <danh sách mỗi dòng một mục>
+kit_list="$(printf '%s\n' "${files[@]}")"
+pin_kept=""   # file ghim đang có trong repo: không chép, không so, không đụng index (tên riêng: kept là biến báo CLAUDE.md)
+for f in "${files[@]}"; do
+  listed "$f" "$pinned" && [ -e "$target/$f" ] && pin_kept="$pin_kept$f$nl"
+done
+
 conflicts=0
 updated=()
 for f in "${files[@]}"; do
+  listed "$f" "$pin_kept" && continue
   if [ -e "$target/$f" ] && ! cmp -s "$kit/$f" "$target/$f"; then
     if kit_had "$f"; then
       updated+=("$f")
@@ -157,12 +192,31 @@ PYEOF
   fi
 fi
 
+ncopied=0
 for f in "${files[@]}"; do
+  listed "$f" "$pin_kept" && continue
+  listed "$f" "$pinned" && echo "⚠ $f có trong kit-pinned nhưng chưa có trong repo: đã chép bản của kit" >&2
   mkdir -p "$target/$(dirname "$f")"
   cp "$kit/$f" "$target/$f"
   case "$f" in *.sh) chmod +x "$target/$f" ;; esac
+  ncopied=$((ncopied + 1))
 done
-echo "✔ đã chép ${#files[@]} file của kit"
+echo "✔ đã chép $ncopied file của kit"
+if [ -n "$pin_kept" ]; then
+  echo "• giữ nguyên $(printf '%s' "$pin_kept" | grep -c .) file ghim trong kit-pinned: của .claude/agent-team-kit.txt"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if cmp -s "$kit/$f" "$target/$f"; then echo "  $f"; else echo "  $f (khác bản kit hiện tại)"; fi
+  done <<EOF
+$pin_kept
+EOF
+fi
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  listed "$f" "$kit_list" || echo "⚠ kit-pinned có dòng không phải file của kit (bỏ qua, vẫn giữ trong mục): $f" >&2
+done <<EOF
+$pinned
+EOF
 if [ "${#updated[@]}" -gt 0 ]; then
   echo "✔ cập nhật ${#updated[@]} file kit mà dự án chưa sửa"
   printf '  %s\n' "${updated[@]}"
@@ -266,27 +320,28 @@ fi
 
 # .claude/agent-team-kit.txt: commit kit đã cài và file của kit, để biết repo nào đang dùng kit cũ.
 # Không ghi ngày giờ: chạy lại cùng commit kit cho file y hệt.
-manifest="$target/.claude/agent-team-kit.txt"
 commit=unknown
 if [ -n "$kit_repo" ] && sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null)"; then
   commit="$sha"
   [ -n "$(git -C "$kit" status --porcelain --untracked-files=no 2>/dev/null)" ] && commit="$sha-dirty"
 fi
-nl=$'\n'
-cr=$'\r'
-kit_list="$(printf '%s\n' "${files[@]}")"
 # File kit mà lần cài trước liệt kê (kit-files, kit-dropped), kit mới không còn nhưng repo vẫn có: báo, không
 # xoá, ghi vào kit-dropped để lần sau vẫn báo. Chỉ đọc đường dẫn, không thực thi gì trong file.
 prev=""
 dropped=""
+dropwarn=""
 ndropped=0
 if [ -f "$manifest" ]; then
   in_list=0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%"$cr"}"
+    hdr="${line%"${line##*[! 	]}"}"
+    case "$hdr" in
+      kit-files: | kit-dropped:) in_list=1; continue ;;
+      kit-pinned:) in_list=0; continue ;;
+    esac
     case "$line" in
       'kit-commit: '*) prev="${line#kit-commit: }" ;;
-      kit-files: | kit-dropped:) in_list=1 ;;
       '' | '#'*) ;;
       *)
         [ "$in_list" = 1 ] || continue
@@ -296,19 +351,24 @@ if [ -f "$manifest" ]; then
         # Còn trong kit mới, hoặc đã có trong danh sách (file sửa tay có thể lặp dòng).
         case "$nl$kit_list$nl$dropped" in *"$nl$line$nl"*) continue ;; esac
         dropped="$dropped$line$nl"
+        # Người dùng ghim: vẫn ghi trong kit-dropped (bỏ ghim thì lần sau còn báo), không báo xoá.
+        case "$nl$pinned" in *"$nl$line$nl"*) continue ;; esac
+        dropwarn="$dropwarn$line$nl"
         ndropped=$((ndropped + 1))
         ;;
     esac
   done < "$manifest"
 fi
 {
-  echo "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay."
+  echo "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này; chỉ sửa tay mục kit-pinned: (mỗi dòng một file kit giữ nguyên khi cài lại)."
   echo "# Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates"
   echo "kit-commit: $commit"
   echo "kit-files:"
   printf '%s\n' "$kit_list"
   echo "kit-dropped:"
   printf '%s' "$dropped"
+  echo "kit-pinned:"
+  printf '%s' "$pinned"
 } > "$manifest"
 short() { case "$1" in *-dirty) printf '%s-dirty' "${1:0:7}" ;; *) printf '%s' "${1:0:7}" ;; esac; }
 # Bản đã cài mới hơn kit đang dùng (kit-commit không phải tổ tiên của HEAD của kit): file trùng bản mới hơn sẽ được
@@ -327,7 +387,7 @@ was=""
 echo "✔ .claude/agent-team-kit.txt: kit $(short "$commit")$was"
 if [ "$ndropped" -gt 0 ]; then
   echo "⚠ kit đã bỏ $ndropped file mà repo này vẫn còn. Dự án không dùng thì xoá (git rm):" >&2
-  printf '%s' "$dropped" | sed 's/^/  /' >&2
+  printf '%s' "$dropwarn" | sed 's/^/  /' >&2
 fi
 
 attrs="$target/.gitattributes"
@@ -381,6 +441,7 @@ fi
 
 sh_files=()
 for f in "${files[@]}"; do
+  listed "$f" "$pin_kept" && continue
   case "$f" in *.sh) sh_files+=("$f") ;; esac
 done
 # Script đã theo dõi: chỉ đặt bit chạy cho blob đang có trong index (--cacheinfo, không đọc lại file; update-index
