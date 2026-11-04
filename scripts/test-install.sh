@@ -1315,6 +1315,8 @@ for f in "$pin_old" "$pin_mod" "$pin_sh"; do
   if grep -q "^  $f" "$tmp/out"; then ok; else bad "AV: phải liệt kê $f dưới dòng giữ nguyên → $(cat "$tmp/out")"; fi
 done
 if grep -q "^  $pin_old.*khác bản kit" "$tmp/out"; then ok; else bad "AV: file ghim khác bản kit hiện tại phải ghi rõ → $(cat "$tmp/out")"; fi
+if grep -q '^ *(khác bản kit' "$tmp/out"; then bad "AV: không được in dòng ghim không có tên file → $(cat "$tmp/out")"; else ok; fi
+if grep -q 'cmp:' "$tmp/err"; then bad "AV: stderr không được có lỗi cmp → $(cat "$tmp/err")"; else ok; fi
 if grep -qF "$upd" "$tmp/out" && ! grep -q "^  $pin_old\$" "$tmp/out"; then ok; else bad "AV: dòng cập nhật chỉ được có file không ghim → $(cat "$tmp/out")"; fi
 assert "AV: dòng ghim không phải file của kit phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q "^⚠.*kit-pinned.*$pin_x" "$tmp/err"
 assert "AV: file ghim chưa có trong repo phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q "^⚠.*$pin_gone" "$tmp/err"
