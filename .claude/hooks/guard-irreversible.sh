@@ -628,6 +628,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
   SUB_MAX=64
+  DIR_MAX=512 # số đường (chưa bỏ trùng thư mục thật) tối đa được cd để đọc lại: mỗi cd là một lần stat trên Git Bash
   # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
   # CDCUT cắt phần trước cd của mỗi kết quả grep, tuyến tính: last_arg chạy regex ($re)$ bậc hai theo độ dài từ không có
   # dấu cách, nên phép gán dài trước cd (x=<190 KB> cd M) từng quá timeout (reviewer 4.10). Kết quả bắt đầu bằng N khi cd
@@ -743,28 +744,52 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   done
   dirs="$(printf '%s\n' "${dl[@]}" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
-  nsub=0
+  # Đọc nhánh theo thư mục THẬT, không theo cách viết: 299 `cd ..` là 299 đường khác chữ mà chỉ vài thư mục thật, mỗi đường
+  # có `..` từng tốn hai subshell chạy git (tới SUB_MAX: ~10 giây trên Git Bash, ca long-manydotdot đỏ chập chờn). Một
+  # subshell cd lần lượt tới mọi đường (builtin, không fork) theo cả hai cách: -P (vật lý, như git -C) và -L (logic, như cd
+  # của shell; chỉ khác -P khi đường có .. đi lùi ra từ một symlink), in pwd -P, bỏ trùng; rồi mới chạy git, mỗi thư mục
+  # thật một lần (git chạy ở đó thấy đúng repo như sau cd). Thư mục `gone` (cd tới đó lỗi) không tính, không cd.
+  nd=0
   for d in $dirs; do
-    [ -n "$reason" ] && break # đã hỏi chắc: khỏi tốn subshell đọc nhánh
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
+    gone "$d" || nd=$((nd + 1))
+  done
+  if [ -z "$reason" ] && [ "$nd" -gt "$DIR_MAX" ]; then
+    reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $DIR_MAX đường"
+  fi
+  phys=""
+  if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then
+    # Mỗi đường tính từ chỗ đứng của hook: cd về đó sau mỗi lần; không về được thì in dòng không bắt đầu bằng / và thôi.
+    phys="$(here="$PWD"
+      for d in $dirs; do
+        [ -n "$d" ] || continue
+        gone "$d" && continue
+        for o in -P -L; do
+          case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
+          CDPATH='' cd "$o" -- "$d" 2>/dev/null && pwd -P
+          CDPATH='' cd -- "$here" 2>/dev/null || { echo '?'; exit 0; }
+        done
+      done | awk '!s[$0]++')"
+  fi
+  nsub=0
+  for p in $phys; do
+    [ -n "$reason" ] && break
+    case "$p" in
+      /*) ;;
+      *) reason="push sau cd mà guard không đọc lại được thư mục"; break ;;
+    esac
+    nsub=$((nsub + 1))
+    if [ "$nsub" -gt "$SUB_MAX" ]; then
+      reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
+      break
+    fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
-    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua. Đọc theo cả hai
-    # cách đi đường: -P (vật lý, như git -C) và -L (logic, như cd của shell). Hai cách chỉ khác nhau
-    # khi đường có .. đi lùi ra từ một symlink; cách nào ở nhánh chính cũng hỏi.
-    gone "$d" && continue # cd tới đó lỗi: khỏi tốn một subshell (1500 `cd "a b"` từng mất 17 giây, 4.3)
-    for o in -P -L; do
-      case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
-      nsub=$((nsub + 1))
-      if [ "$nsub" -gt "$SUB_MAX" ]; then
-        reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
-        break 2
-      fi
-      branch="$(CDPATH='' cd "$o" -- "$d" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-      if text_grep "$branch" -Eqx -- "$MAIN"; then
-        reason="push khi đang ở nhánh $branch"
-        break 2
-      fi
-    done
+    # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
+    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    if text_grep "$branch" -Eqx -- "$MAIN"; then
+      reason="push khi đang ở nhánh $branch"
+      break
+    fi
   done
   IFS=$' \t\n'
   set +f
