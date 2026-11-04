@@ -366,24 +366,28 @@ case "$raw" in
     # `pu$X''sh`), ngoặc nhọn lồng (nhánh đầu, 4 lượt) và một dòng mở ngoặc nhọn như bash, mỗi nhánh một từ có kèm tiền tố, hậu tố
     # (`git {,push}` thành `git push`, `rm -rf {,~}` thành `rm -rf ~`, `{/,}src` thành `/src src`; 8 lượt, trong cùng trước).
     # dz giữ nguyên (backtick có nội dung có thể ghép nhầm với backtick trong nháy), dz2 chỉ thêm dòng.
+    # Biến chỉ bỏ khi dính sau chữ (`pu$X''sh`); `rm -rf "$dir"/*`, `$OUT/*` giữ nguyên như main. Dòng mở ngoặc nhọn bỏ qua dòng
+    # quá 4 KB và dừng khi quá 8 KB (`{a,…×3000}{b,…×3000}` là 9 triệu từ), biên từ tìm bằng match (substr từng ký tự là
+    # bậc hai trên awk BWK; reviewer PR #64).
     xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
     bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
+    vz='s/\([[:alnum:]_]\)[$][@*0-9!]/\1/g;s/\([[:alnum:]_]\)[$][A-Za-z_][A-Za-z0-9_]*/\1/g'
     dz2="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         $0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
         j || /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/ { print; j = 0 }' |
-      LC_ALL=C sed -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" \
-        -e 's/[$][@*0-9!]//g' -e 's/[$][A-Za-z_][A-Za-z0-9_]*//g')"
+      LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$vz")"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C sed -e "$bz" -e "$bz" -e "$bz" -e "$bz"
-      printf '%s\n' "$dz2" | LC_ALL=C awk '/[{][^{}]*,/ {
-        for (it = 0; it < 8 && match($0, /[{][^{}[:space:]]*,[^{}[:space:]]*[}]/); it++) {
-          st = RSTART; ln = RLENGTH; a = st; b = st + ln
-          while (a > 1 && substr($0, a - 1, 1) !~ /[[:space:]]/) a--
-          while (b <= length($0) && substr($0, b, 1) !~ /[[:space:]]/) b++
-          pre = substr($0, a, st - a); suf = substr($0, st + ln, b - st - ln)
-          n = split(substr($0, st + 1, ln - 2), br, ","); out = ""
-          for (k = 1; k <= n; k++) out = out (k > 1 ? " " : "") pre br[k] suf
-          $0 = substr($0, 1, a - 1) out substr($0, b) }
-        print }')"
+      printf '%s\n' "$dz2" | LC_ALL=C awk 'length($0) <= 4096 && /[{][^{}]*,/ {
+        l = $0
+        for (it = 0; it < 8 && match(l, /[{][^{}[:space:]]*,[^{}[:space:]]*[}]/); it++) {
+          st = RSTART; ln = RLENGTH; h = substr(l, 1, st - 1); t = substr(l, st + ln)
+          match(h, /[^[:space:]]*$/); a = RSTART; pre = substr(h, a)
+          match(t, /^[^[:space:]]*/); suf = substr(t, 1, RLENGTH); t = substr(t, RLENGTH + 1)
+          n = split(substr(l, st + 1, ln - 2), br, ","); out = ""
+          for (k = 1; k <= n && length(out) <= 8192; k++) out = out (k > 1 ? " " : "") pre br[k] suf
+          l = substr(h, 1, a - 1) out t
+          if (length(l) > 8192) break }
+        print l }')"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz2"
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
