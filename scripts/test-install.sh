@@ -679,8 +679,8 @@ assert "S: CLAUDE.md còn quy ước đội thì chạy lại vẫn phải cản
 # T. Cài mới ghi .claude/agent-team-kit.txt: commit kit đã cài và đúng danh sách file kit đã chép.
 man=.claude/agent-team-kit.txt
 kit_sha="$(git -C "$kit" rev-parse HEAD 2>/dev/null || echo unknown)"
-section() { # section <manifest> <kit-files|kit-dropped>: in các dòng của mục đó
-  awk -v s="$2:" '/^kit-(commit|files|dropped):/ { on = ($0 == s); next } on' "$1"
+section() { # section <manifest> <kit-files|kit-dropped|kit-pinned>: in các dòng của mục đó
+  awk -v s="$2:" '/^kit-(commit|files|dropped|pinned):/ { on = ($0 == s); next } on' "$1"
 }
 no_dropped_warning() { ! grep -q 'kit đã bỏ' "$tmp/out" "$tmp/err"; }
 tm="$tmp/manifest"
@@ -689,10 +689,11 @@ run_install "$tm"
 assert "T: install phải exit 0" [ $? -eq 0 ]
 assert "T: phải tạo $man" [ -f "$tm/$man" ]
 assert "T: hai dòng đầu phải là comment, dòng 2 là lệnh xem kit có gì mới → $(head -n 2 "$tm/$man")" \
-  [ "$(head -n 2 "$tm/$man")" = "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này, đừng sửa tay.
+  [ "$(head -n 2 "$tm/$man")" = "# Bản Agents-Team-coding cài vào repo này. install-kit.sh ghi file này; chỉ sửa tay mục kit-pinned: (mỗi dòng một file kit giữ nguyên khi cài lại).
 # Kit có gì mới: git -C <thư mục kit> log --oneline <kit-commit>..HEAD -- .claude scripts templates" ]
-assert "T: phải có các mục kit-commit, kit-files, kit-dropped theo thứ tự → $(grep '^kit-' "$tm/$man")" \
-  [ "$(grep -o '^kit-[a-z]*:' "$tm/$man" | tr '\n' ' ')" = "kit-commit: kit-files: kit-dropped: " ]
+assert "T: phải có các mục kit-commit, kit-files, kit-dropped, kit-pinned theo thứ tự → $(grep '^kit-' "$tm/$man")" \
+  [ "$(grep -o '^kit-[a-z]*:' "$tm/$man" | tr '\n' ' ')" = "kit-commit: kit-files: kit-dropped: kit-pinned: " ]
+assert "T: lần cài đầu kit-pinned phải rỗng → $(section "$tm/$man" kit-pinned)" [ -z "$(section "$tm/$man" kit-pinned)" ]
 assert "T: kit-commit phải là HEAD của kit $kit_sha (kit đang sửa thì kèm -dirty) → $(grep '^kit-commit' "$tm/$man")" \
   grep -qE "^kit-commit: $kit_sha(-dirty)?\$" "$tm/$man"
 if grep -q $'\r' "$tm/$man"; then bad "T: $man phải là LF"; else ok; fi
@@ -1308,6 +1309,107 @@ git -C "$au_k" reset -q --hard FETCH_HEAD
 rc=$?
 assert "AU: cài lại từ kit nông phải exit 0 → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
 assert "AU: kit nông mới hơn thì không được báo kit cũ hơn → $(cat "$tmp/err")" sh -c '! grep -q "cũ hơn" "$1"' _ "$tmp/err"
+
+# AV. Mục kit-pinned: của manifest (4.9): file kit ghim giữ nguyên khi cài lại, kể cả khi trùng một bản kit cũ (lẽ ra
+#     được cập nhật) hay dự án đã sửa (lẽ ra dừng vì trùng). Mục được giữ qua các lần cài, đọc được manifest CRLF.
+#     Dòng ghim không phải file của kit thì cảnh báo, vẫn giữ; file ghim chưa có trong repo thì chép bản kit, cảnh
+#     báo; file ghim không bị báo "kit đã bỏ"; script .sh ghim không bị đụng tới index.
+pk="$tmp/pin kit"
+new_repo "$pk"
+kit_copy "$pk"
+git -C "$pk" -c core.autocrlf=false add -A
+git -C "$pk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit1
+pt="$tmp/pin target"
+new_repo "$pt"
+"$pk/scripts/install-kit.sh" "$pt" >/dev/null 2>&1
+assert "AV: cài từ kit1 phải exit 0" [ $? -eq 0 ]
+pin_old=.claude/agents/architect.md   # trùng bản kit1, kit2 đổi: không ghim thì được cập nhật
+pin_mod=.claude/agents/verifier.md    # dự án đã sửa: không ghim thì dừng vì trùng
+pin_gone=.claude/agents/implementer.md # ghim nhưng xoá khỏi repo: chép lại bản kit
+pin_sh=scripts/check.sh                # script ghim, dự án đã sửa
+pin_x=docs/khong-phai-kit.md           # không phải file của kit
+upd=.claude/agents/reviewer.md         # không ghim, kit2 đổi: phải được cập nhật như cũ
+for f in "$pin_old" "$upd"; do echo "dòng kit2" >> "$pk/$f"; done
+git -C "$pk" -c core.autocrlf=false add -A
+git -C "$pk" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m kit2
+echo "sửa riêng của dự án" >> "$pt/$pin_mod"
+echo "# sửa riêng của dự án" >> "$pt/$pin_sh"
+rm "$pt/$pin_gone"
+cp "$pt/$pin_old" "$tmp/pin-old"
+cp "$pt/$pin_mod" "$tmp/pin-mod"
+cp "$pt/$pin_sh" "$tmp/pin-sh"
+# Index ở 100644 (commit từ Windows, core.fileMode=false): không ghim thì installer đặt lại 100755, nên ca này mới
+# kiểm được "không đụng index" (reviewer PR #66).
+git -C "$pt" update-index --chmod=-x -- "$pin_sh"
+idx_sh="$(git -C "$pt" ls-files -s -- "$pin_sh")"
+{ printf '%s\n' kit-pinned: "$pin_old" "$pin_mod" "$pin_gone" "$pin_sh" "$pin_x" '# ghi chú' ''; } >> "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+rc=$?
+assert "AV: file ghim (dự án đã sửa) không được làm installer dừng → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AV: file ghim trùng bản kit cũ phải giữ nguyên" cmp -s "$tmp/pin-old" "$pt/$pin_old"
+assert "AV: file ghim dự án đã sửa phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: script ghim phải giữ nguyên" cmp -s "$tmp/pin-sh" "$pt/$pin_sh"
+assert "AV: file không ghim kit2 đổi vẫn phải được cập nhật" cmp -s "$pk/$upd" "$pt/$upd"
+assert "AV: file ghim chưa có trong repo phải được chép bản kit" cmp -s "$pk/$pin_gone" "$pt/$pin_gone"
+assert "AV: phải báo giữ nguyên file ghim → $(cat "$tmp/out")" grep -q '^• giữ nguyên 3 file ghim trong kit-pinned' "$tmp/out"
+for f in "$pin_old" "$pin_mod" "$pin_sh"; do
+  if grep -q "^  $f" "$tmp/out"; then ok; else bad "AV: phải liệt kê $f dưới dòng giữ nguyên → $(cat "$tmp/out")"; fi
+done
+if grep -q "^  $pin_old.*khác bản kit" "$tmp/out"; then ok; else bad "AV: file ghim khác bản kit hiện tại phải ghi rõ → $(cat "$tmp/out")"; fi
+if grep -q '^ *(khác bản kit' "$tmp/out"; then bad "AV: không được in dòng ghim không có tên file → $(cat "$tmp/out")"; else ok; fi
+if grep -q 'cmp:' "$tmp/err"; then bad "AV: stderr không được có lỗi cmp → $(cat "$tmp/err")"; else ok; fi
+if grep -qF "$upd" "$tmp/out" && ! grep -q "^  $pin_old\$" "$tmp/out"; then ok; else bad "AV: dòng cập nhật chỉ được có file không ghim → $(cat "$tmp/out")"; fi
+assert "AV: dòng ghim không phải file của kit phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q "^⚠.*kit-pinned.*$pin_x" "$tmp/err"
+assert "AV: file ghim chưa có trong repo phải cảnh báo ⚠ → $(cat "$tmp/err")" grep -q "^⚠.*$pin_gone" "$tmp/err"
+assert "AV: file ghim không được báo là kit đã bỏ → $(cat "$tmp/err")" no_dropped_warning
+assert "AV: script ghim không được bị đụng tới index → $(git -C "$pt" ls-files -s -- "$pin_sh")" \
+  [ "$(git -C "$pt" ls-files -s -- "$pin_sh")" = "$idx_sh" ]
+if grep -q 'đặt quyền chạy' "$tmp/out"; then bad "AV: không script nào ngoài script ghim cần đặt quyền chạy → $(cat "$tmp/out")"; else ok; fi
+pins="$(printf '%s\n' "$pin_old" "$pin_mod" "$pin_gone" "$pin_sh" "$pin_x")"
+assert "AV: mục kit-pinned phải giữ đúng các dòng ghim → $(section "$pt/$man" kit-pinned)" [ "$(section "$pt/$man" kit-pinned)" = "$pins" ]
+assert "AV: kit-pinned phải là mục cuối → $(grep '^kit-' "$pt/$man")" \
+  [ "$(grep -o '^kit-[a-z]*:' "$pt/$man" | tr '\n' ' ')" = "kit-commit: kit-files: kit-dropped: kit-pinned: " ]
+cp "$pt/$man" "$tmp/man-AV"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: chạy lại phải exit 0" [ $? -eq 0 ]
+assert "AV: chạy lại phải cho manifest y hệt" cmp -s "$tmp/man-AV" "$pt/$man"
+assert "AV: chạy lại vẫn phải giữ nguyên file ghim" cmp -s "$tmp/pin-old" "$pt/$pin_old"
+to_crlf < "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: manifest CRLF: phải exit 0" [ $? -eq 0 ]
+assert "AV: manifest CRLF: vẫn phải giữ nguyên file ghim" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: manifest CRLF: ghi lại phải đúng bản LF" cmp -s "$tmp/man-AV" "$pt/$man"
+# Bỏ ghim: file dự án đã sửa lại làm installer dừng như trước.
+awk -v f="$pin_mod" '$0 != f' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: bỏ ghim file dự án đã sửa thì phải dừng như trước" [ $? -ne 0 ]
+# Header gõ có dấu cách cuối (manifest cũ người dùng tự thêm mục): vẫn đọc là kit-pinned:, không mất ghim.
+sed 's/^kit-pinned:$/kit-pinned: /' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+rc=$?
+assert "AV: header 'kit-pinned: ' có dấu cách cuối vẫn phải giữ ghim → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AV: header có dấu cách cuối: file ghim phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: header có dấu cách cuối: manifest ghi lại phải về đúng dạng" cmp -s "$tmp/man-AV" "$pt/$man"
+# Dòng ghim gõ có dấu cách, tab cuối: vẫn là file đó, manifest ghi lại không còn khoảng trắng (reviewer PR #66 vòng 2).
+awk -v f="$pin_mod" '$0 == f { print f "  \t"; next } { print }' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+rc=$?
+assert "AV: dòng ghim có dấu cách cuối vẫn phải ghim → $(cat "$tmp/err")" [ "$rc" -eq 0 ]
+assert "AV: dòng ghim có dấu cách cuối: file ghim phải giữ nguyên" cmp -s "$tmp/pin-mod" "$pt/$pin_mod"
+assert "AV: dòng ghim có dấu cách cuối: manifest ghi lại phải bỏ khoảng trắng" cmp -s "$tmp/man-AV" "$pt/$man"
+# File kit đã bỏ mà dự án ghim: vẫn ở kit-dropped (bỏ ghim sau đó còn được báo), không báo "kit đã bỏ".
+pin_drop=.claude/agents/pin-drop.md
+echo "file kit cũ dự án vẫn dùng" > "$pt/$pin_drop"
+awk -v f="$pin_drop" '{ print } $0 == "kit-dropped:" || $0 == "kit-pinned:" { print f }' "$tmp/man-AV" > "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: ghim file kit đã bỏ: phải exit 0" [ $? -eq 0 ]
+assert "AV: file kit đã bỏ mà dự án ghim thì không được báo kit đã bỏ → $(cat "$tmp/err")" no_dropped_warning
+assert "AV: file kit đã bỏ mà dự án ghim vẫn phải nằm trong kit-dropped → $(section "$pt/$man" kit-dropped)" \
+  [ "$(section "$pt/$man" kit-dropped)" = "$pin_drop" ]
+awk -v f="$pin_drop" '!(on && $0 == f) { print } $0 == "kit-pinned:" { on = 1 }' "$pt/$man" > "$tmp/man-unpin"
+cp "$tmp/man-unpin" "$pt/$man"
+"$pk/scripts/install-kit.sh" "$pt" > "$tmp/out" 2> "$tmp/err"
+assert "AV: bỏ ghim file kit đã bỏ thì phải lại báo kit đã bỏ → $(cat "$tmp/err")" grep -qxF "  $pin_drop" "$tmp/err"
 
 if [ "$fails" -gt 0 ]; then
   printf '✘ install: %s/%s test đỏ\n' "$fails" "$((fails + pass))" >&2
