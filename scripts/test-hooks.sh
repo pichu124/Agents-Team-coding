@@ -704,7 +704,7 @@ EOF
   nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
   depth="$(cd "$work" && pwd -P | awk -F/ '{ print NF }')"
   assert "guard chỉ được đọc nhánh mỗi thư mục thật một lần [$mode]: 299 cd .. rồi cd nhánh chính → $nrev lần (sâu $depth)" \
-    [ "$nrev" -le $((depth + 2)) ]
+    [ "$nrev" -ge 1 ] && [ "$nrev" -le $((depth + 2)) ]
   case "$out" in
     *'nhánh main'*) ok ;;
     *) bad "guard phải hỏi vì nhánh main [$mode], không vì trần số thư mục: 299 cd .. rồi cd nhánh chính → $out" ;;
@@ -896,6 +896,16 @@ many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.jso
   printf 'git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-manygitc.json"
 many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
+# Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat; 10 cd dài `a/..` (1000 cặp)
+# rồi 289 `cd ..` nối dồn thành ~6 triệu thành phần (quá timeout trên bash 3.2, bản cũ dừng ở SUB_MAX). Trần PART_MAX.
+mkdir -p "$tmp/dz/a"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
+  ap="$(printf 'a/..%.0s' $(seq 1000))"
+  for _ in $(seq 10); do printf 'cd %s; ' "$ap"; done
+  for _ in $(seq 289); do printf '%s' 'cd ..; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-dotparts.json"
 # Phép gán ~190 KB trước cd: last_arg chạy regex bậc hai theo độ dài từ không có dấu cách (reviewer 4.10).
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"x=' "$work"
@@ -1003,7 +1013,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
