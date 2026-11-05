@@ -923,10 +923,24 @@ mkdir -p "$tmp/dz/a"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotchain.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd ' "$work"
+  w4="$(for _ in $(seq 100); do printf '\360\235\224\270'; done)"
+  for _ in 1 2 3 4; do printf '%s/../' "$w4"; done
+  printf '; '
+  for _ in $(seq 289); do printf '%s' 'cd ..; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-dotchain4.json"
 for mode in $modes; do
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
     *'hơn 60000 thành phần'*) ok ;;
     *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
+  esac
+  # BYTE_MAX đếm byte (reviewer PR #69): tên toàn ký tự 4 byte (U+1D538): đếm ký tự thì dưới trần (đọc tới
+  # nhánh main), đếm byte thì quá trần.
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")" in
+    *'nối dồn quá dài'*) ok ;;
+    *) bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 4 byte" ;;
   esac
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain.json")" in
     *'nối dồn quá dài'*) ok ;;

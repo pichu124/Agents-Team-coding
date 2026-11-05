@@ -550,8 +550,10 @@ resolve_dir() {
     *) RD="$1/$d" ;;
   esac
 }
-# nb_add: cộng độ dài RD vào nb (tổng độ dài các đường đã gom); quá BYTE_MAX thì đặt reason, trả 1 để người gọi thôi duyệt.
+# nb_add: cộng độ dài RD (byte) vào nb (tổng độ dài các đường đã gom); quá BYTE_MAX thì đặt reason, trả 1 để người gọi thôi duyệt.
 nb_add() {
+  # Đếm byte, không đếm ký tự (LC_ALL=C): tên toàn ký tự 4 byte cho số byte gấp 4 với cùng số ký tự (reviewer PR #69).
+  local LC_ALL=C
   nb=$((nb + ${#RD}))
   [ "$nb" -le "$BYTE_MAX" ] && return 0
   reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX ký tự"
@@ -585,7 +587,21 @@ expand_dir() {
   local d="$1" rc
   EN=""
   d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
-  [ "$tool" = PowerShell ] || d="${d//\\ / }"
+  # `\ ` thành dấu cách. ${d//\\ / } trên từ dài chậm bậc hai trở lên với bash 3.2 (4000 `a\ b/..`, 28 KB: ~22 giây ở
+  # UTF-8, reviewer PR #69): từ dài thì thay bằng awk (một fork, tuyến tính). RS là \001 để giữ nguyên xuống dòng, chữ x
+  # cuối để $(...) không bỏ xuống dòng cuối; từ có \001 thì vẫn thay bằng bash.
+  if [ "$tool" != PowerShell ]; then
+    case "$d" in
+      *'\ '*)
+        if [ "${#d}" -gt 1024 ] && case "$d" in *$'\001'*) false ;; *) true ;; esac; then
+          d="$(printf '%s' "$d" | LC_ALL=C awk 'BEGIN { RS = "\001" } { gsub(/\\ /, " "); printf "%s", $0 }'; printf x)"
+          d="${d%x}"
+        else
+          d="${d//\\ / }"
+        fi
+        ;;
+    esac
+  fi
   subst_dir "$d" || return 1
   EO="$SD"
   # Đường quá PATH_MAX (4096) không cd được: khỏi đọc thêm (mỗi đoạn một lần chép phần còn lại của từ).
