@@ -938,7 +938,8 @@ for mode in $modes; do
   esac
   # BYTE_MAX đếm byte (reviewer PR #69): tên toàn ký tự 4 byte (U+1D538): đếm ký tự thì dưới trần (đọc tới
   # nhánh main), đếm byte thì quá trần.
-  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")" in
+  # LC_ALL=C.UTF-8: ở locale C bản đếm ký tự cũng đếm byte, ca này mất tác dụng (reviewer PR #70).
+  case "$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")" in
     *'nối dồn quá dài'*) ok ;;
     *) bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 4 byte" ;;
   esac

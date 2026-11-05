@@ -556,7 +556,7 @@ nb_add() {
   local LC_ALL=C
   nb=$((nb + ${#RD}))
   [ "$nb" -le "$BYTE_MAX" ] && return 0
-  reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX ký tự"
+  reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
   return 1
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
