@@ -907,6 +907,15 @@ mkdir -p "$tmp/dz/a"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotparts.json"
+# Phần gom thư mục nối mỗi cd vào đường trước (cur), tổng độ dài bậc hai theo số cd: 3 cd `a/..`×1000 rồi 289 `cd ..`
+# là ~3,5 MB mỗi cách đọc, ~13,5 giây với bash 3.2 và 5 ở UTF-8 (verifier PR #68), quá timeout. Trần BYTE_MAX.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
+  ap="$(printf 'a/..%.0s' $(seq 1000))"
+  for _ in 1 2 3; do printf 'cd %s; ' "$ap"; done
+  for _ in $(seq 289); do printf '%s' 'cd ..; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-dotchain.json"
 for mode in $modes; do
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
     *'quá dài: hơn'*) ok ;;
@@ -1020,7 +1029,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
