@@ -897,20 +897,33 @@ many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.jso
 } > "$tmp/long-manygitc.json"
 many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
 # Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
-# (300 cặp) rồi 289 `cd ..` nối dồn thành ~175000 thành phần (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
+# (100 cặp: ~100000 thành phần mà tổng độ dài dưới BYTE_MAX) rồi 289 `cd ..` nối dồn (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
 # PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
 # ~13,5 giây với bash 3.2 ở UTF-8 cả trên bản cũ (4.3 của docs/viec-can-lam.md).
 mkdir -p "$tmp/dz/a"
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
-  printf 'cd %s; ' "$(printf 'a/..%.0s' $(seq 300))"
+  printf 'cd %s; ' "$(printf 'a/..%.0s' $(seq 100))"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotparts.json"
+# Phần gom thư mục nối mỗi cd vào đường trước (cur), tổng độ dài bậc hai theo số cd: 3 cd `a/..`×1000 rồi 289 `cd ..`
+# là ~3,5 MB mỗi cách đọc, ~13,5 giây với bash 3.2 và 5 ở UTF-8 (verifier PR #68), quá timeout. Trần BYTE_MAX.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
+  ap="$(printf 'a/..%.0s' $(seq 1000))"
+  for _ in 1 2 3; do printf 'cd %s; ' "$ap"; done
+  for _ in $(seq 289); do printf '%s' 'cd ..; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-dotchain.json"
 for mode in $modes; do
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
-    *'quá dài: hơn'*) ok ;;
-    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng triệu thành phần [$mode]" ;;
+    *'hơn 60000 thành phần'*) ok ;;
+    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
+  esac
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain.json")" in
+    *'nối dồn quá dài'*) ok ;;
+    *) bad "guard phải hỏi vì trần BYTE_MAX trước khi gom hết chuỗi cd nối dồn [$mode]" ;;
   esac
 done
 # Phép gán ~190 KB trước cd: last_arg chạy regex bậc hai theo độ dài từ không có dấu cách (reviewer 4.10).
@@ -1020,7 +1033,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

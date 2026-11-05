@@ -550,6 +550,13 @@ resolve_dir() {
     *) RD="$1/$d" ;;
   esac
 }
+# nb_add: cộng độ dài RD vào nb (tổng độ dài các đường đã gom); quá BYTE_MAX thì đặt reason, trả 1 để người gọi thôi duyệt.
+nb_add() {
+  nb=$((nb + ${#RD}))
+  [ "$nb" -le "$BYTE_MAX" ] && return 0
+  reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX ký tự"
+  return 1
+}
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
 # main\ repo); ARG_PS coi \ là ký tự thường (PowerShell: C:\vnstock\; git push). Xét cả hai.
 ARG_BS='("[^"]*"|'"'"'[^'"'"']*'"'"'|([^[:space:];&|\\]|\\.)+\\?|\\)'
@@ -627,6 +634,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Số lần ghép (git -C × thư mục cd đã gom) tối đa của cả lệnh, và số subshell đọc nhánh tối đa: 299 cd và 250 git -C từng
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
+  # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
+  # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
+  BYTE_MAX=2000000
   SUB_MAX=64
   PART_MAX=60000 # tổng thành phần (dấu /) của các đường cần cd: 299 `cd ..` từ thư mục sâu 8 là ~46000
   DIR_MAX=512 # số đường (chưa bỏ trùng thư mục thật) tối đa được cd để đọc lại: mỗi cd là một lần stat trên Git Bash
@@ -662,6 +672,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   set -f
   IFS="$nl"
   ngc=0
+  nb=0
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
     # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
     [ -n "$reason$unknown" ] && break
@@ -704,9 +715,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO"
         if [ -n "$x" ] && [ "$x" != "$t" ]; then
           resolve_dir "$cur" "$x"
+          nb_add || break 2
           gone "$RD" || dl+=("$RD")
         fi
         resolve_dir "$cur" "$t"
+        nb_add || break 2
         # cd chỉ khớp nhờ tiền tố mới (time, x=1, ...) có thể là chữ trong chuỗi (echo "x=1 cd W"): chỉ thêm thư mục,
         # không đổi chỗ đứng cho các cd sau, nên cd thật phía sau vẫn được đọc như trước (reviewer 4.10).
         if [ -n "$nw" ]; then
@@ -734,9 +747,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
             break 4
           fi
           resolve_dir "$c" "$EO"
+          nb_add || break 4
           dl+=("$RD")
           if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
             resolve_dir "$c" "$EN"
+            nb_add || break 4
             dl+=("$RD")
           fi
         done
