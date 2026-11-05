@@ -628,6 +628,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
   SUB_MAX=64
+  PART_MAX=60000 # tổng thành phần (dấu /) của các đường cần cd: 299 `cd ..` từ thư mục sâu 8 là ~46000
   DIR_MAX=512 # số đường (chưa bỏ trùng thư mục thật) tối đa được cd để đọc lại: mỗi cd là một lần stat trên Git Bash
   # Trước cd: dấu tách, từ khoá (cả time, !, while/until, elif, eval) và phép gán đứng trước lệnh (x=1 cd M).
   # CDCUT cắt phần trước cd của mỗi kết quả grep, tuyến tính: last_arg chạy regex ($re)$ bậc hai theo độ dài từ không có
@@ -756,6 +757,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   done
   if [ -z "$reason" ] && [ "$nd" -gt "$DIR_MAX" ]; then
     reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $DIR_MAX đường"
+  fi
+  # Mỗi thành phần của đường là một lần stat khi cd (-P và -L), đường nối dồn (`cd a/..` dài rồi 289 `cd ..`) thành hàng
+  # triệu thành phần: quá timeout (reviewer PR #68). Đếm `/` của mọi đường bằng một lần awk (tuyến tính), quá thì hỏi.
+  if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then
+    np="$(printf '%s\n' "$dirs" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
+    [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường quá dài: hơn $PART_MAX thành phần"
   fi
   phys=""
   if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then
