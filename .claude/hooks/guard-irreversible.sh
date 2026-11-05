@@ -750,7 +750,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # của shell; chỉ khác -P khi đường có .. đi lùi ra từ một symlink), in pwd -P, bỏ trùng; rồi mới chạy git, mỗi thư mục
   # thật một lần (git chạy ở đó thấy đúng repo như sau cd). Thư mục `gone` (cd tới đó lỗi) không tính, không cd.
   nd=0
-  for d in $dirs; do
+  [ -n "$reason" ] || for d in $dirs; do
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
     gone "$d" || nd=$((nd + 1))
   done
@@ -767,7 +767,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         for o in -P -L; do
           # Mẫu có `(` mở: bash 3.2 đọc `)` của mẫu case trong $(...) là dấu đóng $(...) (lỗi cú pháp, hook exit 1).
           case "$o:$d" in (-L:*..*) ;; (-L:*) continue ;; esac
-          CDPATH='' cd "$o" -- "$d" 2>/dev/null && pwd -P
+          # Đường thật có xuống dòng (qua symlink) bị vòng đọc theo dòng cắt đôi (reviewer PR #68): in ? để hỏi. cd -P .
+          # đặt PWD thành đường vật lý, không fork như $(pwd -P).
+          if CDPATH='' cd "$o" -- "$d" 2>/dev/null && CDPATH='' cd -P . 2>/dev/null; then
+            case "$PWD" in (*"$nl"*) echo '?' ;; (*) printf '%s\n' "$PWD" ;; esac
+          fi
           CDPATH='' cd -- "$here" 2>/dev/null || { echo '?'; exit 0; }
         done
       done | awk '!s[$0]++')"
