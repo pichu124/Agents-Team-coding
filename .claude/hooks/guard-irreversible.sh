@@ -750,6 +750,13 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # subshell cd lần lượt tới mọi đường (builtin, không fork) theo cả hai cách: -P (vật lý, như git -C) và -L (logic, như cd
   # của shell; chỉ khác -P khi đường có .. đi lùi ra từ một symlink), in pwd -P, bỏ trùng; rồi mới chạy git, mỗi thư mục
   # thật một lần (git chạy ở đó thấy đúng repo như sau cd). Thư mục `gone` (cd tới đó lỗi) không tính, không cd.
+  # Mỗi thành phần của đường là một lần stat khi cd (-P và -L), đường nối dồn (`cd a/..` dài rồi 289 `cd ..`) thành hàng
+  # triệu thành phần: quá timeout (reviewer PR #68). Đếm `/` của mọi đường bằng một lần awk (tuyến tính), quá thì hỏi;
+  # đếm trước vòng gone bên dưới (vòng đó cũng tuyến tính theo độ dài các đường).
+  if [ -z "$reason" ] && [ -n "$dirs" ]; then
+    np="$(printf '%s\n' "$dirs" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
+    [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường quá dài: hơn $PART_MAX thành phần"
+  fi
   nd=0
   [ -n "$reason" ] || for d in $dirs; do
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
@@ -757,12 +764,6 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   done
   if [ -z "$reason" ] && [ "$nd" -gt "$DIR_MAX" ]; then
     reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $DIR_MAX đường"
-  fi
-  # Mỗi thành phần của đường là một lần stat khi cd (-P và -L), đường nối dồn (`cd a/..` dài rồi 289 `cd ..`) thành hàng
-  # triệu thành phần: quá timeout (reviewer PR #68). Đếm `/` của mọi đường bằng một lần awk (tuyến tính), quá thì hỏi.
-  if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then
-    np="$(printf '%s\n' "$dirs" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
-    [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường quá dài: hơn $PART_MAX thành phần"
   fi
   phys=""
   if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then

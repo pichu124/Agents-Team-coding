@@ -896,14 +896,14 @@ many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.jso
   printf 'git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-manygitc.json"
 many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
-# Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); 3 cd dài `a/..`
-# (1000 cặp) rồi 289 `cd ..` nối dồn thành hàng triệu thành phần (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
-# PART_MAX: hỏi trước khi cd. 3 cd chứ không 10: phần gom thư mục (có từ trước) đã tốn ~1,7 giây trên Linux.
+# Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
+# (300 cặp) rồi 289 `cd ..` nối dồn thành ~175000 thành phần (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
+# PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
+# ~13,5 giây với bash 3.2 ở UTF-8 cả trên bản cũ (4.3 của docs/viec-can-lam.md).
 mkdir -p "$tmp/dz/a"
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
-  ap="$(printf 'a/..%.0s' $(seq 1000))"
-  for _ in $(seq 3); do printf 'cd %s; ' "$ap"; done
+  printf 'cd %s; ' "$(printf 'a/..%.0s' $(seq 300))"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotparts.json"
