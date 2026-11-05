@@ -765,7 +765,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         [ -n "$d" ] || continue
         gone "$d" && continue
         for o in -P -L; do
-          case "$o:$d" in -L:*..*) ;; -L:*) continue ;; esac
+          # Mẫu có `(` mở: bash 3.2 đọc `)` của mẫu case trong $(...) là dấu đóng $(...) (lỗi cú pháp, hook exit 1).
+          case "$o:$d" in (-L:*..*) ;; (-L:*) continue ;; esac
           CDPATH='' cd "$o" -- "$d" 2>/dev/null && pwd -P
           CDPATH='' cd -- "$here" 2>/dev/null || { echo '?'; exit 0; }
         done
