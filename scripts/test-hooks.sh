@@ -689,6 +689,49 @@ EOF
   ups="$(printf 'cd ..; %.0s' $(seq 20))"
   expect_guard allow "${ups}cd \"$work\" && git push origin HEAD"
   expect_guard ask "${ups}cd \"$on_main\" && git push origin HEAD"
+  # Nhiều cách viết cùng về một thư mục thật (299 `cd ..` qua gốc): guard chạy git một lần cho mỗi thư mục thật, không phải
+  # cho mỗi cách viết. Trước đây mỗi đường có `..` tốn hai subshell chạy git, tới SUB_MAX (64) mới thôi: ~10 giây trên Git
+  # Bash, ca long-manydotdot của test-install đỏ chập chờn trên Windows. git giả ghi lại mỗi lần đọc nhánh.
+  if [ ! -x "$tmp/gitlog/git" ]; then
+    mkdir -p "$tmp/gitlog"
+    printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "$tmp/gitlog.txt" "$(command -v git)" > "$tmp/gitlog/git"
+    chmod +x "$tmp/gitlog/git"
+  fi
+  : > "$tmp/gitlog.txt"
+  dd="$(printf 'cd ..; %.0s' $(seq 299))"
+  out="$(bash_input "${dd}cd \"$on_main\" && git push origin HEAD" "$work" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  depth="$(cd "$work" && pwd -P | awk -F/ '{ print NF }')"
+  assert "guard chỉ được đọc nhánh mỗi thư mục thật một lần [$mode]: 299 cd .. rồi cd nhánh chính → $nrev lần (sâu $depth)" \
+    [ "$nrev" -ge 1 ] && [ "$nrev" -le $((depth + 2)) ]
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "guard phải hỏi vì nhánh main [$mode], không vì trần số thư mục: 299 cd .. rồi cd nhánh chính → $out" ;;
+  esac
+  # Monorepo (reviewer PR #55): cd packages/p1 rồi cd ../p2 … ../p40, mỗi đường có `..` khác chữ nhau nhưng là 40 thư mục
+  # thật: dưới SUB_MAX nên đọc đủ, không hỏi thừa; cuối cùng cd vào repo ở nhánh chính thì phải hỏi.
+  mono="$tmp/mono"
+  [ -d "$mono/packages/p40" ] || { new_repo "$mono" feat/x && for i in $(seq 40); do mkdir -p "$mono/packages/p$i"; done; }
+  mc="cd packages/p1 && make"
+  for i in $(seq 2 40); do mc="$mc && cd ../p$i && make"; done
+  expect_guard allow "$mc && git push origin HEAD" "$mono"
+  expect_guard ask "$mc && cd \"$on_main\" && git push origin HEAD" "$mono"
+  # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
+  gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
+  expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
+  case "$(bash_input "cd \"$work\"; ${gx}git push origin HEAD" "$work" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")" in
+    *'hơn 512 đường'*) ok ;;
+    *) bad "guard phải hỏi vì trần DIR_MAX [$mode]: 600 git -C xN/.." ;;
+  esac
+  # Đường thật có xuống dòng (qua symlink, reviewer PR #68): pwd -P in ra hai dòng, vòng đọc theo dòng cắt đôi đường và
+  # repo ở nhánh chính không được đọc. Hệ không tạo được tên có xuống dòng (Windows) thì bỏ qua.
+  if [ ! -e "$tmp/nl" ] && mkdir -p "$tmp/a$nl/b" 2>/dev/null && ln -s "$tmp/a$nl/b" "$tmp/nl" 2>/dev/null; then
+    new_repo "$tmp/a$nl/b" main
+  fi
+  if [ -L "$tmp/nl" ] && [ -d "$tmp/a$nl/b/.git" ]; then
+    expect_guard ask "cd \"$tmp/nl\" && git push origin HEAD"
+  fi
   # cwd dạng C:/… (Python của Windows nhận đường POSIX đã được Git Bash đổi): cd vào thư mục chưa có vẫn phải bỏ qua, không
   # tốn subshell (299 cd từng chạm SUB_MAX và hỏi thừa trên Windows). Hệ không tạo được thư mục tên `C:` thì bỏ qua ca này.
   # Trên Git Bash, `C:/w` là ổ C dù tạo được thư mục tên `C:`: chỉ chạy khi `C:/w` tính từ $tmp đúng là repo vừa tạo.
@@ -853,6 +896,23 @@ many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.jso
   printf 'git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-manygitc.json"
 many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
+# Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
+# (300 cặp) rồi 289 `cd ..` nối dồn thành ~175000 thành phần (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
+# PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
+# ~13,5 giây với bash 3.2 ở UTF-8 cả trên bản cũ (4.3 của docs/viec-can-lam.md).
+mkdir -p "$tmp/dz/a"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp/dz"
+  printf 'cd %s; ' "$(printf 'a/..%.0s' $(seq 300))"
+  for _ in $(seq 289); do printf '%s' 'cd ..; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-dotparts.json"
+for mode in $modes; do
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
+    *'quá dài: hơn'*) ok ;;
+    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng triệu thành phần [$mode]" ;;
+  esac
+done
 # Phép gán ~190 KB trước cd: last_arg chạy regex bậc hai theo độ dài từ không có dấu cách (reviewer 4.10).
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"x=' "$work"
@@ -960,7 +1020,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
