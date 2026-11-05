@@ -552,9 +552,13 @@ resolve_dir() {
 }
 # nb_add: cộng độ dài RD (byte) vào nb (tổng độ dài các đường đã gom); quá BYTE_MAX thì đặt reason, trả 1 để người gọi thôi duyệt.
 nb_add() {
-  # Đếm byte, không đếm ký tự (LC_ALL=C): tên toàn ký tự 4 byte cho số byte gấp 4 với cùng số ký tự (reviewer PR #69).
-  local LC_ALL=C
-  nb=$((nb + ${#RD}))
+  # Cận trên số byte, không phụ thuộc locale: tên toàn ký tự 4 byte có số byte gấp 4 số ký tự (reviewer PR #69), mà
+  # LC_ALL=C không giúp được trên Git Bash (Cygwin coi locale C là UTF-8, ${#RD} vẫn đếm ký tự: CI Windows PR #70).
+  # Đường có ký tự ngoài ASCII thì tính 4 byte mỗi ký tự (UTF-8 dài nhất).
+  case "$RD" in
+    *[![:ascii:]]*) nb=$((nb + 4 * ${#RD})) ;;
+    *) nb=$((nb + ${#RD})) ;;
+  esac
   [ "$nb" -le "$BYTE_MAX" ] && return 0
   reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
   return 1
