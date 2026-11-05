@@ -720,6 +720,18 @@ EOF
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
+  case "$(bash_input "cd \"$work\"; ${gx}git push origin HEAD" "$work" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")" in
+    *'hơn 512 đường'*) ok ;;
+    *) bad "guard phải hỏi vì trần DIR_MAX [$mode]: 600 git -C xN/.." ;;
+  esac
+  # Đường thật có xuống dòng (qua symlink, reviewer PR #68): pwd -P in ra hai dòng, vòng đọc theo dòng cắt đôi đường và
+  # repo ở nhánh chính không được đọc. Hệ không tạo được tên có xuống dòng (Windows) thì bỏ qua.
+  if [ ! -e "$tmp/nl" ] && mkdir -p "$tmp/a$nl/b" 2>/dev/null && ln -s "$tmp/a$nl/b" "$tmp/nl" 2>/dev/null; then
+    new_repo "$tmp/a$nl/b" main
+  fi
+  if [ -L "$tmp/nl" ] && [ -d "$tmp/a$nl/b/.git" ]; then
+    expect_guard ask "cd \"$tmp/nl\" && git push origin HEAD"
+  fi
   # cwd dạng C:/… (Python của Windows nhận đường POSIX đã được Git Bash đổi): cd vào thư mục chưa có vẫn phải bỏ qua, không
   # tốn subshell (299 cd từng chạm SUB_MAX và hỏi thừa trên Windows). Hệ không tạo được thư mục tên `C:` thì bỏ qua ca này.
   # Trên Git Bash, `C:/w` là ổ C dù tạo được thư mục tên `C:`: chỉ chạy khi `C:/w` tính từ $tmp đúng là repo vừa tạo.
