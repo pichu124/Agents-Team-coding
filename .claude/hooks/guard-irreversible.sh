@@ -539,10 +539,21 @@ gone() {
     *) return 1 ;;
   esac
 }
+# strip_q <từ>: bỏ một " ở đầu, một " ở cuối, rồi một ' ở đầu, một ' ở cuối, như ${d#\"} ${d%\"} ${d#\'} ${d%\'}, kết quả
+# trong SQ. Xét ký tự đầu/cuối bằng case rồi mới cắt một ký tự: ${d#\"} trên từ dài mà không khớp chậm bậc hai
+# (~180 KB: 2,6 giây cho bốn phép, reviewer PR #70).
+strip_q() {
+  SQ="$1"
+  case "$SQ" in \"*) SQ="${SQ#?}" ;; esac
+  case "$SQ" in *\") SQ="${SQ%?}" ;; esac
+  case "$SQ" in \'*) SQ="${SQ#?}" ;; esac
+  case "$SQ" in *\') SQ="${SQ%?}" ;; esac
+}
 # resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
-  d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
+  strip_q "$d"
+  d="$SQ"
   case "$d" in
     . | ./) RD="$1" ;; # cd . ở lại thư mục đó: không nối /. (1500 lần `cd .` thành 1500 thư mục khác chữ, 4.3)
     \~ | \~/*) RD="$HOME${d#\~}" ;;
@@ -590,7 +601,8 @@ last_arg() {
 expand_dir() {
   local d="$1" rc
   EN=""
-  d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
+  strip_q "$d"
+  d="$SQ"
   # `\ ` thành dấu cách. ${d//\\ / } trên từ dài chậm bậc hai trở lên với bash 3.2 (4000 `a\ b/..`, 28 KB: ~22 giây ở
   # UTF-8, reviewer PR #69): từ dài thì thay bằng awk (một fork, tuyến tính). RS là \001 để giữ nguyên xuống dòng, chữ x
   # cuối để $(...) không bỏ xuống dòng cuối; từ có \001 thì vẫn thay bằng bash.
