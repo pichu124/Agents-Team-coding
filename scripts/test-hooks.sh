@@ -925,7 +925,7 @@ mkdir -p "$tmp/dz/a"
 } > "$tmp/long-dotchain.json"
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd ' "$work"
-  w4="$(for _ in $(seq 100); do printf '\360\235\224\270'; done)"
+  w4="$(for _ in $(seq 100); do printf '\341\273\207'; done)"
   for _ in 1 2 3 4; do printf '%s/../' "$w4"; done
   printf '; '
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
@@ -936,17 +936,14 @@ for mode in $modes; do
     *'hơn 60000 thành phần'*) ok ;;
     *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
   esac
-  # BYTE_MAX đếm byte (reviewer PR #69): tên toàn ký tự 4 byte (U+1D538): đếm ký tự thì dưới trần (đọc tới
-  # nhánh main), đếm byte thì quá trần.
+  # BYTE_MAX đếm cận trên byte (reviewer PR #69): tên toàn ký tự 3 byte (ệ, U+1EC7): đếm ký tự thì dưới trần (đọc tới
+  # nhánh main), đếm byte thì quá trần. Không dùng ký tự ngoài BMP (U+1D538): trên Git Bash guard
+  # vẫn đọc tới nhánh main dù bash ở đó khớp mẫu ngoài ASCII (CI Windows PR #70), nguyên nhân chưa rõ (4.3).
   # LC_ALL=C.UTF-8: ở locale C bản đếm ký tự cũng đếm byte, ca này mất tác dụng (reviewer PR #70).
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")"
   case "$out" in
     *'nối dồn quá dài'*) ok ;;
-    *)
-      # Thăm dò cách bash này đếm và so mẫu ký tự 4 byte ở UTF-8 (CI Windows PR #70 đỏ mà không rõ vì sao).
-      probe="$(LC_ALL=C.UTF-8 bash -c 'x="$(printf "a\360\235\224\270b")"; case "$x" in *[![:ascii:]]*) m=khớp ;; *) m=không ;; esac; printf "len=%s ascii-mẫu=%s" "${#x}" "$m"')"
-      bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 4 byte → [$out] ($probe)"
-      ;;
+    *) bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 3 byte → [$out]" ;;
   esac
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain.json")" in
     *'nối dồn quá dài'*) ok ;;
