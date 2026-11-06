@@ -659,6 +659,12 @@ subst_dir() {
 if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   { [ -n "$shc_unknown" ] && LC_ALL=C text_grep "$cmd" -iq -- push; }; }; then
   base="${cwd:-.}"
+  # Lệnh push quá dài thì hỏi ngay, khỏi gom thư mục: mọi bước đã tuyến tính (PR #68–#71) nhưng lệnh ~490 KB vẫn mất
+  # ~14 giây với bash 3.2 ở UTF-8 (reviewer PR #71), quá timeout thì push chạy không hỏi. Lệnh push thật không dài
+  # tới vậy; các ca ~190 KiB của test-hooks vẫn đi hết đường phân tích (dưới trần).
+  PUSH_CMD_MAX=200000
+  # Đo lệnh như nhận (raw): cmd đã nối thêm các dạng đọc khác nên dài gấp mấy lần.
+  [ "${#raw}" -gt "$PUSH_CMD_MAX" ] && reason="push trong lệnh quá dài: hơn $PUSH_CMD_MAX ký tự"
   # cd của bash (kể cả trong bash -c '...', { }, if/then, có --, -P, -L), Set-Location/
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
