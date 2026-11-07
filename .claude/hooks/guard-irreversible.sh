@@ -584,9 +584,13 @@ ARG_BS='("[^"]*"|'"'"'[^'"'"']*'"'"'|([^[:space:];&|\\]|\\.)+\\?|\\)'
 ARG_PS='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|]+)'
 # Từ ghép nhiều đoạn nháy ("a b"/'..', "a b/"x, "x/"\.\.) là một đường với bash. Đọc thành lượt RIÊNG, thêm vào hai
 # lượt trên: nháy đóng của một chuỗi đứng trước (echo "cd x"; cd M) làm cách đọc này nuốt cả cd thật phía sau, nên
-# không được thay cách đọc cũ. Trong nháy kép của bash, \" không đóng nháy (`cd "\"main repo\""` tới `"main repo"`).
-ARG_BSQ='("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
+# không được thay cách đọc cũ.
+ARG_BSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
 ARG_PSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'])+'
+# Lượt từ ghép thứ ba: trong nháy kép của bash, \" không đóng nháy (`cd "\"main repo\""` tới thư mục `"main repo"`). Lượt
+# RIÊNG, không thay ARG_BSQ: nháy kép đứng trong nháy đơn (`echo 'cd "x\"'; cd M`) thì cách đọc này nuốt cd thật phía sau,
+# còn ARG_BSQ đóng nháy ở `\"` nên vẫn bắt (reviewer PR #73). Chỉ chạy trên dạng có `\"`.
+ARG_BSQE='("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
 
 # last_arg <đoạn khớp> <regex đối số>: đối số cuối của đoạn, bỏ tiền tố -Path:, --git-dir=, GIT_DIR=... Kết quả trong LA.
 last_arg() {
@@ -730,7 +734,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   nb=0
-  for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
+  for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ" "$ARG_BSQE"; do
     # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
     [ -n "$reason$unknown" ] && break
     um="bash"
@@ -738,6 +742,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     [ "$a" = "$ARG_PS" ] && um="ps"
     [ "$a" = "$ARG_BSQ" ] && q=1
     [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
+    [ "$a" = "$ARG_BSQE" ] && q=e
     CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
@@ -745,6 +750,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
+      fi
+      if [ "$q" = e ]; then
+        case "$f" in *'\"'*) ;; *) continue ;; esac
       fi
       cur="$base"
       cl=("$base")
