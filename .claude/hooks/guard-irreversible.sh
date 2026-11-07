@@ -552,8 +552,12 @@ strip_q() {
 # resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
-  strip_q "$d"
-  d="$SQ"
+  # Đường đã đọc theo bash (EN của expand_dir, đối số thứ ba là n) thì không bỏ nháy lần nữa: thư mục tên có nháy kép
+  # (`cd "\"main repo\""` tới `"main repo"`) từng bị đọc thành `main repo` (verifier PR #71).
+  if [ "${3:-}" != n ]; then
+    strip_q "$d"
+    d="$SQ"
+  fi
   case "$d" in
     . | ./) RD="$1" ;; # cd . ở lại thư mục đó: không nối /. (1500 lần `cd .` thành 1500 thư mục khác chữ, 4.3)
     \~ | \~/*) RD="$HOME${d#\~}" ;;
@@ -580,8 +584,8 @@ ARG_BS='("[^"]*"|'"'"'[^'"'"']*'"'"'|([^[:space:];&|\\]|\\.)+\\?|\\)'
 ARG_PS='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|]+)'
 # Từ ghép nhiều đoạn nháy ("a b"/'..', "a b/"x, "x/"\.\.) là một đường với bash. Đọc thành lượt RIÊNG, thêm vào hai
 # lượt trên: nháy đóng của một chuỗi đứng trước (echo "cd x"; cd M) làm cách đọc này nuốt cả cd thật phía sau, nên
-# không được thay cách đọc cũ.
-ARG_BSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
+# không được thay cách đọc cũ. Trong nháy kép của bash, \" không đóng nháy (`cd "\"main repo\""` tới `"main repo"`).
+ARG_BSQ='("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
 ARG_PSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'])+'
 
 # last_arg <đoạn khớp> <regex đối số>: đối số cuối của đoạn, bỏ tiền tố -Path:, --git-dir=, GIT_DIR=... Kết quả trong LA.
@@ -766,13 +770,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # ghép thì ngược lại.
         t="$EO"
         x="$EN"
-        [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO"
+        tn=""
+        xn=n
+        [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO" && tn=n && xn=""
         if [ -n "$x" ] && [ "$x" != "$t" ]; then
-          resolve_dir "$cur" "$x"
+          resolve_dir "$cur" "$x" "$xn"
           nb_add || break 2
           gone "$RD" || dl+=("$RD")
         fi
-        resolve_dir "$cur" "$t"
+        resolve_dir "$cur" "$t" "$tn"
         nb_add || break 2
         # cd chỉ khớp nhờ tiền tố mới (time, x=1, ...) có thể là chữ trong chuỗi (echo "x=1 cd W"): chỉ thêm thư mục,
         # không đổi chỗ đứng cho các cd sau, nên cd thật phía sau vẫn được đọc như trước (reviewer 4.10).
@@ -804,7 +810,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           nb_add || break 4
           dl+=("$RD")
           if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
-            resolve_dir "$c" "$EN"
+            resolve_dir "$c" "$EN" n
             nb_add || break 4
             dl+=("$RD")
           fi
