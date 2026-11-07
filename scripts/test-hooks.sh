@@ -947,6 +947,19 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotchain4.json"
+# Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
+# `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd ' "$tmp"
+  for _ in $(seq 700); do printf '%s' '\"a b\"/../'; done
+  printf 'main\\\\ repo && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/longword.json"
+for mode in $modes; do
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/longword.json")" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi push sau cd qua từ có nháy dài hơn 4096 byte (cd -L vẫn tới nhánh main) [$mode]" ;;
+  esac
+done
 # PUSH_CMD_MAX đếm byte, không đếm ký tự (reviewer PR #72): 9000 `ệệệệệệ ệ/../` là 108000 ký tự nhưng 234000 byte, việc
 # phân tích tốn theo byte nên lệnh dạng này dài hơn (~550 KB) vượt timeout với bash 3.2 mà ${#raw} vẫn dưới trần.
 {
