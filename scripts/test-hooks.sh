@@ -955,7 +955,22 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 9000); do printf '%s' "$e7"; done
   printf 'main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-qwordu.json"
+# wc in số kèm ký tự lạ (wc.exe Windows in CRLF): `$((rawb))` lỗi cú pháp số học thì bash bỏ cả khối cổng push,
+# guard không in gì và push lên main chạy không hỏi (reviewer PR #72). Lệnh 60000 ký tự có `ệ`, cwd trên main.
+mkdir -p "$tmp/crwc"
+printf '#!/bin/sh\nprintf '"'"'60032\\r\\n'"'"'\n' > "$tmp/crwc/wc"
+chmod +x "$tmp/crwc/wc"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \341\273\207' "$on_main"
+  for _ in $(seq 600); do printf '%s' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; done
+  printf ' && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/crwc.json"
 for mode in $modes; do
+  out="$(PATH="$tmp/crwc:$PATH" LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/crwc.json" 2>/dev/null)"
+  case "$out" in
+    *'"ask"'*) ok ;;
+    *) bad "guard phải hỏi khi wc in số kèm \\r (push lên main) [$mode] → [$out]" ;;
+  esac
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-qwordu.json")"
   case "$out" in
     *'push trong lệnh quá dài'*) ok ;;
