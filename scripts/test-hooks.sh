@@ -947,7 +947,20 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotchain4.json"
+# PUSH_CMD_MAX đếm byte, không đếm ký tự (reviewer PR #72): 9000 `ệệệệệệ ệ/../` là 108000 ký tự nhưng 234000 byte, việc
+# phân tích tốn theo byte nên lệnh dạng này dài hơn (~550 KB) vượt timeout với bash 3.2 mà ${#raw} vẫn dưới trần.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd \\"' "$tmp"
+  e7="$(for _ in $(seq 6); do printf '\341\273\207'; done) $(printf '\341\273\207')/../"
+  for _ in $(seq 9000); do printf '%s' "$e7"; done
+  printf 'main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-qwordu.json"
 for mode in $modes; do
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-qwordu.json")"
+  case "$out" in
+    *'push trong lệnh quá dài'*) ok ;;
+    *) bad "guard phải đếm PUSH_CMD_MAX theo byte [$mode]: lệnh 108000 ký tự 3 byte → [$out]" ;;
+  esac
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
     *'hơn 60000 thành phần'*) ok ;;
     *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
@@ -1073,7 +1086,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
