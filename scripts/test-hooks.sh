@@ -947,6 +947,22 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotchain4.json"
+# Thư mục tên có nháy kép (`"main repo"`) ở nhánh chính, không có `main repo` cạnh nó: resolve_dir bỏ nháy lần nữa trên
+# đường đã đọc theo bash (unquote_word) nên đọc thành `main repo` (không có) và cho qua (verifier PR #71). Ba cách viết.
+# NTFS không cho `"` trong tên: không tạo được thư mục thì bỏ ca (trên Windows lỗ này cũng không có).
+qd="$tmp/qd"
+if mkdir -p "$qd/\"main repo\"" 2>/dev/null && [ -d "$qd/\"main repo\"" ]; then
+  new_repo "$qd/\"main repo\"" main
+  for w in '\"\\\"main repo\\\"\"' "'\\\"main repo\\\"'" '\\\"main\\ repo\\\"'; do
+    printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd %s && git push origin HEAD","description":"test"}}\n' "$qd" "$w" > "$tmp/qdname.json"
+    for mode in $modes; do
+      case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdname.json")" in
+        *'"permissionDecision":"ask"'*) ok ;;
+        *) bad "guard phải hỏi push sau cd tới thư mục tên có nháy kép ở nhánh main [$mode]: cd $w" ;;
+      esac
+    done
+  done
+fi
 # Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
 # `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
 {
