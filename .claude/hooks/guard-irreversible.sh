@@ -137,7 +137,10 @@ decode_shell_c() {
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
-    for m in $(printf '%s' "${forms[$i]}" | grep -Eo -- "$SHC$SHW"); do
+    # LC_ALL=C: ở locale UTF-8 grep không dùng DFA, chuỗi option nối nhau (`bash -o `×23000, ~184 KB) khớp tới cuối rồi hỏng,
+    # thử lại từ mọi vị trí: bậc hai, quá 40 giây (reviewer PR #62 lần 8). Mẫu là ASCII, mỗi byte của ký tự nhiều byte vẫn
+    # khớp các lớp phủ định như ở UTF-8, nên kết quả không đổi.
+    for m in $(printf '%s' "${forms[$i]}" | LC_ALL=C grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
       # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
@@ -744,7 +747,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       cur="$base"
       cl=("$base")
       ncd=0
-      for m in $(printf '%s' "$f" | grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+      # LC_ALL=C như grep thân -c ở trên: tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8. -i ở locale C chỉ
+      # gập chữ ASCII: ſ, ı và khoảng trắng Unicode đã có dạng đổi sang ASCII trong forms (src/un ở trên).
+      for m in $(printf '%s' "$f" | LC_ALL=C grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
         ncd=$((ncd + 1))
