@@ -963,6 +963,15 @@ if mkdir -p "$qd/\"main repo\"" 2>/dev/null && [ -d "$qd/\"main repo\"" ]; then
     done
   done
 fi
+# Nháy kép trong nháy đơn có \" (`echo 'cd "x\"'`) không được nuốt cd thật phía sau: đọc `\"` là escape chỉ ở lượt
+# riêng (ARG_BSQE), lượt từ ghép cũ (ARG_BSQ đóng nháy ở `\"`) vẫn bắt `cd "<tmp>/a b"/../main\ repo` (reviewer PR #73).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo '"'"'cd \\"x\\\\\\"'"'"'; cd \\"%s/a b\\"/../main\\\\ repo && git push origin HEAD","description":"test"}}\n' "$tmp" "$tmp" > "$tmp/qdswallow.json"
+for mode in $modes; do
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdswallow.json")" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi: nháy kép có \\\" trong nháy đơn không được nuốt cd tới repo ở main [$mode]" ;;
+  esac
+done
 # Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
 # `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
 {
