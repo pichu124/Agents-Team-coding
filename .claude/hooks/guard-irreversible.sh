@@ -665,7 +665,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   PUSH_CMD_MAX=200000
   # Đo lệnh như nhận (raw): cmd đã nối thêm các dạng đọc khác nên dài gấp mấy lần. Đếm byte (việc phân tích tốn theo
   # byte; reviewer PR #72): ${#raw} đếm ký tự ở UTF-8, nên lệnh có ký tự ngoài ASCII mà cận 4 byte mỗi ký tự vượt trần
-  # thì đếm byte thật bằng wc (một pipe, không file tạm). wc lỗi thì coi như quá trần.
+  # thì đếm byte thật bằng wc (một pipe, không file tạm).
   if [ "${#raw}" -gt "$PUSH_CMD_MAX" ]; then
     reason="push trong lệnh quá dài: hơn $PUSH_CMD_MAX byte"
   else
@@ -673,8 +673,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       *[![:ascii:]]*)
         if [ $((4 * ${#raw})) -gt "$PUSH_CMD_MAX" ]; then
           rawb="$(printf '%s' "$raw" | LC_ALL=C wc -c)"
-          case "$rawb" in *[0-9]*) rawb=$((rawb)) ;; *) rawb=$((PUSH_CMD_MAX + 1)) ;; esac
-          [ "$rawb" -gt "$PUSH_CMD_MAX" ] && reason="push trong lệnh quá dài: hơn $PUSH_CMD_MAX byte"
+          # So bằng [ (nhận dấu cách đầu của BSD wc), không bằng $((...)): output lạ (số kèm \r của wc.exe) làm
+          # $((...)) lỗi cú pháp và bash bỏ cả khối cổng push (reviewer PR #72). [ lỗi thì coi như quá trần.
+          [ "$rawb" -le "$PUSH_CMD_MAX" ] 2>/dev/null || reason="push trong lệnh quá dài: hơn $PUSH_CMD_MAX byte"
         fi ;;
     esac
   fi
