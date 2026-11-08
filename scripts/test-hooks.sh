@@ -646,6 +646,29 @@ EOF
   TOOL=PowerShell expect_guard ask "Push-Location${ideo}'$on_main'; git push"
   TOOL=PowerShell expect_guard ask "Set-Location ${ndash}Path '$on_main'; git push"
   TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
+  # Thư mục tên có en dash: dạng đổi sang ASCII trỏ tới `proj-x` (không có), nên dạng gốc phải khớp cd sau khoảng trắng
+  # Unicode, ſ hay ı, kể cả khi grep của vòng cd chạy ở locale C cho nhanh (reviewer PR #74).
+  # Chỉ grep ở locale UTF-8 mới coi U+3000 là [[:space:]] (main cũng chỉ hỏi khi đó): chạy ở locale UTF-8 đầu tiên mà
+  # grep của máy khớp như vậy, không có thì bỏ qua. Bộ đọc sed không giải \uXXXX (input dựng bằng json.dumps) nên tên
+  # thư mục còn nguyên chữ –: main cũng không đọc được, bỏ mode sed.
+  pdx="$tmp/proj${ndash}x"
+  [ -d "$pdx" ] || new_repo "$pdx" main
+  ul=""
+  for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 UTF-8; do
+    n="$(printf '%s' "$ideo" | LC_ALL="$l" grep -c '[[:space:]]' 2>/dev/null)"
+    [ "$n" = 1 ] && ul="$l" && break
+  done
+  if [ -n "$ul" ] && [ "$mode" != sed ]; then
+    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Push-Location${ideo}-Path${ideo}'$pdx'; git push"
+    # ſ, ı: chỉ khi grep -i của máy gập chúng thành s, i (GNU grep; main cũng chỉ hỏi khi đó).
+    n="$(printf '\305\277\n\304\261\n' | LC_ALL="$ul" grep -ci '^[si]$' 2>/dev/null)"
+    if [ "$n" = 2 ]; then
+      LC_ALL="$ul" TOOL=PowerShell expect_guard ask "$(printf '\305\277')l '$pdx'; git push"
+      LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Set-Locat$(printf '\304\261')on '$pdx'; git push"
+    fi
+    LC_ALL="$ul" TOOL=Other expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+  fi
   # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
   expect_guard ask "git pu$(printf '\305\277')h -f"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
@@ -930,6 +953,27 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 70000); do printf '%s' 'a b/../'; done
   printf 'main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-qword490.json"
+# `bash -o ` lặp 23000 lần (~184 KB) rồi cd vào repo ở main: mẫu thân -c (SHC) khớp chuỗi option `-o <chữ>` nối nhau rồi
+# hỏng ở cuối, grep ở locale UTF-8 thử lại từ mọi vị trí (bậc hai, quá 40 giây; reviewer PR #62 lần 8). Locale C dùng DFA.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp"
+  for _ in $(seq 23000); do printf '%s' 'bash -o '; done
+  printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-basho.json"
+# Cùng lớp với long-basho cho mẫu cd: tiền tố gán biến của CDA (`x= ` lặp 66000 lần, ~198 KB) khớp tới cuối rồi hỏng ở
+# mọi vị trí; một cặp nháy làm lượt từ ghép chạy thêm, ~19 giây ở UTF-8.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp"
+  for _ in $(seq 66000); do printf '%s' 'x= '; done
+  printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-xassign.json"
+# Nháy kép không đóng trên dòng của nó (`true \`⏎`cd "` + `a`×190000 + ⏎`"`) rồi cd vào repo ở main: mẫu cd ở locale UTF-8
+# thử lại từ mọi `a` (bậc hai, ~27 giây với bash 5 trên main), quá timeout. Locale C: ~3 giây.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"true \\\\\\ncd \\"' "$tmp"
+  for _ in $(seq 19000); do printf '%s' 'aaaaaaaaaa'; done
+  printf '\\n\\" ; cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-uquote.json"
 # Phần gom thư mục nối mỗi cd vào đường trước (cur), tổng độ dài bậc hai theo số cd: 3 cd `a/..`×1000 rồi 289 `cd ..`
 # là ~3,5 MB mỗi cách đọc, ~13,5 giây với bash 3.2 và 5 ở UTF-8 (verifier PR #68), quá timeout. Trần BYTE_MAX.
 {
@@ -1139,7 +1183,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
