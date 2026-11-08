@@ -944,6 +944,13 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 66000); do printf '%s' 'x= '; done
   printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-xassign.json"
+# Nháy kép không đóng trên dòng của nó (`true \`⏎`cd "` + `a`×190000 + ⏎`"`) rồi cd vào repo ở main: mẫu cd ở locale UTF-8
+# thử lại từ mọi `a` (bậc hai, ~27 giây với bash 5 trên main), quá timeout. Locale C: ~3 giây.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"true \\\\\\ncd \\"' "$tmp"
+  for _ in $(seq 19000); do printf '%s' 'aaaaaaaaaa'; done
+  printf '\\n\\" ; cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-uquote.json"
 # Phần gom thư mục nối mỗi cd vào đường trước (cur), tổng độ dài bậc hai theo số cd: 3 cd `a/..`×1000 rồi 289 `cd ..`
 # là ~3,5 MB mỗi cách đọc, ~13,5 giây với bash 3.2 và 5 ở UTF-8 (verifier PR #68), quá timeout. Trần BYTE_MAX.
 {
@@ -1153,7 +1160,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
