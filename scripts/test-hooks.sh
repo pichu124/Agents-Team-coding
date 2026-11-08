@@ -947,6 +947,44 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 289); do printf '%s' 'cd ..; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-dotchain4.json"
+# Thư mục tên có nháy kép (`"main repo"`) ở nhánh chính, không có `main repo` cạnh nó: resolve_dir bỏ nháy lần nữa trên
+# đường đã đọc theo bash (unquote_word) nên đọc thành `main repo` (không có) và cho qua (verifier PR #71). Ba cách viết.
+# NTFS không cho `"` trong tên: không tạo được thư mục thì bỏ ca (trên Windows lỗ này cũng không có).
+qd="$tmp/qd"
+if mkdir -p "$qd/\"main repo\"" 2>/dev/null && [ -d "$qd/\"main repo\"" ]; then
+  new_repo "$qd/\"main repo\"" main
+  for w in '\"\\\"main repo\\\"\"' "'\\\"main repo\\\"'" '\\\"main\\ repo\\\"'; do
+    printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd %s && git push origin HEAD","description":"test"}}\n' "$qd" "$w" > "$tmp/qdname.json"
+    for mode in $modes; do
+      case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdname.json")" in
+        *'"permissionDecision":"ask"'*) ok ;;
+        *) bad "guard phải hỏi push sau cd tới thư mục tên có nháy kép ở nhánh main [$mode]: cd $w" ;;
+      esac
+    done
+  done
+fi
+# Nháy kép trong nháy đơn có \" (`echo 'cd "x\"'`) không được nuốt cd thật phía sau: đọc `\"` là escape chỉ ở lượt
+# riêng (ARG_BSQE), lượt từ ghép cũ (ARG_BSQ đóng nháy ở `\"`) vẫn bắt `cd "<tmp>/a b"/../main\ repo` (reviewer PR #73).
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo '"'"'cd \\"x\\\\\\"'"'"'; cd \\"%s/a b\\"/../main\\\\ repo && git push origin HEAD","description":"test"}}\n' "$tmp" "$tmp" > "$tmp/qdswallow.json"
+for mode in $modes; do
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdswallow.json")" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi: nháy kép có \\\" trong nháy đơn không được nuốt cd tới repo ở main [$mode]" ;;
+  esac
+done
+# Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
+# `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd ' "$tmp"
+  for _ in $(seq 700); do printf '%s' '\"a b\"/../'; done
+  printf 'main\\\\ repo && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/longword.json"
+for mode in $modes; do
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/longword.json")" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi push sau cd qua từ có nháy dài hơn 4096 byte (cd -L vẫn tới nhánh main) [$mode]" ;;
+  esac
+done
 # PUSH_CMD_MAX đếm byte, không đếm ký tự (reviewer PR #72): 9000 `ệệệệệệ ệ/../` là 108000 ký tự nhưng 234000 byte, việc
 # phân tích tốn theo byte nên lệnh dạng này dài hơn (~550 KB) vượt timeout với bash 3.2 mà ${#raw} vẫn dưới trần.
 {
