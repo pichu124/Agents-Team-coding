@@ -555,8 +555,12 @@ strip_q() {
 # resolve_dir <gốc> <đường dẫn>: đường dẫn tuyệt đối giữ nguyên, tương đối thì nối vào gốc. Kết quả trong RD.
 resolve_dir() {
   local d="$2"
-  strip_q "$d"
-  d="$SQ"
+  # Đường đã đọc theo bash (EN của expand_dir, đối số thứ ba là n) thì không bỏ nháy lần nữa: thư mục tên có nháy kép
+  # (`cd "\"main repo\""` tới `"main repo"`) từng bị đọc thành `main repo` (verifier PR #71).
+  if [ "${3:-}" != n ]; then
+    strip_q "$d"
+    d="$SQ"
+  fi
   case "$d" in
     . | ./) RD="$1" ;; # cd . ở lại thư mục đó: không nối /. (1500 lần `cd .` thành 1500 thư mục khác chữ, 4.3)
     \~ | \~/*) RD="$HOME${d#\~}" ;;
@@ -586,6 +590,10 @@ ARG_PS='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|]+)'
 # không được thay cách đọc cũ.
 ARG_BSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
 ARG_PSQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'])+'
+# Lượt từ ghép thứ ba: trong nháy kép của bash, \" không đóng nháy (`cd "\"main repo\""` tới thư mục `"main repo"`). Lượt
+# RIÊNG, không thay ARG_BSQ: nháy kép đứng trong nháy đơn (`echo 'cd "x\"'; cd M`) thì cách đọc này nuốt cd thật phía sau,
+# còn ARG_BSQ đóng nháy ở `\"` nên vẫn bắt (reviewer PR #73). Chỉ chạy trên dạng có `\"`.
+ARG_BSQE='("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|"'"'"'\\]|\\.)+\\?'
 
 # last_arg <đoạn khớp> <regex đối số>: đối số cuối của đoạn, bỏ tiền tố -Path:, --git-dir=, GIT_DIR=... Kết quả trong LA.
 last_arg() {
@@ -716,6 +724,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # với set -u báo lỗi khi mở rộng mảng rỗng).
   dl=("$base")
   unknown="$shc_unknown"
+  longw=""
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
   branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -728,7 +737,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   nb=0
-  for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ"; do
+  for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ" "$ARG_BSQE"; do
     # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
     [ -n "$reason$unknown" ] && break
     um="bash"
@@ -736,6 +745,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     [ "$a" = "$ARG_PS" ] && um="ps"
     [ "$a" = "$ARG_BSQ" ] && q=1
     [ "$a" = "$ARG_PSQ" ] && um="ps" && q=1
+    [ "$a" = "$ARG_BSQE" ] && q=e
     CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
@@ -743,6 +753,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
+      fi
+      if [ "$q" = e ]; then
+        case "$f" in *'\"'*) ;; *) continue ;; esac
       fi
       cur="$base"
       cl=("$base")
@@ -762,20 +775,23 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         m="${m#?}"
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
-        # Lượt từ ghép chỉ thêm thư mục: từ quá PATH_MAX (4096) thì bỏ, trước mọi phép cắt chuỗi (bậc hai theo độ dài).
-        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
+        # Lượt từ ghép: từ quá PATH_MAX (4096) thì không đọc (trước mọi phép cắt chuỗi, bậc hai theo độ dài) mà hỏi: cd -L
+        # rút `..` theo chữ trước khi chdir nên bash vẫn tới được (`cd "a b"/../`×700 rồi `main\ repo`, 4.3 (2)).
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; continue; }
         # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
         # ghép thì ngược lại.
         t="$EO"
         x="$EN"
-        [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO"
+        tn=""
+        xn=n
+        [ -n "$q" ] && [ -n "$EN" ] && t="$EN" && x="$EO" && tn=n && xn=""
         if [ -n "$x" ] && [ "$x" != "$t" ]; then
-          resolve_dir "$cur" "$x"
+          resolve_dir "$cur" "$x" "$xn"
           nb_add || break 2
           gone "$RD" || dl+=("$RD")
         fi
-        resolve_dir "$cur" "$t"
+        resolve_dir "$cur" "$t" "$tn"
         nb_add || break 2
         # cd chỉ khớp nhờ tiền tố mới (time, x=1, ...) có thể là chữ trong chuỗi (echo "x=1 cd W"): chỉ thêm thư mục,
         # không đổi chỗ đứng cho các cd sau, nên cd thật phía sau vẫn được đọc như trước (reviewer 4.10).
@@ -794,7 +810,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
-        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && continue
+        [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; continue; }
         for c in "${cl[@]}"; do
           [ -n "$c" ] || continue
@@ -807,7 +823,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           nb_add || break 4
           dl+=("$RD")
           if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
-            resolve_dir "$c" "$EN"
+            resolve_dir "$c" "$EN" n
             nb_add || break 4
             dl+=("$RD")
           fi
@@ -817,6 +833,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   done
   dirs="$(printf '%s\n' "${dl[@]}" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
+  [ -n "$longw" ] && [ -z "$reason" ] && reason="push sau cd qua từ có nháy hay dấu thoát dài hơn 4096 ký tự: không đọc được thư mục"
   # Đọc nhánh theo thư mục THẬT, không theo cách viết: 299 `cd ..` là 299 đường khác chữ mà chỉ vài thư mục thật, mỗi đường
   # có `..` từng tốn hai subshell chạy git (tới SUB_MAX: ~10 giây trên Git Bash, ca long-manydotdot đỏ chập chờn). Một
   # subshell cd lần lượt tới mọi đường (builtin, không fork) theo cả hai cách: -P (vật lý, như git -C) và -L (logic, như cd
