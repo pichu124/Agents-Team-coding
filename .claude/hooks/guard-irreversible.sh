@@ -21,6 +21,16 @@ raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dướ
 # rõ tool thì so thêm bản gốc. Kiểm tra push trên nhánh chính đọc từng dạng riêng ($forms).
 nl=$'\n'
 soh=$'\001'
+# Locale gốc và lớp byte ≥ 0x80: grep thân -c và grep của vòng cd chạy ở locale C (tuyến tính) khi dạng chỉ có byte ASCII,
+# còn dạng có byte ≥ 0x80 thì chạy ở locale gốc như trước (khoảng trắng Unicode khớp [[:space:]], -i gập ſ và ı).
+LC0="${LC_ALL-}"
+HIB="$(printf '[\200-\377]')"
+# grep_lc <chuỗi>: đặt GL thành locale cho grep trên chuỗi đó.
+grep_lc() {
+  GL=C
+  LC_ALL=C text_grep "$1" -q -- "$HIB" && GL="$LC0"
+  return 0
+}
 tool="$(json_get "$input" tool_name)"
 # join_lines <lệnh> <dấu nối> <join|keep>: dòng có dòng sau mà kết thúc bằng dấu nối (xét lần lượt từng ký
 # tự của <dấu nối>) thì bỏ dấu đó cùng xuống dòng, thay bằng dấu cách (join), hoặc chỉ bỏ dấu và giữ xuống
@@ -138,9 +148,11 @@ decode_shell_c() {
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
     # LC_ALL=C: ở locale UTF-8 grep không dùng DFA, chuỗi option nối nhau (`bash -o `×23000, ~184 KB) khớp tới cuối rồi hỏng,
-    # thử lại từ mọi vị trí: bậc hai, quá 40 giây (reviewer PR #62 lần 8). Mẫu là ASCII, mỗi byte của ký tự nhiều byte vẫn
-    # khớp các lớp phủ định như ở UTF-8, nên kết quả không đổi.
-    for m in $(printf '%s' "${forms[$i]}" | LC_ALL=C grep -Eo -- "$SHC$SHW"); do
+    # thử lại từ mọi vị trí: bậc hai, quá 40 giây (reviewer PR #62 lần 8). Chỉ dạng toàn ASCII: dạng có byte ≥ 0x80 chạy ở
+    # locale gốc như trước, vì ở locale C [[:space:]] không khớp khoảng trắng Unicode (`bash<U+3000>-c` của PowerShell;
+    # reviewer PR #74). Lệnh dài có ký tự không phải ASCII vẫn chậm như trước.
+    grep_lc "${forms[$i]}"
+    for m in $(printf '%s' "${forms[$i]}" | LC_ALL="$GL" grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
       # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
@@ -737,6 +749,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   nb=0
+  # Locale cho grep của vòng cd theo từng dạng (grep_lc ở trên), tính một lần cho mọi lượt.
+  flc=()
+  for f in "${forms[@]}"; do
+    grep_lc "$f"
+    flc+=("$GL")
+  done
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ" "$ARG_BSQE"; do
     # Đã hỏi chắc (thư mục của phiên ở nhánh chính, hay thư mục chưa biết): khỏi duyệt cd.
     [ -n "$reason$unknown" ] && break
@@ -749,7 +767,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
-    for f in "${forms[@]}"; do
+    for fx in "${!forms[@]}"; do
+      f="${forms[$fx]}"
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
@@ -760,9 +779,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       cur="$base"
       cl=("$base")
       ncd=0
-      # LC_ALL=C như grep thân -c ở trên: tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8. -i ở locale C chỉ
-      # gập chữ ASCII: ſ, ı và khoảng trắng Unicode đã có dạng đổi sang ASCII trong forms (src/un ở trên).
-      for m in $(printf '%s' "$f" | LC_ALL=C grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+      # Locale C cho dạng toàn ASCII như grep thân -c ở trên: tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8.
+      # Dạng có byte ≥ 0x80 giữ locale gốc: dạng đổi sang ASCII (un) đổi cả chữ trong tên thư mục (en dash, nháy cong), nên
+      # dạng gốc vẫn phải khớp `Set-Location<U+3000>'proj–x'` hay `ſl 'proj–x'` (reviewer PR #74).
+      for m in $(printf '%s' "$f" | LC_ALL="${flc[$fx]}" grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
         ncd=$((ncd + 1))

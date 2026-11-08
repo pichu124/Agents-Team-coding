@@ -648,13 +648,27 @@ EOF
   TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
   # Thư mục tên có en dash: dạng đổi sang ASCII trỏ tới `proj-x` (không có), nên dạng gốc phải khớp cd sau khoảng trắng
   # Unicode, ſ hay ı, kể cả khi grep của vòng cd chạy ở locale C cho nhanh (reviewer PR #74).
+  # Chỉ grep ở locale UTF-8 mới coi U+3000 là [[:space:]] (main cũng chỉ hỏi khi đó): chạy ở locale UTF-8 đầu tiên mà
+  # grep của máy khớp như vậy, không có thì bỏ qua. Bộ đọc sed không giải \uXXXX (input dựng bằng json.dumps) nên tên
+  # thư mục còn nguyên chữ –: main cũng không đọc được, bỏ mode sed.
   pdx="$tmp/proj${ndash}x"
-  new_repo "$pdx" main
-  TOOL=PowerShell expect_guard ask "Set-Location${ideo}'$pdx'; git push"
-  TOOL=PowerShell expect_guard ask "Push-Location${ideo}-Path${ideo}'$pdx'; git push"
-  TOOL=PowerShell expect_guard ask "$(printf '\305\277')l '$pdx'; git push"
-  TOOL=PowerShell expect_guard ask "Set-Locat$(printf '\304\261')on '$pdx'; git push"
-  TOOL=Other expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+  [ -d "$pdx" ] || new_repo "$pdx" main
+  ul=""
+  for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 UTF-8; do
+    n="$(printf '%s' "$ideo" | LC_ALL="$l" grep -c '[[:space:]]' 2>/dev/null)"
+    [ "$n" = 1 ] && ul="$l" && break
+  done
+  if [ -n "$ul" ] && [ "$mode" != sed ]; then
+    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Push-Location${ideo}-Path${ideo}'$pdx'; git push"
+    # ſ, ı: chỉ khi grep -i của máy gập chúng thành s, i (GNU grep; main cũng chỉ hỏi khi đó).
+    n="$(printf '\305\277\n\304\261\n' | LC_ALL="$ul" grep -ci '^[si]$' 2>/dev/null)"
+    if [ "$n" = 2 ]; then
+      LC_ALL="$ul" TOOL=PowerShell expect_guard ask "$(printf '\305\277')l '$pdx'; git push"
+      LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Set-Locat$(printf '\304\261')on '$pdx'; git push"
+    fi
+    LC_ALL="$ul" TOOL=Other expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+  fi
   # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
   expect_guard ask "git pu$(printf '\305\277')h -f"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
