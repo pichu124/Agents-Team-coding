@@ -646,6 +646,15 @@ EOF
   TOOL=PowerShell expect_guard ask "Push-Location${ideo}'$on_main'; git push"
   TOOL=PowerShell expect_guard ask "Set-Location ${ndash}Path '$on_main'; git push"
   TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
+  # Thư mục tên có en dash: dạng đổi sang ASCII trỏ tới `proj-x` (không có), nên dạng gốc phải khớp cd sau khoảng trắng
+  # Unicode, ſ hay ı, kể cả khi grep của vòng cd chạy ở locale C cho nhanh (reviewer PR #74).
+  pdx="$tmp/proj${ndash}x"
+  new_repo "$pdx" main
+  TOOL=PowerShell expect_guard ask "Set-Location${ideo}'$pdx'; git push"
+  TOOL=PowerShell expect_guard ask "Push-Location${ideo}-Path${ideo}'$pdx'; git push"
+  TOOL=PowerShell expect_guard ask "$(printf '\305\277')l '$pdx'; git push"
+  TOOL=PowerShell expect_guard ask "Set-Locat$(printf '\304\261')on '$pdx'; git push"
+  TOOL=Other expect_guard ask "Set-Location${ideo}'$pdx'; git push"
   # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
   expect_guard ask "git pu$(printf '\305\277')h -f"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
