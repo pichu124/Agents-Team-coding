@@ -758,6 +758,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # đã đọc nháy như bash). Mỗi dạng che là một lượt grep trên cả lệnh: `echo "\""` trước long-uquote hay long-xassign từng
   # đẩy bash 3.2 quá 10 giây (main ~7, reviewer PR #76), nên dạng dài hơn DQM_MAX mà có `\"` trong nháy kép thì hỏi.
   DQM_MAX=65536
+  DQM_CD=32
   nf="${#forms[@]}"
   cforms=("${forms[@]}")
   # Đã chắc hỏi (thư mục của phiên ở main, quá PUSH_CMD_MAX) thì vòng cd không chạy: khỏi dựng dạng che (lệnh ~440 KB có
@@ -827,6 +828,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           reason="push sau hơn $CD_MAX lần cd: không đọc hết các thư mục"
           break 2
         fi
+        # Lượt che (dạng che `\"` ở ARG_BSQ) là lượt thêm so với main, tốn theo số cd chứ không theo byte: 230 cd nhiều đoạn
+        # nháy sau `echo "\""` (43 KB) từng quá 10 giây với bash 3.2 (main ~7,8, reviewer PR #76 lần 5). Trần riêng, quá thì hỏi.
+        if [ "$fx" -ge "$nf" ] && [ "$ncd" -gt "$DQM_CD" ]; then
+          reason="push sau hơn $DQM_CD lần cd trong lệnh có \\\" trong nháy kép: không đọc hết các thư mục"
+          break 2
+        fi
         nw=""
         case "$m" in N*) nw=1 ;; esac
         m="${m#?}"
@@ -864,6 +871,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         cl+=("$cur")
       done
       dl+=("${cl[@]}")
+      # Dạng che không giúp vòng -C (GDRE nhận -C sau mọi khoảng trắng, `echo "x\" -C q"` vẫn nuốt), mà tiêu chung GC_MAX:
+      # `git -C . status; `×1800 sau `echo "\""` từng hỏi thừa sau 9,4 giây (reviewer PR #76 lần 5). Bỏ qua.
+      [ "$fx" -ge "$nf" ] && continue
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
