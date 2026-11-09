@@ -760,12 +760,16 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   DQM_MAX=65536
   nf="${#forms[@]}"
   cforms=("${forms[@]}")
-  case "$cmd" in
+  # Đã chắc hỏi (thư mục của phiên ở main, quá PUSH_CMD_MAX) thì vòng cd không chạy: khỏi dựng dạng che (lệnh ~440 KB có
+  # `\"` từng quá 10 giây với bash 3.2, reviewer PR #76 lần 4). Chỉ tính dạng che khi awk thật sự che `\"` trong nháy kép
+  # (có \002): lex_awk còn đổi `$` trong nháy đơn, bỏ comment, mà các đổi đó không cần đọc lại.
+  stx="$(printf '\002')"
+  [ -n "$reason$unknown" ] || case "$cmd" in
     *'\"'*)
       for f in "${forms[@]}"; do
         case "$f" in *'\"'*) ;; *) continue ;; esac
         mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
-        [ "$mf" = "$f" ] && continue
+        case "$mf" in *"$stx"*) ;; *) continue ;; esac
         # Cận byte như nb_add: dạng có ký tự ngoài ASCII giữ locale UTF-8 cho grep (chậm hơn), `ệ`×56000 (56000 ký tự,
         # 168 KB) từng quá 10 giây với bash 3.2 khi trần đếm ký tự (reviewer PR #76 lần 3).
         fl="${#f}"
