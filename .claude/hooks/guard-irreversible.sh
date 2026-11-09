@@ -490,9 +490,12 @@ E='([[:space:];&|)"\'"'"']|$)'
 # (bash: my\ repo). Regex được chọn cách nào khớp, nên hỏi thừa chứ không bỏ sót.
 # Một từ của shell có thể ghép nhiều đoạn nháy ("a b"/'x', --git-dir="a b/".git): QW là một đoạn. Option và giá
 # trị của nó đọc thêm theo cách đó (hợp với cách cũ), để giá trị có nhiều dấu cách trong nháy không chặn regex.
-QW='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'\\]|\\.)'
-OA='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'][^[:space:]]*|([^-[:space:]"'"'"'\\]|\\.)([^[:space:]\\]|\\.)*\\?)'
-OQ='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'\\]|\\.)'"$QW"'*\\?'
+# Đoạn nháy kép đọc thêm theo bash (DQE: `\"` không đóng nháy, `git -C "\"main repo\"" push`; reviewer PR #73), hợp với
+# cách cũ `"[^"]*"` (đóng ở `\"`): regex chỉ khớp nhiều hơn.
+DQE='"([^"\\]|\\.)*"'
+QW='("[^"]*"|'"$DQE"'|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'\\]|\\.)'
+OA='("[^"]*"|'"$DQE"'|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'][^[:space:]]*|([^-[:space:]"'"'"'\\]|\\.)([^[:space:]\\]|\\.)*\\?)'
+OQ='("[^"]*"|'"$DQE"'|'"'"'[^'"'"']*'"'"'|[^-[:space:]"'"'"'\\]|\\.)'"$QW"'*\\?'
 O='([[:space:]]+-([^[:space:]"'"'"']|"[^"]*"|'"'"'[^'"'"']*'"'"'|["'"'"'])+([[:space:]]+('"$OA|$OQ"'))?)*'
 # Vị trí bắt đầu một lệnh (để `git rm` không bị coi là `rm`).
 B='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|time|xargs|exec|nohup|env)[[:space:]])[[:space:]]*((sudo|doas|wsl)[[:space:]]+)?'
@@ -842,7 +845,17 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           resolve_dir "$c" "$EO"
           nb_add || break 4
           dl+=("$RD")
-          if [ -n "$EN" ] && [ "$EN" != "$EO" ]; then
+          # EN trùng chữ EO vẫn phải đọc khi EO có nháy hay \: resolve_dir ở trên bỏ nháy EO lần nữa (`git -C '"main repo"'`
+          # cho EO = EN = `"main repo"`, dòng trên đọc thành `main repo`; reviewer PR #73).
+          xq=""
+          case "$EO" in *[\"\'\\]*) xq=1 ;; esac
+          if [ -n "$EN" ] && { [ "$EN" != "$EO" ] || [ -n "$xq" ]; }; then
+            # Lần đọc thêm cũng tính vào GC_MAX: bash 3.2 nối mảng bậc hai, `git -C '"q"' status; `×8200 từng mất ~12,7 giây.
+            ngc=$((ngc + 1))
+            if [ "$ngc" -gt "$GC_MAX" ]; then
+              reason="push sau quá nhiều git -C và cd: không đọc hết các thư mục"
+              break 4
+            fi
             resolve_dir "$c" "$EN" n
             nb_add || break 4
             dl+=("$RD")
