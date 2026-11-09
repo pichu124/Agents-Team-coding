@@ -766,11 +766,18 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         case "$f" in *'\"'*) ;; *) continue ;; esac
         mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
         [ "$mf" = "$f" ] && continue
-        if [ "${#f}" -gt "$DQM_MAX" ]; then
-          reason="push trong lệnh dài hơn $DQM_MAX ký tự có \\\" trong nháy kép: không đọc được nháy như bash"
+        # Cận byte như nb_add: dạng có ký tự ngoài ASCII giữ locale UTF-8 cho grep (chậm hơn), `ệ`×56000 (56000 ký tự,
+        # 168 KB) từng quá 10 giây với bash 3.2 khi trần đếm ký tự (reviewer PR #76 lần 3).
+        fl="${#f}"
+        case "$f" in *[![:ascii:]]*) fl=$((4 * fl)) ;; esac
+        if [ "$fl" -gt "$DQM_MAX" ]; then
+          reason="push trong lệnh dài hơn $DQM_MAX byte có \\\" trong nháy kép: không đọc được nháy như bash"
           break
         fi
-        cforms+=("$mf")
+        # Dạng che trùng nhau (joined và both khi tool là Bash) chỉ đọc một lần.
+        dup=""
+        for g in "${cforms[@]}"; do [ "$g" = "$mf" ] && { dup=1; break; }; done
+        [ -n "$dup" ] || cforms+=("$mf")
       done
       ;;
   esac
