@@ -850,6 +850,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
           xq=""
           case "$EO" in *[\"\'\\]*) xq=1 ;; esac
           if [ -n "$EN" ] && { [ "$EN" != "$EO" ] || [ -n "$xq" ]; }; then
+            # Lần đọc thêm cũng tính vào GC_MAX: bash 3.2 nối mảng bậc hai, `git -C '"q"' status; `×8200 từng mất ~12,7 giây.
+            ngc=$((ngc + 1))
+            if [ "$ngc" -gt "$GC_MAX" ]; then
+              reason="push sau quá nhiều git -C và cd: không đọc hết các thư mục"
+              break 4
+            fi
             resolve_dir "$c" "$EN" n
             nb_add || break 4
             dl+=("$RD")
