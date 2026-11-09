@@ -1029,6 +1029,17 @@ for mode in $modes; do
     *) bad "guard phải hỏi: nháy kép có \\\" trong nháy đơn không được nuốt cd tới repo ở main [$mode]" ;;
   esac
 done
+# Bản đối xứng nháy kép (4.3): trong nháy kép `\"` không đóng nháy, nên `cd q` trong chuỗi `"x\" cd q"` không là lệnh; các
+# lượt đọc (ARG_BSQ đóng nháy ở `\"`, ARG_BSQE ghép nhầm `"` thứ hai) đều nuốt cd thật phía sau vào từ `q"; cd "<tmp>/a`.
+for t in 'main\\ repo' '\"main repo\"'; do
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"x\\\\\\" cd q\\"; cd \\"%s/a b\\"/../%s && git push origin HEAD","description":"test"}}\n' "$tmp" "$tmp" "$t" > "$tmp/qdswallow2.json"
+  for mode in $modes; do
+    case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdswallow2.json")" in
+      *'"permissionDecision":"ask"'*) ok ;;
+      *) bad "guard phải hỏi: chuỗi nháy kép có \\\" không được nuốt cd tới repo ở main [$mode]: $(cat "$tmp/qdswallow2.json")" ;;
+    esac
+  done
+done
 # Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
 # `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
 {
