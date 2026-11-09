@@ -981,6 +981,36 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 19000); do printf '%s' 'aaaaaaaaaa'; done
   printf '\\n\\" ; cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-uquote.json"
+# Reviewer PR #76: một `\"` trong nháy kép làm vòng cd đọc thêm dạng che (lex_awk, dm = 1); hai ca trên kèm `echo "\""`
+# từng quá 10 giây với bash 3.2 (main ~7 giây).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"\\\\\\"\\"; true \\\\\\ncd \\"' "$tmp"
+  for _ in $(seq 18900); do printf '%s' 'aaaaaaaaaa'; done
+  printf '\\n\\" ; cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-uquoteq.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"\\\\\\"\\"; true \\\\\\n' "$tmp"
+  for _ in $(seq 65000); do printf '%s' 'x= '; done
+  printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-xassignq.json"
+# Reviewer PR #76 lần 3: DQM_MAX đếm ký tự thì `ệ`×56000 (168 KB, 56000 ký tự) vẫn đi dạng che, grep ở locale UTF-8 bậc
+# hai: ~10,7 giây với bash 3.2 (main ~7,8). Nay đếm cận byte (4 byte mỗi ký tự khi có ký tự ngoài ASCII).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"\\\\\\"\\"; true \\\\\\ncd \\"' "$tmp"
+  for _ in $(seq 5600); do printf '\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207\341\273\207'; done
+  printf '\\n\\" ; cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-uquoteqe.json"
+# Reviewer PR #76 lần 5: chi phí lượt che theo số cd chứ không theo byte: 230 `cd /nx" "…` (60 đoạn) sau `echo "\""`, chỉ
+# 43 KB, từng quá 10 giây với bash 3.2 (main ~7,8). Lượt che có trần số cd riêng (DQM_CD), quá thì hỏi.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"\\\\\\"\\"; ' "$tmp"
+  for _ in $(seq 230); do
+    printf 'cd /nx'
+    for _ in $(seq 60); do printf '\\" \\"'; done
+    printf '; '
+  done
+  printf 'cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-cddq.json"
 # Phần gom thư mục nối mỗi cd vào đường trước (cur), tổng độ dài bậc hai theo số cd: 3 cd `a/..`×1000 rồi 289 `cd ..`
 # là ~3,5 MB mỗi cách đọc, ~13,5 giây với bash 3.2 và 5 ở UTF-8 (verifier PR #68), quá timeout. Trần BYTE_MAX.
 {
@@ -1027,6 +1057,43 @@ for mode in $modes; do
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdswallow.json")" in
     *'"permissionDecision":"ask"'*) ok ;;
     *) bad "guard phải hỏi: nháy kép có \\\" trong nháy đơn không được nuốt cd tới repo ở main [$mode]" ;;
+  esac
+done
+# Bản đối xứng nháy kép (4.3): trong nháy kép `\"` không đóng nháy, nên `cd q` trong chuỗi `"x\" cd q"` không là lệnh; các
+# lượt đọc (ARG_BSQ đóng nháy ở `\"`, ARG_BSQE ghép nhầm `"` thứ hai) đều nuốt cd thật phía sau vào từ `q"; cd "<tmp>/a`.
+for t in 'main\\ repo' '\"main repo\"'; do
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"x\\\\\\" cd q\\"; cd \\"%s/a b\\"/../%s && git push origin HEAD","description":"test"}}\n' "$tmp" "$tmp" "$t" > "$tmp/qdswallow2.json"
+  for mode in $modes; do
+    case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdswallow2.json")" in
+      *'"permissionDecision":"ask"'*) ok ;;
+      *) bad "guard phải hỏi: chuỗi nháy kép có \\\" không được nuốt cd tới repo ở main [$mode]: $(cat "$tmp/qdswallow2.json")" ;;
+    esac
+  done
+done
+# Reviewer PR #76 lần 4: dạng che (awk với dm = 1) chạy cả khi đã chắc hỏi (thư mục của phiên ở main, quá PUSH_CMD_MAX),
+# lệnh ~440 KB có `\"` ngoài nháy kép từng quá 10 giây với bash 3.2 (main ~7,7). awk bọc ghi lại lần chạy dạng che.
+mkdir -p "$tmp/dmawk"
+realawk="$(command -v awk)"
+printf '#!/bin/sh\ncase "$*" in *"dm = 1"*) echo x >> "%s/dmawk.log" ;; esac\nexec "%s" "$@"\n' "$tmp" "$realawk" > "$tmp/dmawk/awk"
+chmod +x "$tmp/dmawk/awk"
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\\\\\"x\\\\\\"; git push origin HEAD","description":"test"}}\n' "$on_main" > "$tmp/dmskip.json"
+# Chỉ hỏi vì DQM_MAX khi dạng che thật sự che `\"` trong nháy kép: lex_awk còn đổi `$` trong nháy đơn, bỏ comment, nên
+# `\"` ngoài nháy kép kèm `'$y'` trong lệnh dài trên nhánh feature từng bị hỏi thừa.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\\\\\"x\\\\\\" '"'"'$y'"'"' ' "$work"
+  for _ in $(seq 3500); do printf '%s' 'a a a a a a a a a a '; done
+  printf '; git push origin feat/x # note","description":"test"}}\n'
+} > "$tmp/dmnoask.json"
+for mode in $modes; do
+  rm -f "$tmp/dmawk.log"
+  out="$(PATH="$tmp/dmawk:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/dmskip.json" 2>/dev/null)"
+  case "$out" in
+    *'"ask"'*) if [ -s "$tmp/dmawk.log" ]; then bad "guard không được chạy dạng che khi đã chắc hỏi [$mode]"; else ok; fi ;;
+    *) bad "guard phải hỏi push ở repo nhánh main [$mode] → [$out]" ;;
+  esac
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/dmnoask.json")" in
+    *'"ask"'*) bad "guard hỏi thừa: \\\" ngoài nháy kép trong lệnh dài trên nhánh feature [$mode]" ;;
+    *) ok ;;
   esac
 done
 # Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
@@ -1196,7 +1263,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in

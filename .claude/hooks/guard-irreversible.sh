@@ -288,7 +288,7 @@ lex_awk='BEGIN { hh = 1 }
       else if (c == "\047") st = 0
       else if (index("`$(){}", c)) c = "_"
     }
-    else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; c = c d }
+    else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; else if (dm && st == 2 && d == "\"") d = "\002"; c = c d }
     else if (st == 5) { if (c == "`") st = bq }
     else if (c == "$" && ch[i + 1] == "(") {
       sp++; sk[sp] = st; pc[sp] = 0; if (!ov) { sv[sp] = sb; bv[sp] = bd; sb = 0; bd = 0 }; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
@@ -752,9 +752,43 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   nb=0
+  # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
+  # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
+  # thật phía sau (4.3). Thêm cho vòng cd, không thay dạng gốc; chỉ dạng có `\"` trong nháy kép, và chỉ ở lượt ARG_BSQ (dạng che
+  # đã đọc nháy như bash). Mỗi dạng che là một lượt grep trên cả lệnh: `echo "\""` trước long-uquote hay long-xassign từng
+  # đẩy bash 3.2 quá 10 giây (main ~7, reviewer PR #76), nên dạng dài hơn DQM_MAX mà có `\"` trong nháy kép thì hỏi.
+  DQM_MAX=65536
+  DQM_CD=32
+  nf="${#forms[@]}"
+  cforms=("${forms[@]}")
+  # Đã chắc hỏi (thư mục của phiên ở main, quá PUSH_CMD_MAX) thì vòng cd không chạy: khỏi dựng dạng che (lệnh ~440 KB có
+  # `\"` từng quá 10 giây với bash 3.2, reviewer PR #76 lần 4). Chỉ tính dạng che khi awk thật sự che `\"` trong nháy kép
+  # (có \002): lex_awk còn đổi `$` trong nháy đơn, bỏ comment, mà các đổi đó không cần đọc lại.
+  stx="$(printf '\002')"
+  [ -n "$reason$unknown" ] || case "$cmd" in
+    *'\"'*)
+      for f in "${forms[@]}"; do
+        case "$f" in *'\"'*) ;; *) continue ;; esac
+        mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
+        case "$mf" in *"$stx"*) ;; *) continue ;; esac
+        # Cận byte như nb_add: dạng có ký tự ngoài ASCII giữ locale UTF-8 cho grep (chậm hơn), `ệ`×56000 (56000 ký tự,
+        # 168 KB) từng quá 10 giây với bash 3.2 khi trần đếm ký tự (reviewer PR #76 lần 3).
+        fl="${#f}"
+        case "$f" in *[![:ascii:]]*) fl=$((4 * fl)) ;; esac
+        if [ "$fl" -gt "$DQM_MAX" ]; then
+          reason="push trong lệnh dài hơn $DQM_MAX byte có \\\" trong nháy kép: không đọc được nháy như bash"
+          break
+        fi
+        # Dạng che trùng nhau (joined và both khi tool là Bash) chỉ đọc một lần.
+        dup=""
+        for g in "${cforms[@]}"; do [ "$g" = "$mf" ] && { dup=1; break; }; done
+        [ -n "$dup" ] || cforms+=("$mf")
+      done
+      ;;
+  esac
   # Locale cho grep của vòng cd theo từng dạng (grep_lc ở trên), tính một lần cho mọi lượt.
   flc=()
-  for f in "${forms[@]}"; do
+  for f in "${cforms[@]}"; do
     grep_lc "$f"
     flc+=("$GL")
   done
@@ -770,8 +804,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
-    for fx in "${!forms[@]}"; do
-      f="${forms[$fx]}"
+    for fx in "${!cforms[@]}"; do
+      f="${cforms[$fx]}"
+      [ "$fx" -ge "$nf" ] && [ "$a" != "$ARG_BSQ" ] && continue
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
@@ -791,6 +826,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         ncd=$((ncd + 1))
         if [ "$ncd" -gt "$CD_MAX" ]; then
           reason="push sau hơn $CD_MAX lần cd: không đọc hết các thư mục"
+          break 2
+        fi
+        # Lượt che (dạng che `\"` ở ARG_BSQ) là lượt thêm so với main, tốn theo số cd chứ không theo byte: 230 cd nhiều đoạn
+        # nháy sau `echo "\""` (43 KB) từng quá 10 giây với bash 3.2 (main ~7,8, reviewer PR #76 lần 5). Trần riêng, quá thì hỏi.
+        if [ "$fx" -ge "$nf" ] && [ "$ncd" -gt "$DQM_CD" ]; then
+          reason="push sau hơn $DQM_CD lần cd trong lệnh có \\\" trong nháy kép: không đọc hết các thư mục"
           break 2
         fi
         nw=""
@@ -830,6 +871,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         cl+=("$cur")
       done
       dl+=("${cl[@]}")
+      # Dạng che không giúp vòng -C (GDRE nhận -C sau mọi khoảng trắng, `echo "x\" -C q"` vẫn nuốt), mà tiêu chung GC_MAX:
+      # `git -C . status; `×1800 sau `echo "\""` từng hỏi thừa sau 9,4 giây (reviewer PR #76 lần 5). Bỏ qua.
+      [ "$fx" -ge "$nf" ] && continue
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
         last_arg "$m" "$a"
