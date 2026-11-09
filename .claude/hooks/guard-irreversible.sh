@@ -754,14 +754,23 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   nb=0
   # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
   # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
-  # thật phía sau (4.3). Thêm cho vòng cd và -C, không thay dạng gốc; chỉ dạng có `\"`.
+  # thật phía sau (4.3). Thêm cho vòng cd, không thay dạng gốc; chỉ dạng có `\"` trong nháy kép, và chỉ ở lượt ARG_BSQ (dạng che
+  # đã đọc nháy như bash). Mỗi dạng che là một lượt grep trên cả lệnh: `echo "\""` trước long-uquote hay long-xassign từng
+  # đẩy bash 3.2 quá 10 giây (main ~7, reviewer PR #76), nên dạng dài hơn DQM_MAX mà có `\"` trong nháy kép thì hỏi.
+  DQM_MAX=65536
+  nf="${#forms[@]}"
   cforms=("${forms[@]}")
   case "$cmd" in
     *'\"'*)
       for f in "${forms[@]}"; do
         case "$f" in *'\"'*) ;; *) continue ;; esac
         mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
-        [ "$mf" = "$f" ] || cforms+=("$mf")
+        [ "$mf" = "$f" ] && continue
+        if [ "${#f}" -gt "$DQM_MAX" ]; then
+          reason="push trong lệnh dài hơn $DQM_MAX ký tự có \\\" trong nháy kép: không đọc được nháy như bash"
+          break
+        fi
+        cforms+=("$mf")
       done
       ;;
   esac
@@ -785,6 +794,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
     for fx in "${!cforms[@]}"; do
       f="${cforms[$fx]}"
+      [ "$fx" -ge "$nf" ] && [ "$a" != "$ARG_BSQ" ] && continue
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
