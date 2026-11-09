@@ -997,13 +997,19 @@ mkdir -p "$tmp/a b"
 qd="$tmp/qd"
 if mkdir -p "$qd/\"main repo\"" 2>/dev/null && [ -d "$qd/\"main repo\"" ]; then
   new_repo "$qd/\"main repo\"" main
-  for w in '\"\\\"main repo\\\"\"' "'\\\"main repo\\\"'" '\\\"main\\ repo\\\"'; do
-    printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd %s && git push origin HEAD","description":"test"}}\n' "$qd" "$w" > "$tmp/qdname.json"
-    for mode in $modes; do
-      case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdname.json")" in
-        *'"permissionDecision":"ask"'*) ok ;;
-        *) bad "guard phải hỏi push sau cd tới thư mục tên có nháy kép ở nhánh main [$mode]: cd $w" ;;
-      esac
+  # Cả `git -C <từ> push` (reviewer PR #73): regex push không hiểu `\"` trong nháy kép của giá trị option, và vòng -C bỏ
+  # cách đọc theo bash khi nó trùng chữ cách đọc cũ (cách cũ còn bị bỏ nháy lần nữa trong resolve_dir).
+  for t in 'cd %s && git push origin HEAD' 'git -C %s push origin HEAD'; do
+    for w in '\"\\\"main repo\\\"\"' "'\\\"main repo\\\"'" '\\\"main\\ repo\\\"'; do
+      # shellcheck disable=SC2059  # t là mẫu lệnh có %s
+      c="$(printf "$t" "$w")"
+      printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s","description":"test"}}\n' "$qd" "$c" > "$tmp/qdname.json"
+      for mode in $modes; do
+        case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/qdname.json")" in
+          *'"permissionDecision":"ask"'*) ok ;;
+          *) bad "guard phải hỏi push tới thư mục tên có nháy kép ở nhánh main [$mode]: $c" ;;
+        esac
+      done
     done
   done
 fi
