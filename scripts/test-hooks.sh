@@ -920,7 +920,7 @@ many_cd 'cd \"a b\"; cd \"/tmp/c d\"'"'x'"' && ' 2000 > "$tmp/long-manycdalt.jso
 } > "$tmp/long-manygitc.json"
 many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
 # Reviewer PR #75: `git -C '"q"'` (EO có nháy) đọc thêm EN cho mỗi lần ghép -C × thư mục; bash 3.2 nối mảng bậc hai, ~8200
-# lần như vậy từng mất ~11 giây (bản trước ~8 giây): mỗi lần đọc thêm cũng tính vào GC_MAX.
+# lần như vậy từng mất 11–12,7 giây (main 8–9 giây); chỉ bash 3.2 (CI macOS) đỏ: mỗi lần đọc thêm cũng tính vào GC_MAX.
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
   for _ in $(seq 8200); do printf '%s' "git -C '\\\"q\\\"' status; "; done
