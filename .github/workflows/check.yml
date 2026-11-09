@@ -27,8 +27,8 @@ jobs:
           - os: windows-latest
             shell: bash # từ khoá bash trên Windows là Git Bash (lệnh bash trong PATH có thể là WSL)
     runs-on: ${{ matrix.os }}
-    # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ. PR #76 (9/11): Windows mất
-    # ~119 phút; lần chạy kia cùng commit (test-hooks 66 phút, test-install hơn 73) bị huỷ ở 150 phút giữa test-install.
+    # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ. 9/11: 11 lần xanh mất
+    # 99–146 phút (7 lần 137–146), một lần (PR #76) bị huỷ ở 150 phút giữa test-install. Trần cứng của runner hosted là 360.
     timeout-minutes: 210
     defaults:
       run:
