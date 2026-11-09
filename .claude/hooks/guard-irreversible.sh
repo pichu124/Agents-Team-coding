@@ -288,7 +288,7 @@ lex_awk='BEGIN { hh = 1 }
       else if (c == "\047") st = 0
       else if (index("`$(){}", c)) c = "_"
     }
-    else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; c = c d }
+    else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; else if (dm && st == 2 && d == "\"") d = "\002"; c = c d }
     else if (st == 5) { if (c == "`") st = bq }
     else if (c == "$" && ch[i + 1] == "(") {
       sp++; sk[sp] = st; pc[sp] = 0; if (!ov) { sv[sp] = sb; bv[sp] = bd; sb = 0; bd = 0 }; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
@@ -752,9 +752,22 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   nb=0
+  # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
+  # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
+  # thật phía sau (4.3). Thêm cho vòng cd và -C, không thay dạng gốc; chỉ dạng có `\"`.
+  cforms=("${forms[@]}")
+  case "$cmd" in
+    *'\"'*)
+      for f in "${forms[@]}"; do
+        case "$f" in *'\"'*) ;; *) continue ;; esac
+        mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
+        [ "$mf" = "$f" ] || cforms+=("$mf")
+      done
+      ;;
+  esac
   # Locale cho grep của vòng cd theo từng dạng (grep_lc ở trên), tính một lần cho mọi lượt.
   flc=()
-  for f in "${forms[@]}"; do
+  for f in "${cforms[@]}"; do
     grep_lc "$f"
     flc+=("$GL")
   done
@@ -770,8 +783,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     CDRE="${CDS}((${S}+(--|-p|-l|-e|-@|-passthru))*)(${S}+-(literal)?path(:|${S}+)|${S}+)${a}"
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
-    for fx in "${!forms[@]}"; do
-      f="${forms[$fx]}"
+    for fx in "${!cforms[@]}"; do
+      f="${cforms[$fx]}"
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
       if [ -n "$q" ]; then
         case "$f" in *[\"\'\\]*) ;; *) continue ;; esac
