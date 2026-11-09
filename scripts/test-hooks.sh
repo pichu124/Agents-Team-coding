@@ -1059,6 +1059,32 @@ for t in 'main\\ repo' '\"main repo\"'; do
     esac
   done
 done
+# Reviewer PR #76 lần 4: dạng che (awk với dm = 1) chạy cả khi đã chắc hỏi (thư mục của phiên ở main, quá PUSH_CMD_MAX),
+# lệnh ~440 KB có `\"` ngoài nháy kép từng quá 10 giây với bash 3.2 (main ~7,7). awk bọc ghi lại lần chạy dạng che.
+mkdir -p "$tmp/dmawk"
+realawk="$(command -v awk)"
+printf '#!/bin/sh\ncase "$*" in *"dm = 1"*) echo x >> "%s/dmawk.log" ;; esac\nexec "%s" "$@"\n' "$tmp" "$realawk" > "$tmp/dmawk/awk"
+chmod +x "$tmp/dmawk/awk"
+printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\\\\\"x\\\\\\"; git push origin HEAD","description":"test"}}\n' "$on_main" > "$tmp/dmskip.json"
+# Chỉ hỏi vì DQM_MAX khi dạng che thật sự che `\"` trong nháy kép: lex_awk còn đổi `$` trong nháy đơn, bỏ comment, nên
+# `\"` ngoài nháy kép kèm `'$y'` trong lệnh dài trên nhánh feature từng bị hỏi thừa.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\\\\\"x\\\\\\" '"'"'$y'"'"' ' "$work"
+  for _ in $(seq 3500); do printf '%s' 'a a a a a a a a a a '; done
+  printf '; git push origin feat/x # note","description":"test"}}\n'
+} > "$tmp/dmnoask.json"
+for mode in $modes; do
+  rm -f "$tmp/dmawk.log"
+  out="$(PATH="$tmp/dmawk:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/dmskip.json" 2>/dev/null)"
+  case "$out" in
+    *'"ask"'*) if [ -s "$tmp/dmawk.log" ]; then bad "guard không được chạy dạng che khi đã chắc hỏi [$mode]"; else ok; fi ;;
+    *) bad "guard phải hỏi push ở repo nhánh main [$mode] → [$out]" ;;
+  esac
+  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/dmnoask.json")" in
+    *'"ask"'*) bad "guard hỏi thừa: \\\" ngoài nháy kép trong lệnh dài trên nhánh feature [$mode]" ;;
+    *) ok ;;
+  esac
+done
 # Từ cd dài hơn 4096 byte có nháy: lượt từ ghép và unquote_word bỏ vì "quá PATH_MAX, không cd được", nhưng cd -L rút
 # `..` theo chữ trước khi chdir nên bash vẫn tới `main repo` (4.3 (2), reviewer PR #70). 700 `"a b"/../` (6,3 KB).
 {
