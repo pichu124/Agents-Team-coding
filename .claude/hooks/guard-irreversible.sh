@@ -734,6 +734,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Số lần ghép (git -C × thư mục cd đã gom) tối đa của cả lệnh, và số subshell đọc nhánh tối đa: 299 cd và 250 git -C từng
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
+  # Số -C (cả --git-dir, --work-tree…) tối đa được đọc (last_arg + expand_dir) của cả lệnh: GC_MAX chỉ đếm lần ghép, mà mỗi
+  # -C tốn một lần đọc dù không ghép, nên `git -C q status; `×5000 rồi push (ngay dưới GC_MAX) mất 7,3 giây với bash 3.2
+  # ở UTF-8, Git Bash quá timeout (4.3). Quá thì hỏi.
+  GCX_MAX=1500
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
   # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
   BYTE_MAX=2000000
@@ -773,6 +777,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   set -f
   IFS="$nl"
   ngc=0
+  ngx=0
   nb=0
   # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
   # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
@@ -898,6 +903,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       [ "$fx" -ge "$nf" ] && continue
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
+        ngx=$((ngx + 1))
+        if [ "$ngx" -gt "$GCX_MAX" ]; then
+          reason="push sau quá nhiều git -C: không đọc hết các thư mục"
+          break 3
+        fi
         last_arg "$m" "$a"
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; continue; }
