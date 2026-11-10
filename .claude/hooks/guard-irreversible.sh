@@ -238,15 +238,23 @@ case "$src" in
     cmd="$cmd$nl$dq$nl$dx"
     # dq ghép cặp nháy từ trái sang: `"\"a b\""` thành `\a b\`, giá trị option bị tách đôi nên `"push"` sau nó không còn là
     # lệnh con (`git -c user.name="\"a b\"" "push" -f`, reviewer PR #75). Dạng dq2 thay `\"` bằng \002 trước khi ghép: giá trị
-    # thành `"\002a b\002"` (một từ có nháy, OA/OQ khớp), `"push"` thành push. `\\` (một `\` đã thoát) thay bằng \003 trước,
-    # để `"\"a b\\"` không thành `\` + \002 nuốt nháy đóng (reviewer PR #78). $src quá 65536 ký tự (đếm ký tự, sau khi gom
-    # các dạng joined/kept/`bash -c`) thì bỏ (luật chạy trên cả $cmd, mỗi dạng thêm một lượt).
+    # thành `"\002a b\002"` (một từ có nháy, OA/OQ khớp), `"push"` thành push. Lệnh có `\\"` thêm dạng dq3: `\\` (một `\`
+    # đã thoát trong nháy kép) thay bằng \003 trước, để `"\"a b\\"` không thành `\` + \002 nuốt nháy đóng (reviewer PR #78).
+    # dq3 thêm bên cạnh dq2, không thay: trong nháy đơn `\\` là hai ký tự thường, `'x\\"'"y z"` chỉ dq2 bắt được (reviewer
+    # PR #79). $src quá 65536 ký tự (đếm ký tự, sau khi gom các dạng joined/kept/`bash -c`) thì bỏ (luật chạy trên cả $cmd,
+    # mỗi dạng thêm một lượt).
     case "$src" in
       *'\"'*)
         if [ "${#src}" -le 65536 ]; then
-          dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "s/\\$\\(['\"]\\)/\\1/g" \
-            -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
+          dqs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
+          dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
           cmd="$cmd$nl$dq2"
+          case "$src" in
+            *'\\"'*)
+              dq3="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
+              cmd="$cmd$nl$dq3"
+              ;;
+          esac
         fi
         ;;
     esac
