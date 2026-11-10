@@ -369,6 +369,14 @@ EOF
   expect_guard ask "git pu'sh'" "$on_main"
   expect_guard ask "git -C '$on_main' pu\"sh\""
   expect_guard ask "c'd' '$on_main' && git push"
+  # Lệnh con có nháy sau giá trị option có `\"` và dấu cách (reviewer PR #75): dạng dq ghép `"\"` thành `\`, giá trị bị tách
+  # đôi, nên `"push"` không còn đứng ngay sau option.
+  expect_guard ask 'git -c user.name="\"a b\"" "push" -f origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\"" p"u"sh --force origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\"" "push" origin main'
+  expect_guard ask 'git -c user.name="\"a b\"" "reset" --hard'
+  expect_guard ask 'git -c core.sshCommand="ssh -o \"User x\"" "push" -f origin feat/x'
+  expect_guard allow 'git -c user.name="\"a b\"" "push" origin HEAD'
   expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
   # Reviewer của PR sửa nháy xé chữ: biến đổi bù nhau làm danh sách từ khoá như cũ, option của cd bị xé, $'…', \ trước
   # ký tự không phải chữ cái.
@@ -1036,7 +1044,7 @@ if mkdir -p "$qd/\"main repo\"" 2>/dev/null && [ -d "$qd/\"main repo\"" ]; then
   new_repo "$qd/\"main repo\"" main
   # Cả `git -C <từ> push` (reviewer PR #73): regex push không hiểu `\"` trong nháy kép của giá trị option, và vòng -C bỏ
   # cách đọc theo bash khi nó trùng chữ cách đọc cũ (cách cũ còn bị bỏ nháy lần nữa trong resolve_dir).
-  for t in 'cd %s && git push origin HEAD' 'git -C %s push origin HEAD'; do
+  for t in 'cd %s && git push origin HEAD' 'git -C %s push origin HEAD' 'git -C %s \\"push\\" origin HEAD'; do
     for w in '\"\\\"main repo\\\"\"' "'\\\"main repo\\\"'" '\\\"main\\ repo\\\"'; do
       # shellcheck disable=SC2059  # t là mẫu lệnh có %s
       c="$(printf "$t" "$w")"
