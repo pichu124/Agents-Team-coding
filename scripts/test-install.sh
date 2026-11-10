@@ -626,6 +626,11 @@ for v in ',' "$(printf '\t')" "$(printf 'hooks\t')" 'p*' '*' ',,' 'hooks,,kit'; 
   rc=$?
   assert "P2: KIT_CHECK_ONLY='$v' phải đỏ → $out" [ "$rc" -ne 0 ]
 done
+# Chạy một phần mà không bước nào chạy thì đỏ (reviewer PR #80): ở repo đích không có bước plugin, hay job "hooks" khi
+# test-hooks.sh không chạy được, không được thành một lần chạy rỗng mà xanh.
+out="$(cd "$q" && env CI=1 KIT_CHECK_ONLY=plugin ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: chạy một phần mà không bước nào chạy phải đỏ → $out" [ "$rc" -ne 0 ]
 out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY='kit,audit' ./scripts/check.sh 2>&1)"
 rc=$?
 case "$rc:$out" in
