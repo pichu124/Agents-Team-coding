@@ -573,6 +573,49 @@ for f in $plugin_paths; do
   esac
   git -C "$r" checkout -q -- .
 done
+# P2. Chạy một phần check.sh để tách job CI (4.5 của docs/viec-can-lam.md): KIT_CHECK_ONLY / KIT_CHECK_SKIP nhận tên
+#     bước, chỉ trên CI. Hai phần ONLY=hooks và SKIP=hooks cộng lại phải đủ mọi bước; ngoài CI, tên lạ, đặt cả hai
+#     biến thì đỏ (không để một lần chạy rỗng hay chạy thiếu thành xanh).
+out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY=hooks ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: CI=1 KIT_CHECK_ONLY=hooks phải xanh → $out" [ "$rc" -eq 0 ]
+case "$out" in
+  *"▶ kit"* | *"▶ audit"* | *"▶ plugin"* | *"▶ project"*) bad "P2: KIT_CHECK_ONLY=hooks chỉ được chạy bước hooks → $out" ;;
+  *"▶ hooks"*"một phần"*) ok ;;
+  *) bad "P2: KIT_CHECK_ONLY=hooks phải chạy hooks và báo 'một phần' → $out" ;;
+esac
+out="$(cd "$r" && env CI=1 KIT_CHECK_SKIP=hooks ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: CI=1 KIT_CHECK_SKIP=hooks phải xanh → $out" [ "$rc" -eq 0 ]
+case "$out" in
+  *"▶ hooks"*) bad "P2: KIT_CHECK_SKIP=hooks không được chạy bước hooks → $out" ;;
+  *"▶ kit"*"▶ audit"*"▶ plugin"*"▶ project"*"một phần"*) ok ;;
+  *) bad "P2: KIT_CHECK_SKIP=hooks phải chạy kit, audit, plugin, project và báo 'một phần' → $out" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 1\n' > "$r/scripts/check.local.sh"
+out="$(cd "$r" && env CI=1 KIT_CHECK_SKIP=hooks ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: KIT_CHECK_SKIP=hooks phải đỏ khi bước còn lại đỏ → $out" [ "$rc" -ne 0 ]
+git -C "$r" checkout -q -- .
+out="$(cd "$r" && env -u CI KIT_SELFTEST=1 KIT_CHECK_ONLY=hooks ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: KIT_CHECK_ONLY ngoài CI phải đỏ (không để agent hay Stop gate chạy thiếu) → $out" [ "$rc" -ne 0 ]
+out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY=hook ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: KIT_CHECK_ONLY với tên bước lạ phải đỏ → $out" [ "$rc" -ne 0 ]
+out="$(cd "$r" && env CI=1 KIT_CHECK_SKIP='hooks,kti' ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: KIT_CHECK_SKIP với tên bước lạ phải đỏ → $out" [ "$rc" -ne 0 ]
+out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY=hooks KIT_CHECK_SKIP=kit ./scripts/check.sh 2>&1)"
+rc=$?
+assert "P2: đặt cả KIT_CHECK_ONLY lẫn KIT_CHECK_SKIP phải đỏ → $out" [ "$rc" -ne 0 ]
+out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY='kit,audit' ./scripts/check.sh 2>&1)"
+rc=$?
+case "$rc:$out" in
+  0:*"▶ hooks"* | 0:*"▶ plugin"* | 0:*"▶ project"*) bad "P2: KIT_CHECK_ONLY=kit,audit chạy bước ngoài danh sách → $out" ;;
+  0:*"▶ kit"*"▶ audit"*) ok ;;
+  *) bad "P2: KIT_CHECK_ONLY=kit,audit phải xanh và chạy kit, audit → $out" ;;
+esac
 
 # Q. Skill chỉ repo kit có (verify-kit): ở repo kit, validate-kit kiểm frontmatter và link của nó, và
 #    manifest plugin chỉ được phát 4 skill của kit (trỏ cả .claude/skills/ thì verify-kit lọt sang mọi
