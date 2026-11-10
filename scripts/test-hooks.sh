@@ -377,6 +377,12 @@ EOF
   expect_guard ask 'git -c user.name="\"a b\"" "reset" --hard'
   expect_guard ask 'git -c core.sshCommand="ssh -o \"User x\"" "push" -f origin feat/x'
   expect_guard allow 'git -c user.name="\"a b\"" "push" origin HEAD'
+  # `\\` trong nháy kép là một `\` đã thoát (reviewer PR #78): `"\"a b\\"` là `"a b\`, nháy cuối đóng chuỗi. Thay `\"` mà
+  # không biết `\\` thì `\\"` thành `\` + \002, nháy đóng bị nuốt.
+  expect_guard ask 'git -c user.name="\"a b\\" "push" -f origin feat/x'
+  expect_guard ask 'git -c "main\\" -c u="\"a b\"" "push" -f origin feat/x'
+  expect_guard ask 'git -c u="\"a b\\\"" "push" -f origin feat/x'
+  expect_guard allow 'git -c user.name="\"a b\\" "push" origin HEAD'
   expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
   # Reviewer của PR sửa nháy xé chữ: biến đổi bù nhau làm danh sách từ khoá như cũ, option của cd bị xé, $'…', \ trước
   # ký tự không phải chữ cái.
