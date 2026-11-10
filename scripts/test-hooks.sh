@@ -1406,6 +1406,16 @@ EOF
 out="$(printf '{"session_id":"rec-%s","cwd":"%s"}' "$$" "$rec" | AGENT_STOP_GATE_MAX=9 "$hooks/stop-gate.sh" 2>/dev/null)"; code=$?
 assert "stop-gate: check.sh gọi lại stop gate thì chỉ chạy check 1 lần → $(cat "$rec/.count")" [ "$(cat "$rec/.count")" = 1 ]
 assert "stop-gate: lần ngoài vẫn phải chặn (exit $code)" blocked
+# Biến chạy một phần của check.sh (KIT_CHECK_ONLY / KIT_CHECK_SKIP, chỉ cho job CI tách đôi) có trong môi trường của
+# Claude Code (Claude chạy trong GitHub Action có CI=true) không được tới check.sh của Stop gate: gate luôn chạy đủ.
+envr="$tmp/env repo"
+make_repo "$envr"
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\n[ -z "${KIT_CHECK_ONLY:-}${KIT_CHECK_SKIP:-}" ]\n' > "$envr/scripts/check.sh"
+out="$(stop_input "$envr" | CI=1 KIT_CHECK_SKIP=hooks KIT_CHECK_ONLY=kit AGENT_STOP_GATE_MAX=9 "$hooks/stop-gate.sh" 2>/dev/null)"
+code=$?
+assert "stop-gate: KIT_CHECK_ONLY/SKIP từ môi trường không được tới check.sh (exit $code) → $out" [ "$code" -eq 0 ]
+assert "stop-gate: KIT_CHECK_ONLY/SKIP từ môi trường không được tới check.sh → $out" [ -z "$out" ]
 
 session="test-$$-$RANDOM"
 out="$(stop_input "$repo" | KIT_JSON_TOOL=sed AGENT_STOP_GATE_MAX=9 "$hooks/stop-gate.sh" 2>/dev/null)"; code=$?

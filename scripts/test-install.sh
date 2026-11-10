@@ -609,6 +609,23 @@ assert "P2: KIT_CHECK_SKIP với tên bước lạ phải đỏ → $out" [ "$rc
 out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY=hooks KIT_CHECK_SKIP=kit ./scripts/check.sh 2>&1)"
 rc=$?
 assert "P2: đặt cả KIT_CHECK_ONLY lẫn KIT_CHECK_SKIP phải đỏ → $out" [ "$rc" -ne 0 ]
+# Bước con không thấy hai biến (reviewer PR #80): job Windows phần SKIP=hooks chạy test-install, mà test-install gọi lại
+# check.sh trong repo tạm (ca P, P2); biến lan vào thì các lần đó exit 2 và job đỏ.
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\necho "env[${KIT_CHECK_ONLY:-}|${KIT_CHECK_SKIP:-}]"\n' > "$r/scripts/check.local.sh"
+out="$(cd "$r" && env CI=1 KIT_CHECK_SKIP=hooks ./scripts/check.sh 2>&1)"
+rc=$?
+case "$rc:$out" in
+  0:*"env[|]"*) ok ;;
+  *) bad "P2: bước con của check.sh không được thấy KIT_CHECK_ONLY/KIT_CHECK_SKIP → $out" ;;
+esac
+git -C "$r" checkout -q -- .
+# Danh sách không có bước thật nào không được thành một lần chạy rỗng mà xanh (reviewer PR #80): dấu phẩy, tab, glob.
+for v in ',' "$(printf '\t')" "$(printf 'hooks\t')" 'p*' '*' ',,' 'hooks,,kit'; do
+  out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY="$v" ./scripts/check.sh 2>&1)"
+  rc=$?
+  assert "P2: KIT_CHECK_ONLY='$v' phải đỏ → $out" [ "$rc" -ne 0 ]
+done
 out="$(cd "$r" && env CI=1 KIT_CHECK_ONLY='kit,audit' ./scripts/check.sh 2>&1)"
 rc=$?
 case "$rc:$out" in
