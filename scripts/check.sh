@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 failed=()
 skipped=()
+ran=0
 project_checks=0
 
 only="$(printf '%s' "${KIT_CHECK_ONLY:-}" | tr -d ' ')"
@@ -65,6 +66,7 @@ pick() { # pick <bước>: như selected, bước bị bỏ thì in ra và ghi l
 step() {
   local name="$1"
   shift
+  ran=$((ran + 1))
   printf '\n▶ %s: %s\n' "$name" "$*"
   if "$@"; then
     printf '✔ %s\n' "$name"
@@ -189,6 +191,11 @@ fi
 
 part=""
 [ "${#skipped[@]}" -gt 0 ] && part=" (một phần, bỏ qua: ${skipped[*]})"
+# Chạy một phần mà không bước nào chạy (bước được chọn không có ở repo này, script của nó không chạy được) là đỏ.
+if [ -n "$only$skip" ] && [ "$ran" -eq 0 ] && [ "${#failed[@]}" -eq 0 ]; then
+  printf '\n✘ check.sh ĐỎ: chạy một phần mà không bước nào chạy%s\n' "$part"
+  exit 1
+fi
 if [ "${#failed[@]}" -gt 0 ]; then
   printf '\n✘ check.sh ĐỎ: %s%s\n' "${failed[*]}" "$part"
   exit 1
