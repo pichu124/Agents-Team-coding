@@ -35,6 +35,7 @@ jobs:
             shell: bash
             part: rest
             skip: hooks
+    name: portable (${{ matrix.os }}${{ matrix.part && ', ' || '' }}${{ matrix.part }})
     runs-on: ${{ matrix.os }}
     # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ. 9/11: 11 lần xanh mất
     # 99–146 phút (7 lần 137–146) khi chạy tuần tự, một lần (PR #76) bị huỷ ở 150 phút giữa test-install. Trần cứng của

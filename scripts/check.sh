@@ -18,6 +18,8 @@ project_checks=0
 
 only="$(printf '%s' "${KIT_CHECK_ONLY:-}" | tr -d ' ')"
 skip="$(printf '%s' "${KIT_CHECK_SKIP:-}" | tr -d ' ')"
+# Chỉ áp cho lần check.sh này: bước con (test-install gọi lại check.sh trong repo tạm) không thấy hai biến.
+unset KIT_CHECK_ONLY KIT_CHECK_SKIP
 if [ -n "$only$skip" ]; then
   if [ -n "$only" ] && [ -n "$skip" ]; then
     printf '✘ check.sh: chỉ đặt một trong KIT_CHECK_ONLY và KIT_CHECK_SKIP\n' >&2
@@ -27,6 +29,13 @@ if [ -n "$only$skip" ]; then
     printf '✘ check.sh: KIT_CHECK_ONLY / KIT_CHECK_SKIP chỉ dùng trên CI (CI khác rỗng); ở máy thường check chạy đủ\n' >&2
     exit 2
   fi
+  # Chỉ chữ thường và dấu phẩy, không trường rỗng: `,`, tab, glob (`p*`) không thành một lần chạy rỗng mà xanh.
+  case "$only$skip" in
+    *[!a-z,]* | ,* | *, | *,,*)
+      printf '✘ check.sh: danh sách bước "%s" không hợp lệ (tên bước cách nhau bằng dấu phẩy)\n' "$only$skip" >&2
+      exit 2
+      ;;
+  esac
   known=" kit hooks audit plugin project "
   for n in $(printf '%s' "$only$skip" | tr ',' ' '); do
     case "$known" in
