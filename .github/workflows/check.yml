@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ. 9/11: 11 lần xanh mất
     # 99–146 phút (7 lần 137–146) khi chạy tuần tự, một lần (PR #76) bị huỷ ở 150 phút giữa test-install. Trần cứng của
-    # runner hosted là 360. Sau khi tách (PR #80, 10/11): Windows hooks 49–67 phút, rest 86–89, macOS 33–45 (một lần
+    # runner hosted là 360. Sau khi tách (PR #80, 10/11): Windows hooks 49–67 phút, rest 86–89, macOS 33–37 (một lần
     # mất runner ở 45 phút, chạy lại xanh). 150 chừa ~1,7 lần job dài nhất.
     timeout-minutes: 150
     defaults:
