@@ -383,6 +383,11 @@ EOF
   expect_guard ask 'git -c "main\\" -c u="\"a b\"" "push" -f origin feat/x'
   expect_guard ask 'git -c u="\"a b\\\"" "push" -f origin feat/x'
   expect_guard allow 'git -c user.name="\"a b\\" "push" origin HEAD'
+  # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
+  # ghép với nháy kép phía sau và tách đôi giá trị. Dạng dq2 cũ vẫn bắt được, nên dạng mới phải thêm, không thay.
+  expect_guard ask "git -c u='x\\\\\"'\"y z\" \"push\" -f origin feat/x"
+  expect_guard ask "git -c u='\\\\\"'\"\\\"a b\\\"\" \"push\" -f origin feat/x"
+  expect_guard ask "git -c u='x\\\\\"'\"\\\"y z\\\"\" \"push\" -f origin feat/x"
   expect_guard ask "bash -c 'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
   # Reviewer của PR sửa nháy xé chữ: biến đổi bù nhau làm danh sách từ khoá như cũ, option của cd bị xé, $'…', \ trước
   # ký tự không phải chữ cái.
