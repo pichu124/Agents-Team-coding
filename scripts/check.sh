@@ -6,11 +6,52 @@
 #   3. Không có thì dùng `make check` nếu Makefile có target `check`.
 #   4. Không có nữa thì tự nhận diện Node / Python / Go / Rust và chạy các check tìm thấy.
 # Exit khác 0 nếu có bất kỳ check nào đỏ.
+# Chỉ trên CI (để tách một job dài thành các job song song): KIT_CHECK_ONLY hoặc KIT_CHECK_SKIP là danh sách tên bước
+# (kit, hooks, audit, plugin, project) cách nhau bằng dấu phẩy. ONLY=x và SKIP=x cộng lại luôn đủ mọi bước. Ngoài CI,
+# tên lạ hay đặt cả hai biến thì exit 2: agent và Stop gate luôn chạy đủ.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 failed=()
+skipped=()
 project_checks=0
+
+only="$(printf '%s' "${KIT_CHECK_ONLY:-}" | tr -d ' ')"
+skip="$(printf '%s' "${KIT_CHECK_SKIP:-}" | tr -d ' ')"
+if [ -n "$only$skip" ]; then
+  if [ -n "$only" ] && [ -n "$skip" ]; then
+    printf '✘ check.sh: chỉ đặt một trong KIT_CHECK_ONLY và KIT_CHECK_SKIP\n' >&2
+    exit 2
+  fi
+  if [ -z "${CI:-}" ]; then
+    printf '✘ check.sh: KIT_CHECK_ONLY / KIT_CHECK_SKIP chỉ dùng trên CI (CI khác rỗng); ở máy thường check chạy đủ\n' >&2
+    exit 2
+  fi
+  known=" kit hooks audit plugin project "
+  for n in $(printf '%s' "$only$skip" | tr ',' ' '); do
+    case "$known" in
+      *" $n "*) ;;
+      *)
+        printf '✘ check.sh: bước lạ "%s" (có: kit, hooks, audit, plugin, project)\n' "$n" >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
+selected() { # selected <bước>: bước có được chạy theo KIT_CHECK_ONLY / KIT_CHECK_SKIP không
+  if [ -n "$only" ]; then
+    case ",$only," in *",$1,"*) return 0 ;; esac
+    return 1
+  fi
+  case ",$skip," in *",$1,"*) return 1 ;; esac
+  return 0
+}
+pick() { # pick <bước>: như selected, bước bị bỏ thì in ra và ghi lại
+  selected "$1" && return 0
+  printf '\n• %s: bỏ qua (KIT_CHECK_ONLY / KIT_CHECK_SKIP)\n' "$1"
+  skipped+=("$1")
+  return 1
+}
 
 step() {
   local name="$1"
@@ -99,7 +140,7 @@ rust_checks() {
   project_step "rust:test" cargo test --quiet
 }
 
-if [ -x scripts/validate-kit.sh ]; then
+if [ -x scripts/validate-kit.sh ] && pick kit; then
   step "kit" ./scripts/validate-kit.sh
 fi
 # Installer không chép bản plugin: ở repo đích, test-plugin.sh, plugin/, .claude-plugin/ là của dự án.
@@ -112,15 +153,17 @@ kit_changed() {
 }
 if [ -x scripts/test-hooks.sh ]; then
   if [ -n "${CI:-}" ] || [ "${KIT_SELFTEST:-0}" = 1 ] || kit_changed; then
-    step "hooks" ./scripts/test-hooks.sh
-    [ -x scripts/test-audit.sh ] && step "audit" ./scripts/test-audit.sh
-    in_kit_repo && [ -x scripts/test-plugin.sh ] && step "plugin" ./scripts/test-plugin.sh
+    pick hooks && step "hooks" ./scripts/test-hooks.sh
+    [ -x scripts/test-audit.sh ] && pick audit && step "audit" ./scripts/test-audit.sh
+    in_kit_repo && [ -x scripts/test-plugin.sh ] && pick plugin && step "plugin" ./scripts/test-plugin.sh
   else
     printf '\n• hooks: bỏ qua test của kit vì hook không đổi (KIT_SELFTEST=1 để chạy)\n'
   fi
 fi
 
-if [ -f scripts/check.local.sh ]; then
+if ! pick project; then
+  :
+elif [ -f scripts/check.local.sh ]; then
   project_step "project" bash scripts/check.local.sh
 elif [ -f Makefile ] && grep -Eq '^check:' Makefile; then
   project_step "make check" make check
@@ -131,12 +174,14 @@ else
   [ -f Cargo.toml ] && rust_checks
 fi
 
-if [ "$project_checks" -eq 0 ] && [ "${#failed[@]}" -eq 0 ]; then
+if [ "$project_checks" -eq 0 ] && [ "${#failed[@]}" -eq 0 ] && selected project; then
   printf '\n⚠ Chưa nhận diện được check nào của dự án. Hãy tạo scripts/check.local.sh (lint + typecheck + test nhanh).\n'
 fi
 
+part=""
+[ "${#skipped[@]}" -gt 0 ] && part=" (một phần, bỏ qua: ${skipped[*]})"
 if [ "${#failed[@]}" -gt 0 ]; then
-  printf '\n✘ check.sh ĐỎ: %s\n' "${failed[*]}"
+  printf '\n✘ check.sh ĐỎ: %s%s\n' "${failed[*]}" "$part"
   exit 1
 fi
-printf '\n✔ check.sh XANH\n'
+printf '\n✔ check.sh XANH%s\n' "$part"
