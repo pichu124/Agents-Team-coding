@@ -236,6 +236,19 @@ case "$src" in
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk "$kw_awk")"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
+    # dq ghép cặp nháy từ trái sang: `"\"a b\""` thành `\a b\`, giá trị option bị tách đôi nên `"push"` sau nó không còn là
+    # lệnh con (`git -c user.name="\"a b\"" "push" -f`, reviewer PR #75). Dạng dq2 thay `\"` bằng \002 trước khi ghép: giá trị
+    # thành `"\002a b\002"` (một từ có nháy, OA/OQ khớp), `"push"` thành push. Lệnh quá 65536 ký tự thì bỏ (luật chạy trên
+    # cả $cmd, mỗi dạng thêm một lượt).
+    case "$src" in
+      *'\"'*)
+        if [ "${#src}" -le 65536 ]; then
+          dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "s/\\$\\(['\"]\\)/\\1/g" \
+            -e "s/'\\([^'[:space:]]*\\)'/\\1/g" -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
+          cmd="$cmd$nl$dq2"
+        fi
+        ;;
+    esac
     # `;&|` trong nháy không ngắt lệnh, mà luật dừng ở chúng (`push[^;&|]*--force`): `git push origin "x;y" --force`,
     # `git push -o 'a|b' --force`. Thêm một dạng thay chúng bằng _ trong đoạn nháy không có khoảng trắng (chỉ thêm chữ để
     # khớp, lệnh gốc vẫn được so). Đoạn có khoảng trắng thường là thân lệnh (`bash -c "git push … && gh pr create --base
