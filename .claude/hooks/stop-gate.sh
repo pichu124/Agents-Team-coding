@@ -52,7 +52,8 @@ if [ -z "$changed" ]; then
   exit 0
 fi
 
-out="$(./scripts/check.sh 2>&1)"
+# KIT_CHECK_ONLY / KIT_CHECK_SKIP (chạy một phần, chỉ cho job CI tách đôi) không được tới đây: gate luôn chạy đủ.
+out="$(unset KIT_CHECK_ONLY KIT_CHECK_SKIP; ./scripts/check.sh 2>&1)"
 status=$?
 if [ "$status" -eq 0 ]; then
   rm -f "$state"

@@ -24,11 +24,22 @@ jobs:
         include:
           - os: macos-latest
             shell: /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash --noprofile --norc {0}
+          # Windows tách hai job song song (4.5 của docs/viec-can-lam.md): chạy tuần tự mất 99–146 phút (9/11; test-hooks
+          # ~66, test-install ~74). check.sh vẫn là một lệnh; KIT_CHECK_ONLY=hooks và KIT_CHECK_SKIP=hooks cộng lại luôn
+          # đủ mọi bước, kể cả bước thêm sau này.
           - os: windows-latest
             shell: bash # từ khoá bash trên Windows là Git Bash (lệnh bash trong PATH có thể là WSL)
+            part: hooks
+            only: hooks
+          - os: windows-latest
+            shell: bash
+            part: rest
+            skip: hooks
+    name: portable (${{ matrix.os }}${{ matrix.part && ', ' || '' }}${{ matrix.part }})
     runs-on: ${{ matrix.os }}
     # Windows từng mất 76–88 phút khi chạy trùng test (23/10); treo thì không giữ runner tới 6 giờ. 9/11: 11 lần xanh mất
-    # 99–146 phút (7 lần 137–146), một lần (PR #76) bị huỷ ở 150 phút giữa test-install. Trần cứng của runner hosted là 360.
+    # 99–146 phút (7 lần 137–146) khi chạy tuần tự, một lần (PR #76) bị huỷ ở 150 phút giữa test-install. Trần cứng của
+    # runner hosted là 360. Giữ 210 tới khi đo được thời gian của từng phần.
     timeout-minutes: 210
     defaults:
       run:
@@ -50,6 +61,9 @@ jobs:
       # rồi kể tên mọi bước đỏ: không chạy riêng lần nữa (Windows từng mất ~30 phút vì chạy trùng).
       - name: check.sh (KIT_SELFTEST=1)
         if: ${{ !cancelled() }}
+        env:
+          KIT_CHECK_ONLY: ${{ matrix.only }}
+          KIT_CHECK_SKIP: ${{ matrix.skip }}
         run: KIT_SELFTEST=1 ./scripts/check.sh
       # Lệnh nguy hiểm ở dòng đầu, theo sau ~20000 dòng (hơn 64 KiB pipe buffer), đưa qua stdin:
       # guard phải hỏi 10/10 lần ở mọi cách đọc JSON.
