@@ -613,12 +613,20 @@ nb_add() {
   # Cận trên số byte, không phụ thuộc locale: tên toàn ký tự 4 byte có số byte gấp 4 số ký tự (reviewer PR #69), mà
   # LC_ALL=C không giúp được trên Git Bash (Cygwin coi locale C là UTF-8, ${#RD} vẫn đếm ký tự: CI Windows PR #70).
   # Đường có ký tự ngoài ASCII thì tính 4 byte mỗi ký tự (UTF-8 dài nhất).
+  local b="${#RD}"
   case "$RD" in
-    *[![:ascii:]]*) nb=$((nb + 4 * ${#RD})) ;;
-    *) nb=$((nb + ${#RD})) ;;
+    *[![:ascii:]]*) b=$((4 * b)) ;;
   esac
-  [ "$nb" -le "$BYTE_MAX" ] && return 0
-  reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
+  nb=$((nb + b))
+  # Công ghép (resolve_dir, nối mảng) cũng tính vào ngân sách UQW_MAX, ~2 µs mỗi byte với bash 3.2: lệnh gộp nhiều trần
+  # (cd nhiều đoạn nháy, nhiều `cd .`, -C đường dài) dưới mọi trần từng mất 6,5 giây (reviewer PR #83).
+  uqw=$((uqw + 2 * b))
+  if [ "$nb" -gt "$BYTE_MAX" ]; then
+    reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
+    return 1
+  fi
+  [ "$uqw" -le "$UQW_MAX" ] && return 0
+  reason="push sau cd qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
   return 1
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
@@ -750,7 +758,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # đọc từ 60 đoạn nháy tốn ~8 ms với bash 3.2 ở UTF-8 (đường 1 đoạn ~1 ms): 740 `git -C "a"'b'…(60 đoạn)` rồi push từng
   # mất 25 giây, 299 cd như vậy 10,6 giây (reviewer PR #82). Đơn vị xấp xỉ µs với bash 3.2 ở UTF-8 (đo trong guard):
   # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi. Chỉ
-  # tính expand_dir: gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần BYTE_MAX) vẫn tới ~6 giây (4.3).
+  # tính expand_dir và nb_add (2 mỗi byte ghép): trước đó gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần
+  # BYTE_MAX) dưới mọi trần từng mất 6,5 giây (4.3).
   UQW_MAX=2000000
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
   # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
