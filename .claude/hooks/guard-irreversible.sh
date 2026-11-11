@@ -632,11 +632,12 @@ nb_add() {
 }
 # uqw_reason: lý do khi vượt ngân sách công UQW_MAX, như nhau dù chỗ nào (nb_add hay bước kiểm sau expand_dir) làm vượt
 # trước: thứ tự đó tuỳ độ dài các đường, tức tuỳ cwd (CI macOS PR #84). Các đường đã gom quá PART_MAX thành phần thì nói
-# thêm (như sau vòng lặp): một lần awk, chỉ khi vượt ngân sách.
+# thêm (như sau vòng lặp, trên các đường đã bỏ trùng: cl nằm cả trong dl, RD có thể là đường đã gom; reviewer PR #84):
+# một lần awk, chỉ khi vượt ngân sách.
 uqw_reason() {
   local np
   reason="push sau cd hay git -C qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
-  np="$(printf '%s\n' "${dl[@]}" "${cl[@]}" "$RD" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
+  np="$(printf '%s\n' "${dl[@]}" "${cl[@]}" "$RD" | awk '!s[$0]++ { n += gsub("/", "/") } END { print n + 0 }')"
   [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường nối dồn quá dài: hơn $PART_MAX thành phần"
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
@@ -768,7 +769,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # đọc từ 60 đoạn nháy tốn ~8 ms với bash 3.2 ở UTF-8 (đường 1 đoạn ~1 ms): 740 `git -C "a"'b'…(60 đoạn)` rồi push từng
   # mất 25 giây, 299 cd như vậy 10,6 giây (reviewer PR #82). Đơn vị xấp xỉ µs với bash 3.2 ở UTF-8 (đo trong guard):
   # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi. Chỉ
-  # tính expand_dir và nb_add (2 mỗi byte ghép): trước đó gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần
+  # tính expand_dir và nb_add (2 mỗi ký tự ghép): trước đó gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần
   # BYTE_MAX) dưới mọi trần từng mất 6,5 giây (4.3).
   UQW_MAX=2000000
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
