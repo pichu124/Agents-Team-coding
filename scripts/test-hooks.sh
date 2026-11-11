@@ -385,8 +385,9 @@ EOF
   expect_guard allow 'git -c user.name="\"a b\\" "push" origin HEAD'
   # Mỗi `-C` tốn một lần last_arg + expand_dir mà GC_MAX chỉ đếm lần ghép: `git -C q status; `×5000 rồi push (ngay dưới
   # GC_MAX) mất 7,3 giây với bash 3.2 ở UTF-8 mà không hỏi, Git Bash chậm gấp đôi thì quá timeout (4.3, reviewer PR #75).
-  # Nay quá GCX_MAX lần -C thì hỏi.
-  expect_guard ask "$(printf 'git -C q status; %.0s' $(seq 2000))git push origin HEAD"
+  # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
+  # lệnh 32767 ký tự (2000 `git -C q status; ` là 34 KB: "Argument list too long", input rỗng, guard cho qua; CI PR #82).
+  expect_guard ask "$(printf 'git -C q; %.0s' $(seq 2000))git push origin HEAD"
   # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
