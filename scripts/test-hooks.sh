@@ -401,6 +401,23 @@ EOF
   for i in $(seq 2 15); do vc="${vc}cd \"../gói-số-$i\" && npm test; "; done
   for i in $(seq 15); do vc="${vc}git -C \"../gói-số-$i/src\" add -A; "; done
   expect_guard allow "${vc}git push origin HEAD" "$vnr"
+  # Lý do khi vượt ngân sách đếm thành phần trên các đường đã bỏ trùng, như bước kiểm PART_MAX sau vòng lặp (reviewer
+  # PR #84): monorepo 62 cd rồi 62 `git -C` tới cùng các đường tuyệt đối ~100 ký tự không có đường nối dồn nào, mà
+  # đếm cả bản trùng (dl, cl, RD) thì lý do thành "hơn 60000 thành phần". Đường đệm tới ~100 ký tự để ngân sách
+  # chạm như nhau dù $tmp dài ngắn.
+  if [ "$mode" = auto ]; then
+    mpad=""; while [ $((${#tmp} + ${#mpad})) -lt 70 ]; do mpad="${mpad}p"; done
+    mor="$tmp/mo${mpad}/services/backend/platform-core/modules"
+    [ -d "$mor/pkg-62/src" ] || { new_repo "$tmp/mo$mpad" feat/x && for i in $(seq -w 62); do mkdir -p "$mor/pkg-$i/src"; done; }
+    mc=""
+    for i in $(seq -w 62); do mc="${mc}cd $mor/pkg-$i/src && npm test; "; done
+    for i in $(seq -w 62); do mc="${mc}git -C $mor/pkg-$i/src add -A; "; done
+    out="$(bash_input "${mc}git push origin HEAD" "$tmp/mo$mpad" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'thành phần'*) bad "guard không được báo PART_MAX khi các đường đã bỏ trùng dưới trần: 62 cd + 62 git -C tuyệt đối → [$out]" ;;
+      *) ok ;;
+    esac
+  fi
   # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
@@ -1232,8 +1249,10 @@ for mode in $modes; do
   # vẫn đọc tới nhánh main dù bash ở đó khớp mẫu ngoài ASCII (CI Windows PR #70), nguyên nhân chưa rõ (4.3).
   # LC_ALL=C.UTF-8: ở locale C bản đếm ký tự cũng đếm byte, ca này mất tác dụng (reviewer PR #70).
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")"
+  # Lý do đúng của BYTE_MAX, không chỉ "nối dồn quá dài": từ PR #84 ngân sách UQW_MAX cũng ra chữ đó, bỏ phép nhân 4
+  # trong nb_add vẫn hỏi qua ngân sách mà ca này không còn bắt được (reviewer PR #84).
   case "$out" in
-    *'nối dồn quá dài'*) ok ;;
+    *'hơn 2000000 byte'*) ok ;;
     *) bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 3 byte → [$out]" ;;
   esac
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain.json")" in
