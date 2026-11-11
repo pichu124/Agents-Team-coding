@@ -627,12 +627,17 @@ nb_add() {
     return 1
   fi
   [ "$uqw" -le "$UQW_MAX" ] && return 0
-  reason="push sau cd qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
-  # Các đường đã gom quá PART_MAX thành phần thì nói thêm (như sau vòng lặp): một lần awk, chỉ khi vượt ngân sách.
+  uqw_reason
+  return 1
+}
+# uqw_reason: lý do khi vượt ngân sách công UQW_MAX, như nhau dù chỗ nào (nb_add hay bước kiểm sau expand_dir) làm vượt
+# trước: thứ tự đó tuỳ độ dài các đường, tức tuỳ cwd (CI macOS PR #84). Các đường đã gom quá PART_MAX thành phần thì nói
+# thêm (như sau vòng lặp): một lần awk, chỉ khi vượt ngân sách.
+uqw_reason() {
   local np
+  reason="push sau cd hay git -C qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
   np="$(printf '%s\n' "${dl[@]}" "${cl[@]}" "$RD" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
   [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường nối dồn quá dài: hơn $PART_MAX thành phần"
-  return 1
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
 # main\ repo); ARG_PS coi \ là ký tự thường (PowerShell: C:\vnstock\; git push). Xét cả hai.
@@ -807,6 +812,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   ngc=0
   ngx=0
   uqw=0
+  RD="" # uqw_reason đọc RD, có thể trước lần resolve_dir đầu tiên (set -u)
   nb=0
   # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
   # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
@@ -902,7 +908,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # bỏ qua ngân sách bên dưới: 740 `git -C ("a"'b')×33` rồi push từng mất 10,9 giây với bash 3.2 (reviewer PR #83).
         expand_dir "$LA" "$um" || { unknown=1; break 2; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
-          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          uqw_reason
           break 2
         fi
         # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
@@ -947,7 +953,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; break 3; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
-          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          uqw_reason
           break 3
         fi
         for c in "${cl[@]}"; do
