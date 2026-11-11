@@ -393,6 +393,14 @@ EOF
   # chưa tính vào ngân sách. Nay mỗi byte ghép cộng 2 vào uqw, quá UQW_MAX thì hỏi.
   sg="$(printf '"a"'"'b'"'%.0s' $(seq 30))"
   expect_guard ask "$(printf "cd $sg; %.0s" $(seq 45))$(printf 'cd .; %.0s' $(seq 249))$(printf 'git -C "%s" status; ' "$(printf 'a%.0s' $(seq 600))" "$(printf 'a%.0s' $(seq 600))")git push origin HEAD"
+  # Đường có dấu (reviewer PR #84): BYTE_MAX đếm cận 4 byte mỗi ký tự ngoài ASCII, nhưng công ghép tính theo ký tự. Nhân 4
+  # vào ngân sách thì monorepo ở thư mục tiếng Việt (15 cd, 15 `git -C` có nháy) bị hỏi thừa, main cho qua.
+  vnr="$tmp/vn/Người dùng Nguyễn Văn Ấn/Tài liệu dự án/Ứng dụng tài chính"
+  [ -d "$vnr/gói-số-15/src" ] || { new_repo "$vnr" feat/x && for i in $(seq 15); do mkdir -p "$vnr/gói-số-$i/src"; done; }
+  vc="cd \"gói-số-1\" && npm test; "
+  for i in $(seq 2 15); do vc="${vc}cd \"../gói-số-$i\" && npm test; "; done
+  for i in $(seq 15); do vc="${vc}git -C \"../gói-số-$i/src\" add -A; "; done
+  expect_guard allow "${vc}git push origin HEAD" "$vnr"
   # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
