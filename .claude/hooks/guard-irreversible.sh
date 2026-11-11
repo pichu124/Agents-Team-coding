@@ -618,9 +618,10 @@ nb_add() {
     *[![:ascii:]]*) b=$((4 * b)) ;;
   esac
   nb=$((nb + b))
-  # Công ghép (resolve_dir, nối mảng) cũng tính vào ngân sách UQW_MAX, ~2 µs mỗi byte với bash 3.2: lệnh gộp nhiều trần
-  # (cd nhiều đoạn nháy, nhiều `cd .`, -C đường dài) dưới mọi trần từng mất 6,5 giây (reviewer PR #83).
-  uqw=$((uqw + 2 * b))
+  # Công ghép (resolve_dir, nối mảng) cũng tính vào ngân sách UQW_MAX, ~2 µs mỗi ký tự với bash 3.2: lệnh gộp nhiều trần
+  # (cd nhiều đoạn nháy, nhiều `cd .`, -C đường dài) dưới mọi trần từng mất 6,5 giây (reviewer PR #83). Theo ký tự, không
+  # theo cận byte: nhân 4 thì đường tiếng Việt bị hỏi thừa (reviewer PR #84).
+  uqw=$((uqw + 2 * ${#RD}))
   if [ "$nb" -gt "$BYTE_MAX" ]; then
     reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
     return 1

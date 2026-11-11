@@ -1206,9 +1206,10 @@ for mode in $modes; do
     *'push trong lệnh quá dài'*) ok ;;
     *) bad "guard phải đếm PUSH_CMD_MAX theo byte [$mode]: lệnh 108000 ký tự 3 byte → [$out]" ;;
   esac
-  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
+  out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json" 2>&1)"
+  case "$out" in
     *'hơn 60000 thành phần'*) ok ;;
-    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
+    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode] (cwd $tmp/dz) → [$out]" ;;
   esac
   # BYTE_MAX đếm cận trên byte (reviewer PR #69): tên toàn ký tự 3 byte (ệ, U+1EC7): đếm ký tự thì dưới trần (đọc tới
   # nhánh main), đếm byte thì quá trần. Không dùng ký tự ngoài BMP (U+1D538): trên Git Bash guard
