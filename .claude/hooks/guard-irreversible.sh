@@ -749,8 +749,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Ngân sách công của mọi lần đọc đường (expand_dir) trong vòng cd và vòng -C: CD_MAX và GCX_MAX đếm số lần, mà một lần
   # đọc từ 60 đoạn nháy tốn ~8 ms với bash 3.2 ở UTF-8 (đường 1 đoạn ~1 ms): 740 `git -C "a"'b'…(60 đoạn)` rồi push từng
   # mất 25 giây, 299 cd như vậy 10,6 giây (reviewer PR #82). Đơn vị xấp xỉ µs với bash 3.2 ở UTF-8 (đo trong guard):
-  # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi: dưới
-  # trần chậm nhất ~3 giây cả lệnh (Git Bash gấp đôi vẫn dưới timeout).
+  # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi. Chỉ
+  # tính expand_dir: gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần BYTE_MAX) vẫn tới ~6 giây (4.3).
   UQW_MAX=2000000
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
   # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
@@ -884,7 +884,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # Lượt từ ghép: từ quá PATH_MAX (4096) thì không đọc (trước mọi phép cắt chuỗi, bậc hai theo độ dài) mà hỏi: cd -L
         # rút `..` theo chữ trước khi chdir nên bash vẫn tới được (`cd "a b"/../`×700 rồi `main\ repo`, 4.3 (2)).
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
-        expand_dir "$LA" "$um" || { unknown=1; continue; }
+        # Đã unknown thì chắc hỏi: thôi đọc. continue thì từ hơn 64 đoạn (unquote_word trả 1 ở đoạn 65, lần đọc đắt nhất)
+        # bỏ qua ngân sách bên dưới: 740 `git -C ("a"'b')×33` rồi push từng mất 10,9 giây với bash 3.2 (reviewer PR #83).
+        expand_dir "$LA" "$um" || { unknown=1; break 2; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
           reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
           break 2
@@ -929,7 +931,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         fi
         last_arg "$m" "$a"
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
-        expand_dir "$LA" "$um" || { unknown=1; continue; }
+        expand_dir "$LA" "$um" || { unknown=1; break 3; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
           reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
           break 3
