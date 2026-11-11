@@ -972,6 +972,15 @@ seg60="$(for _ in $(seq 30); do printf '%s' '\"a\"'"'b'"; done)"
   for _ in $(seq 299); do printf 'cd %s; ' "$seg60"; done
   printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-cduq.json"
+# Từ hơn 64 đoạn: unquote_word trả 1 ở đoạn thứ 65, expand_dir trả 1 và vòng `continue` mà không kiểm ngân sách (reviewer
+# PR #83): 740 `git -C ("a"'b')×33 status; ` rồi push mất 6,9 giây với bash 5, 10,9 với bash 3.2, uqw gấp 4 lần UQW_MAX.
+# Đã unknown thì chắc hỏi: thôi đọc. Kiểm riêng với trần 5 giây (bản sửa ~1,4 giây).
+seg66="$(for _ in $(seq 33); do printf '%s' '\"a\"'"'b'"; done)"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 740); do printf 'git -C %s status; ' "$seg66"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-gitcuq66.json"
 # Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
 # (100 cặp: ~100000 thành phần mà tổng độ dài dưới BYTE_MAX) rồi 289 `cd ..` nối dồn (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
 # PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
@@ -1317,6 +1326,13 @@ for mode in $modes; do
       *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
     esac
   done
+done
+for mode in $modes; do
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-gitcuq66.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi trong 5 giây [$mode]: 740 git -C có 66 đoạn nháy (từ quá 64 đoạn không được bỏ qua ngân sách) → [$out]" ;;
+  esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
 # ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
