@@ -387,7 +387,7 @@ EOF
   # GC_MAX) mất 7,3 giây với bash 3.2 ở UTF-8 mà không hỏi, Git Bash chậm gấp đôi thì quá timeout (4.3, reviewer PR #75).
   # Nay quá GCX_MAX lần -C thì hỏi.
   expect_guard ask "$(printf 'git -C q status; %.0s' $(seq 2000))git push origin HEAD"
-  # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~751 -C không nháy, ~376 có nháy).
+  # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
   # ghép với nháy kép phía sau và tách đôi giá trị. Dạng dq2 cũ vẫn bắt được, nên dạng mới phải thêm, không thay.
