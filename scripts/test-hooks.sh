@@ -958,6 +958,20 @@ many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
   for _ in $(seq 5000); do printf '%s' 'git -C q status; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-gitcexp.json"
+# Công mỗi -C hay cd theo số đoạn nháy (reviewer PR #82): GCX_MAX và CD_MAX đếm số lần, mà unquote_word trên từ 60 đoạn
+# tốn ~10 ms mỗi lượt với bash 3.2 ở UTF-8. 740 `git -C "a"'b'…(60 đoạn) status; ` rồi push lên main (145 KB) mất ~25 giây,
+# 299 `cd "a"'b'…; ` rồi push ~10 giây, quá timeout nên lệnh chạy không hỏi. Ngân sách công UQW_MAX: quá thì hỏi.
+seg60="$(for _ in $(seq 30); do printf '%s' '\"a\"'"'b'"; done)"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 740); do printf 'git -C %s status; ' "$seg60"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-gitcuq.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 299); do printf 'cd %s; ' "$seg60"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-cduq.json"
 # Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
 # (100 cặp: ~100000 thành phần mà tổng độ dài dưới BYTE_MAX) rồi 289 `cd ..` nối dồn (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
 # PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
@@ -1295,7 +1309,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
