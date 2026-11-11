@@ -383,6 +383,13 @@ EOF
   expect_guard ask 'git -c "main\\" -c u="\"a b\"" "push" -f origin feat/x'
   expect_guard ask 'git -c u="\"a b\\\"" "push" -f origin feat/x'
   expect_guard allow 'git -c user.name="\"a b\\" "push" origin HEAD'
+  # Mỗi `-C` tốn một lần last_arg + expand_dir mà GC_MAX chỉ đếm lần ghép: `git -C q status; `×5000 rồi push (ngay dưới
+  # GC_MAX) mất 7,3 giây với bash 3.2 ở UTF-8 mà không hỏi, Git Bash chậm gấp đôi thì quá timeout (4.3, reviewer PR #75).
+  # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
+  # lệnh 32767 ký tự (2000 `git -C q status; ` là 34 KB: "Argument list too long", input rỗng, guard cho qua; CI PR #82).
+  expect_guard ask "$(printf 'git -C q; %.0s' $(seq 2000))git push origin HEAD"
+  # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
+  expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
   # ghép với nháy kép phía sau và tách đôi giá trị. Dạng dq2 cũ vẫn bắt được, nên dạng mới phải thêm, không thay.
   expect_guard ask "git -c u='x\\\\\"'\"y z\" \"push\" -f origin feat/x"
@@ -945,6 +952,12 @@ many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
   for _ in $(seq 8200); do printf '%s' "git -C '\\\"q\\\"' status; "; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-gitcq.json"
+# Ngay dưới GC_MAX cũ: 5000 `git -C q status; ` (mỗi -C một lần ghép), rồi push lên main.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 5000); do printf '%s' 'git -C q status; '; done
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-gitcexp.json"
 # Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
 # (100 cặp: ~100000 thành phần mà tổng độ dài dưới BYTE_MAX) rồi 289 `cd ..` nối dồn (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
 # PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
@@ -1282,7 +1295,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
