@@ -86,9 +86,11 @@ unquote_word() {
   local w="$1" n=0 max="${3:-64}" re_pl re_dqe='^"(([^"\\]|\\.)*)"(.*)$' re_dq='^"([^"]*)"()(.*)$' re_sq="^'([^']*)'(.*)\$" re_bs='^\\(.)(.*)$' c rest
   local re_dqbs='^([^\\]*)\\(.?)(.*)$'
   UQ=""
+  UQN=0
   if [ "$2" = ps ]; then re_pl='^([^"'"'"']+)(.*)$'; else re_pl='^([^"'"'"'\\]+)(.*)$'; fi
   while [ -n "$w" ]; do
     n=$((n + 1))
+    UQN="$n"
     [ "$n" -le "$max" ] || return 1
     if [[ $w =~ $re_pl ]]; then
       UQ="$UQ${BASH_REMATCH[1]}"
@@ -99,6 +101,7 @@ unquote_word() {
       # Trong nháy kép, \ chỉ thoát \ $ ` " (bash); \ trước ký tự khác giữ nguyên.
       while [ "$2" != ps ] && [[ $c =~ $re_dqbs ]]; do
         n=$((n + 1))
+        UQN="$n"
         [ "$n" -le "$max" ] || return 1
         case "${BASH_REMATCH[2]}" in
           \\ | '$' | '`' | '"') UQ="$UQ${BASH_REMATCH[1]}${BASH_REMATCH[2]}" ;;
@@ -649,6 +652,8 @@ last_arg() {
 expand_dir() {
   local d="$1" rc
   EN=""
+  # Công ước lượng (xem UQW_MAX): mỗi lần đọc tốn theo độ dài từ, unquote_word thêm mỗi đoạn một lần chép phần còn lại.
+  uqw=$((uqw + 12 * ${#1}))
   strip_q "$d"
   d="$SQ"
   # `\ ` thành dấu cách. ${d//\\ / } trên từ dài chậm bậc hai trở lên với bash 3.2 (4000 `a\ b/..`, 28 KB: ~22 giây ở
@@ -672,6 +677,7 @@ expand_dir() {
   [ "${#1}" -le 4096 ] || return 0
   unquote_word "$1" "$2"
   rc=$?
+  uqw=$((uqw + UQN * (${#1} + 64) / 2))
   [ "$rc" = 1 ] && return 1
   if [ "$rc" = 0 ]; then
     subst_dir "$UQ" || return 1
@@ -740,6 +746,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # lệnh nối dòng hay có \"). Chỉ đếm số -C, không đếm công mỗi -C: đối số nhiều đoạn nháy (`"a"'b'…`) vẫn quá timeout
   # dưới trần (còn lại của 4.3). Không hạ dưới ~2400: 600 `git -C xN/..` sau một cd phải tới được DIR_MAX. Quá thì hỏi.
   GCX_MAX=3000
+  # Ngân sách công của mọi lần đọc đường (expand_dir) trong vòng cd và vòng -C: CD_MAX và GCX_MAX đếm số lần, mà một lần
+  # đọc từ 60 đoạn nháy tốn ~8 ms với bash 3.2 ở UTF-8 (đường 1 đoạn ~1 ms): 740 `git -C "a"'b'…(60 đoạn)` rồi push từng
+  # mất 25 giây, 299 cd như vậy 10,6 giây (reviewer PR #82). Đơn vị xấp xỉ µs với bash 3.2 ở UTF-8 (đo trong guard):
+  # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi: dưới
+  # trần chậm nhất ~3 giây cả lệnh (Git Bash gấp đôi vẫn dưới timeout).
+  UQW_MAX=2000000
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
   # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
   BYTE_MAX=2000000
@@ -780,6 +792,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   IFS="$nl"
   ngc=0
   ngx=0
+  uqw=0
   nb=0
   # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
   # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
@@ -872,6 +885,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # rút `..` theo chữ trước khi chdir nên bash vẫn tới được (`cd "a b"/../`×700 rồi `main\ repo`, 4.3 (2)).
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; continue; }
+        if [ "$uqw" -gt "$UQW_MAX" ]; then
+          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          break 2
+        fi
         # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
         # ghép thì ngược lại.
         t="$EO"
@@ -913,6 +930,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         last_arg "$m" "$a"
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; continue; }
+        if [ "$uqw" -gt "$UQW_MAX" ]; then
+          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          break 3
+        fi
         for c in "${cl[@]}"; do
           [ -n "$c" ] || continue
           ngc=$((ngc + 1))
