@@ -627,6 +627,10 @@ nb_add() {
   fi
   [ "$uqw" -le "$UQW_MAX" ] && return 0
   reason="push sau cd qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
+  # Các đường đã gom quá PART_MAX thành phần thì nói thêm (như sau vòng lặp): một lần awk, chỉ khi vượt ngân sách.
+  local np
+  np="$(printf '%s\n' "${dl[@]}" "${cl[@]}" "$RD" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
+  [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường nối dồn quá dài: hơn $PART_MAX thành phần"
   return 1
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
