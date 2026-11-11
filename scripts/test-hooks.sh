@@ -1211,6 +1211,22 @@ for mode in $modes; do
     *'hơn 60000 thành phần'*) ok ;;
     *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode] (cwd $tmp/dz) → [$out]" ;;
   esac
+  # Lý do không được phụ thuộc chỗ nào làm ngân sách công vượt trước (CI macOS PR #84: cwd /var/folders/… thì bước kiểm
+  # sau expand_dir vượt trước nb_add, lý do mất "thành phần"). Chạy lại với cwd dài thêm 1..40 ký tự (chỉ lượt auto).
+  if [ "$mode" = auto ]; then
+    pad=""
+    dpok=1
+    for _ in $(seq 40); do
+      pad="${pad}d"
+      mkdir -p "$tmp/dp/$pad/dz/a"
+      out="$(sed "s|\"cwd\":\"[^\"]*\"|\"cwd\":\"$tmp/dp/$pad/dz\"|" "$tmp/long-dotparts.json" | "$hooks/guard-irreversible.sh" 2>&1)"
+      case "$out" in
+        *'hơn 60000 thành phần'*) ;;
+        *) bad "guard phải hỏi vì trần PART_MAX với mọi độ dài cwd (cwd $tmp/dp/$pad/dz) → [$out]"; dpok=""; break ;;
+      esac
+    done
+    [ -n "$dpok" ] && ok
+  fi
   # BYTE_MAX đếm cận trên byte (reviewer PR #69): tên toàn ký tự 3 byte (ệ, U+1EC7): đếm ký tự thì dưới trần (đọc tới
   # nhánh main), đếm byte thì quá trần. Không dùng ký tự ngoài BMP (U+1D538): trên Git Bash guard
   # vẫn đọc tới nhánh main dù bash ở đó khớp mẫu ngoài ASCII (CI Windows PR #70), nguyên nhân chưa rõ (4.3).
