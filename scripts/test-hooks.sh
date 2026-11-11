@@ -388,6 +388,11 @@ EOF
   # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
   # lệnh 32767 ký tự (2000 `git -C q status; ` là 34 KB: "Argument list too long", input rỗng, guard cho qua; CI PR #82).
   expect_guard ask "$(printf 'git -C q; %.0s' $(seq 2000))git push origin HEAD"
+  # Gộp nhiều trần (reviewer PR #83): 45 cd × 60 đoạn nháy, 249 `cd .`, 2 `git -C "a×600"` rồi push, dưới UQW_MAX, CD_MAX,
+  # GC_MAX và BYTE_MAX, mà mất 6,5 giây với bash 3.2 (runner macOS chậm hơn thì sát timeout): công ghép đường (nb_add)
+  # chưa tính vào ngân sách. Nay mỗi byte ghép cộng 2 vào uqw, quá UQW_MAX thì hỏi.
+  sg="$(printf '"a"'"'b'"'%.0s' $(seq 30))"
+  expect_guard ask "$(printf "cd $sg; %.0s" $(seq 45))$(printf 'cd .; %.0s' $(seq 249))$(printf 'git -C "%s" status; ' "$(printf 'a%.0s' $(seq 600))" "$(printf 'a%.0s' $(seq 600))")git push origin HEAD"
   # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
