@@ -958,6 +958,29 @@ many_cd 'cd ..; ' 299 > "$tmp/long-manydotdot.json"
   for _ in $(seq 5000); do printf '%s' 'git -C q status; '; done
   printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
 } > "$tmp/long-gitcexp.json"
+# Công mỗi -C hay cd theo số đoạn nháy (reviewer PR #82): GCX_MAX và CD_MAX đếm số lần, mà unquote_word trên từ 60 đoạn
+# tốn ~10 ms mỗi lượt với bash 3.2 ở UTF-8. 740 `git -C "a"'b'…(60 đoạn) status; ` rồi push lên main (145 KB) mất ~25 giây,
+# 299 `cd "a"'b'…; ` rồi push ~10 giây, quá timeout nên lệnh chạy không hỏi. Ngân sách công UQW_MAX: quá thì hỏi.
+seg60="$(for _ in $(seq 30); do printf '%s' '\"a\"'"'b'"; done)"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 740); do printf 'git -C %s status; ' "$seg60"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-gitcuq.json"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 299); do printf 'cd %s; ' "$seg60"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-cduq.json"
+# Từ hơn 64 đoạn: unquote_word trả 1 ở đoạn thứ 65, expand_dir trả 1 và vòng `continue` mà không kiểm ngân sách (reviewer
+# PR #83): 740 `git -C ("a"'b')×33 status; ` rồi push mất 6,9 giây với bash 5, 10,9 với bash 3.2, uqw gấp 4 lần UQW_MAX.
+# Đã unknown thì chắc hỏi: thôi đọc. Kiểm riêng với trần 5 giây (bản sửa ~1,4 giây).
+seg66="$(for _ in $(seq 33); do printf '%s' '\"a\"'"'b'"; done)"
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  for _ in $(seq 740); do printf 'git -C %s status; ' "$seg66"; done
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-gitcuq66.json"
 # Reviewer PR #68: đọc lại theo thư mục thật cd tới mọi đường, mỗi thành phần một lần stat (-P và -L); một cd dài `a/..`
 # (100 cặp: ~100000 thành phần mà tổng độ dài dưới BYTE_MAX) rồi 289 `cd ..` nối dồn (strace: gấp ~10 lần bản cũ, Git Bash stat đắt). Trần
 # PART_MAX: hỏi trước khi cd. Chỉ một cd 300 cặp: phần gom thư mục (có từ trước) bậc hai theo độ dài, 3 cd 1000 cặp mất
@@ -1295,7 +1318,7 @@ hook_limit() {
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
@@ -1303,6 +1326,13 @@ for mode in $modes; do
       *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
     esac
   done
+done
+for mode in $modes; do
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-gitcuq66.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi trong 5 giây [$mode]: 740 git -C có 66 đoạn nháy (từ quá 64 đoạn không được bỏ qua ngân sách) → [$out]" ;;
+  esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
 # ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
