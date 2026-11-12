@@ -702,6 +702,13 @@ EOF
   TOOL=PowerShell expect_guard ask "Push-Location${ideo}'$on_main'; git push"
   TOOL=PowerShell expect_guard ask "Set-Location ${ndash}Path '$on_main'; git push"
   TOOL=PowerShell expect_guard ask "cd${nbsp}'$on_main'; git push"
+  # Thân -c sau khoảng trắng mà glibc không xếp vào [[:space:]] (NBSP, U+202F, U+2007, U+0085; reviewer PR #86): grep SHC
+  # trên dạng gốc không thấy `bash -c`, dạng đã đổi (un) dựng sau khi giải thân nên thân không được đọc, push lên main
+  # được cho qua. PowerShell tách token ở các ký tự này.
+  # U+3000 thì grep ở locale UTF-8 thấy, nhưng mode sed không giải \u3000 nên cũng lọt.
+  for sp in "$nbsp" "$(printf '\342\200\257')" "$(printf '\342\200\207')" "$(printf '\302\205')" "$ideo"; do
+    TOOL=PowerShell expect_guard ask "bash${sp}-c${sp}'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
+  done
   # Thư mục tên có en dash: dạng đổi sang ASCII trỏ tới `proj-x` (không có), nên dạng gốc phải khớp cd sau khoảng trắng
   # Unicode, ſ hay ı, kể cả khi grep của vòng cd chạy ở locale C cho nhanh (reviewer PR #74).
   # Chỉ grep ở locale UTF-8 mới coi U+3000 là [[:space:]] (main cũng chỉ hỏi khi đó): chạy ở locale UTF-8 đầu tiên mà
