@@ -165,8 +165,11 @@ USP="$(printf '\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\
 # Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
 # 40 KB toàn chữ p mất 11 giây).
 PUSH_LETTERS='^[^Pp]*[Pp][^Uu]*[Uu][^Ss]*[Ss][^Hh]*[Hh]'
+# decode_shell_c [chỉ số dạng đầu tiên]: giải thân trên forms từ chỉ số đó (mặc định 0). Thân giải được nối vào cmd, forms và
+# shc_new (để dạng un, giải sau, đưa thân của nó vào src).
+shc_new=""
 decode_shell_c() {
-  local i=0 m w budget=8192 count=0
+  local i="${1:-0}" m w budget=8192 count=0
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
@@ -197,7 +200,7 @@ decode_shell_c() {
       unquote_word "$w" bash 256
       case $? in
         # Hết chỗ cho dạng mới thì thân không được đọc: thư mục của push là chưa biết, không bỏ trong im lặng.
-        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; else shc_unknown=1; fi ;;
+        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; shc_new="$shc_new$nl$UQ"; else shc_unknown=1; fi ;;
         1) shc_unknown=1 ;;
       esac
     done
@@ -231,13 +234,27 @@ cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
 # nên trước khi luật chạy ở locale C, `git puſh -f` vẫn được hỏi. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải
 # \uXXXX, nên đổi cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
 src="$cmd"
+src_extra=0
 if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
   uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g;s/\305\277/s/g;s/\304\261/i/g')"
   uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
   uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g;s/\\u017[fF]/s/g;s/\\u0131/i/g'
   un="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "$uni" -e "$uesc")"
   # Cổng push đọc cả dạng này: `git -C ‘M’ push`, `Push-Location<U+3000>M`, `Set-Location –Path M`.
-  [ "$un" = "$cmd" ] || { src="$un"; cmd="$cmd$nl$un"; forms+=("$un"); }
+  if [ "$un" != "$cmd" ]; then
+    src="$un"; cmd="$cmd$nl$un"; forms+=("$un")
+    # Thân -c sau khoảng trắng mà glibc không xếp vào [[:space:]] (PowerShell `bash<NBSP>-c '…'`, cả U+202F, U+2007, U+0085,
+    # và \uXXXX khi đọc JSON bằng sed; reviewer PR #86): grep SHC trên dạng gốc không thấy `bash -c`, nên giải thân và kiểm
+    # thân chưa biết (SHO, SHV) thêm một lần trên dạng này. Thân mới nối vào $src nhưng không tính vào trần 65536 của dq2,
+    # dq3 (src_extra): phần lớn là bản chép của thân đã giải ở lượt đầu, tính vào thì lệnh ~55 KB có en dash mất dq2 mà
+    # main vẫn có (reviewer PR #87). Độ dài thêm có trần là ngân sách của một lần decode_shell_c.
+    shc_new=""
+    decode_shell_c $((${#forms[@]} - 1))
+    src="$src$shc_new"; src_extra=${#shc_new}
+    if LC_ALL=C text_grep "$un" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$un" -Eq -- "$SHV"; then
+      shc_unknown=1
+    fi
+  fi
 fi
 
 # Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
@@ -276,7 +293,7 @@ case "$src" in
     # mỗi dạng thêm một lượt).
     case "$src" in
       *'\"'*)
-        if [ "${#src}" -le 65536 ]; then
+        if [ $((${#src} - src_extra)) -le 65536 ]; then
           dqs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
           dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
           cmd="$cmd$nl$dq2"
