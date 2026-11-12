@@ -11,13 +11,13 @@ set -uo pipefail
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
 # mất 14,8 giây với bash 3.2 ở UTF-8, quá timeout của hook, và Claude Code cho lệnh chạy mà không hỏi (4.3). Dài hơn thì
-# hỏi luôn (hỏi thừa: lệnh dài hơn 256 KiB, hiếm). ${#input} đếm ký tự (≤ số byte); có thể vượt theo cận 4 byte mỗi ký
-# tự thì đếm byte bằng wc, so bằng `[` (bỏ `\r` của wc.exe; số vẫn hỏng thì `[` lỗi, coi như quá trần như PUSH_CMD_MAX).
+# hỏi luôn (hỏi thừa: lệnh dài hơn 256 KiB, hiếm). ${#input} đếm ký tự (≤ số byte); có thể vượt theo cận 6 byte mỗi ký
+# tự (glibc đếm cả dãy 5–6 byte không hợp lệ là một ký tự; reviewer PR #85) thì đếm byte bằng wc, so bằng `[` (bỏ `\r` của wc.exe; số vẫn hỏng thì `[` lỗi, coi như quá trần như PUSH_CMD_MAX).
 RAW_MAX=262144
 raw_reason=""
 if [ "${#input}" -gt "$RAW_MAX" ]; then
   raw_reason="lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
-elif [ $((4 * ${#input})) -gt "$RAW_MAX" ]; then
+elif [ $((6 * ${#input})) -gt "$RAW_MAX" ]; then
   rawb="$(printf '%s' "$input" | wc -c | tr -d ' \t\r')"
   [ "$rawb" -le "$RAW_MAX" ] 2>/dev/null || raw_reason="lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
 fi
