@@ -718,8 +718,9 @@ EOF
     LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Set-Location${ideo}'$pdx'; git push"
     LC_ALL="$ul" TOOL=PowerShell expect_guard ask "Push-Location${ideo}-Path${ideo}'$pdx'; git push"
     # Dạng dài hơn SHU_MAX có byte ≥ 0x80 thì grep SHC ở locale C (cho nhanh), U+3000 không còn là [[:space:]]: thân -c sau
-    # khoảng trắng Unicode không đọc được, nên phải coi là chưa biết (push hỏi), không bỏ trong im lặng.
-    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "echo $(printf 'é%.0s' $(seq 17000)); bash${ideo}-c${ideo}'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
+    # khoảng trắng Unicode không đọc được, nên phải coi là chưa biết (push hỏi), không bỏ trong im lặng. Một `é` cộng đệm
+    # ASCII: lệnh đi qua argv (bash_input), Windows báo "Argument list too long" với 17000 `é` (CI PR #86).
+    LC_ALL="$ul" TOOL=PowerShell expect_guard ask "echo é $(printf 'a%.0s' $(seq 17000)); bash${ideo}-c${ideo}'git -C '\\''$on_main'\\'' pu'\\''sh'\\'''"
     # ſ, ı: chỉ khi grep -i của máy gập chúng thành s, i (GNU grep; main cũng chỉ hỏi khi đó).
     n="$(printf '\305\277\n\304\261\n' | LC_ALL="$ul" grep -ci '^[si]$' 2>/dev/null)"
     if [ "$n" = 2 ]; then
