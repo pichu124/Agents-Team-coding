@@ -234,6 +234,7 @@ cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
 # nên trước khi luật chạy ở locale C, `git puſh -f` vẫn được hỏi. Bộ đọc JSON bằng sed (KIT_JSON_TOOL=sed) không giải
 # \uXXXX, nên đổi cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
 src="$cmd"
+src_extra=0
 if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
   uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g;s/\305\277/s/g;s/\304\261/i/g')"
   uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
@@ -244,10 +245,12 @@ if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *
     src="$un"; cmd="$cmd$nl$un"; forms+=("$un")
     # Thân -c sau khoảng trắng mà glibc không xếp vào [[:space:]] (PowerShell `bash<NBSP>-c '…'`, cả U+202F, U+2007, U+0085,
     # và \uXXXX khi đọc JSON bằng sed; reviewer PR #86): grep SHC trên dạng gốc không thấy `bash -c`, nên giải thân và kiểm
-    # thân chưa biết thêm một lần trên dạng này.
+    # thân chưa biết (SHO, SHV) thêm một lần trên dạng này. Thân mới nối vào $src nhưng không tính vào trần 65536 của dq2,
+    # dq3 (src_extra): phần lớn là bản chép của thân đã giải ở lượt đầu, tính vào thì lệnh ~55 KB có en dash mất dq2 mà
+    # main vẫn có (reviewer PR #87). Độ dài thêm có trần là ngân sách của một lần decode_shell_c.
     shc_new=""
     decode_shell_c $((${#forms[@]} - 1))
-    src="$src$shc_new"
+    src="$src$shc_new"; src_extra=${#shc_new}
     if LC_ALL=C text_grep "$un" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$un" -Eq -- "$SHV"; then
       shc_unknown=1
     fi
@@ -290,7 +293,7 @@ case "$src" in
     # mỗi dạng thêm một lượt).
     case "$src" in
       *'\"'*)
-        if [ "${#src}" -le 65536 ]; then
+        if [ $((${#src} - src_extra)) -le 65536 ]; then
           dqs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
           dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
           cmd="$cmd$nl$dq2"
