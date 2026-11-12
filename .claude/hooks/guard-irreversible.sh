@@ -158,6 +158,10 @@ SHC='(^|[;&|(`{[:space:]"'"'"'/])'"$SHN"'([[:space:]]+('"$SHOPT"'))*[[:space:]]+
 # được ở (bash để giải shell con đó (reviewer PR #47).
 SHW='('"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*"|[^[:space:];&|"'"'"'\\(`]|\\.)+'
 shc_unknown=""
+SHU_MAX=16384
+# Khoảng trắng Unicode theo UTF-8 mà glibc xếp vào [[:space:]] (cộng các khoảng trắng không ngắt cho chắc): U+0085, U+00A0,
+# U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.
+USP="$(printf '\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\201\237|\343\200\200')"
 # Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
 # 40 KB toàn chữ p mất 11 giây).
 PUSH_LETTERS='^[^Pp]*[Pp][^Uu]*[Uu][^Ss]*[Ss][^Hh]*[Hh]'
@@ -171,6 +175,14 @@ decode_shell_c() {
     # locale gốc như trước, vì ở locale C [[:space:]] không khớp khoảng trắng Unicode (`bash<U+3000>-c` của PowerShell;
     # reviewer PR #74). Lệnh dài có ký tự không phải ASCII vẫn chậm như trước.
     grep_lc "${forms[$i]}"
+    # Dạng dài có byte ≥ 0x80 (một `é ` trước `bash -o `×23000, 184 KB) thì grep ở locale gốc cũng bậc hai: quá 60 giây với
+    # bash 5, quá timeout thì push lên main chạy không hỏi (reviewer PR #85). Dạng dài hơn SHU_MAX ký tự thì grep ở locale C;
+    # khoảng trắng Unicode (PowerShell `bash<U+3000>-c`) khi đó không khớp [[:space:]], nên dạng có khoảng trắng Unicode thì
+    # thân là chưa biết (push hỏi). Bash chỉ tách từ ở khoảng trắng ASCII, nên với bash không mất gì.
+    if [ "$GL" != C ] && [ "${#forms[$i]}" -gt "$SHU_MAX" ]; then
+      GL=C
+      LC_ALL=C text_grep "${forms[$i]}" -Eq -- "$USP" && shc_unknown=1
+    fi
     for m in $(printf '%s' "${forms[$i]}" | LC_ALL="$GL" grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
       w="${BASH_REMATCH[1]}"
