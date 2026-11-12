@@ -165,8 +165,11 @@ USP="$(printf '\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\
 # Neo đầu chuỗi và dùng lớp phủ định: regex không neo [Pp].*[Uu].*[Ss].*[Hh] của glibc thử lại từ mọi chữ p, bậc hai (thân
 # 40 KB toàn chữ p mất 11 giây).
 PUSH_LETTERS='^[^Pp]*[Pp][^Uu]*[Uu][^Ss]*[Ss][^Hh]*[Hh]'
+# decode_shell_c [chỉ số dạng đầu tiên]: giải thân trên forms từ chỉ số đó (mặc định 0). Thân giải được nối vào cmd, forms và
+# shc_new (để dạng un, giải sau, đưa thân của nó vào src).
+shc_new=""
 decode_shell_c() {
-  local i=0 m w budget=8192 count=0
+  local i="${1:-0}" m w budget=8192 count=0
   set -f
   IFS="$nl"
   while [ "$i" -lt "${#forms[@]}" ] && [ "${#forms[@]}" -lt 16 ]; do
@@ -197,7 +200,7 @@ decode_shell_c() {
       unquote_word "$w" bash 256
       case $? in
         # Hết chỗ cho dạng mới thì thân không được đọc: thư mục của push là chưa biết, không bỏ trong im lặng.
-        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; else shc_unknown=1; fi ;;
+        0) if [ "${#forms[@]}" -lt 16 ]; then forms+=("$UQ"); cmd="$cmd$nl$UQ"; shc_new="$shc_new$nl$UQ"; else shc_unknown=1; fi ;;
         1) shc_unknown=1 ;;
       esac
     done
@@ -237,7 +240,18 @@ if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *
   uesc="$uesc;"'s/\\u201[3-5]/-/g;s/\\u201[89abAB]/'"'"'/g;s/\\u201[c-eC-E]/"/g;s/\\u017[fF]/s/g;s/\\u0131/i/g'
   un="$(printf '%s\n' "$cmd" | LC_ALL=C sed -e "$uni" -e "$uesc")"
   # Cổng push đọc cả dạng này: `git -C ‘M’ push`, `Push-Location<U+3000>M`, `Set-Location –Path M`.
-  [ "$un" = "$cmd" ] || { src="$un"; cmd="$cmd$nl$un"; forms+=("$un"); }
+  if [ "$un" != "$cmd" ]; then
+    src="$un"; cmd="$cmd$nl$un"; forms+=("$un")
+    # Thân -c sau khoảng trắng mà glibc không xếp vào [[:space:]] (PowerShell `bash<NBSP>-c '…'`, cả U+202F, U+2007, U+0085,
+    # và \uXXXX khi đọc JSON bằng sed; reviewer PR #86): grep SHC trên dạng gốc không thấy `bash -c`, nên giải thân và kiểm
+    # thân chưa biết thêm một lần trên dạng này.
+    shc_new=""
+    decode_shell_c $((${#forms[@]} - 1))
+    src="$src$shc_new"
+    if LC_ALL=C text_grep "$un" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$un" -Eq -- "$SHV"; then
+      shc_unknown=1
+    fi
+  fi
 fi
 
 # Chữ lệnh bị nháy hay \ xé đôi (`git pu'sh'`, `r'm' -rf /`, `--for"ce"`, `--ha''rd`, `$'p'ush`): bash bỏ nháy giữa từ rồi
