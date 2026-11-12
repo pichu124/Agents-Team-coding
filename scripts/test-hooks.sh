@@ -1039,12 +1039,36 @@ mkdir -p "$tmp/a b"
   printf 'main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-qword.json"
 # Lệnh push dài ~490 KB (70000 `a b/../` trong nháy rồi `main repo`): mọi bước đã tuyến tính nhưng tổng vẫn ~14 giây với
-# bash 3.2 ở UTF-8 (reviewer PR #71), quá timeout. Trần PUSH_CMD_MAX: lệnh có push dài hơn thì hỏi ngay.
+# bash 3.2 ở UTF-8 (reviewer PR #71), quá timeout. Trần PUSH_CMD_MAX: lệnh có push dài hơn thì hỏi ngay. Nay trên RAW_MAX
+# nên trần đó hỏi trước; đường PUSH_CMD_MAX đã có long-colon (ASCII) và long-qwordu (wc) phủ, dưới RAW_MAX.
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"cd \\"' "$tmp"
   for _ in $(seq 70000); do printf '%s' 'a b/../'; done
   printf 'main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-qword490.json"
+# Lệnh ~4 MB (`echo hello world; `×230000) rồi `git -C <repo ở main> push`: PUSH_CMD_MAX chỉ chặn phần sau cổng push,
+# tiền xử lý (đọc JSON, các dạng nối dòng, rule grep) vẫn chạy trên cả lệnh: 2 MB mất 14,8 giây với bash 3.2 ở UTF-8,
+# 4 MB 4,3–6 giây với bash 5, quá timeout thì push lên main chạy không hỏi (4.3). Trần RAW_MAX trên input thô, trước mọi
+# bước đọc. Kiểm riêng với trần 3 giây (Git Bash đọc 4 MB chậm hơn). Sinh bằng awk: vòng printf của bash chậm trên Git Bash.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp"
+  awk 'BEGIN { for (i = 0; i < 230000; i++) printf "echo hello world; " }'
+  printf 'git -C \\"%s\\" push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-raw4m.json"
+# Lệnh ~300 KB không có hành động nguy (`echo hello world; `×17000): trên trần RAW_MAX thì hỏi luôn (hỏi thừa có chủ ý:
+# không đọc kịp thì không biết lệnh có gì).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  awk 'BEGIN { for (i = 0; i < 17000; i++) printf "echo hello world; " }'
+  printf 'true","description":"test"}}\n'
+} > "$tmp/long-raw300k.json"
+# Nhánh đếm byte của RAW_MAX (reviewer PR #85): 100000 `ệ` (3 byte) là ~100 K ký tự nhưng ~300 KB, ${#input} dưới trần
+# mà số byte trên trần: phải hỏi qua wc.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo ' "$work"
+  awk 'BEGIN { for (i = 0; i < 100000; i++) printf "\341\273\207" }'
+  printf '","description":"test"}}\n'
+} > "$tmp/long-raw300ku.json"
 # `bash -o ` lặp 23000 lần (~184 KB) rồi cd vào repo ở main: mẫu thân -c (SHC) khớp chuỗi option `-o <chữ>` nối nhau rồi
 # hỏng ở cuối, grep ở locale UTF-8 thử lại từ mọi vị trí (bậc hai, quá 40 giây; reviewer PR #62 lần 8). Locale C dùng DFA.
 {
@@ -1268,15 +1292,17 @@ done
 } > "$tmp/long-assign.json"
 # Mỗi dòng một $'…' gần 16 KB (dưới ngưỡng bỏ qua của từng dòng), 17 dòng: phép giải $'…' của dạng xé chữ đọc từng ký tự
 # bằng length/substr, bậc hai theo độ dài, 278 KB mất 18 giây với bash 3.2 và awk BWK (main 1,3 giây; reviewer PR #60).
-long_input 'npm run deploy' "$work" " \$'$(printf 'A%.0s' $(seq 16370))'" 17 > "$tmp/long-ansi.json"
-long_input 'npm run deploy' "$work" " \$'$(printf '\\\\\\\\x41%.0s' $(seq 4090))'" 17 > "$tmp/long-ansiesc.json"
+# Nay 15 và 12 dòng (~246 KB): dưới RAW_MAX, để ca vẫn đi qua phép giải thay vì bị trần hỏi trước (reviewer PR #85).
+long_input 'npm run deploy' "$work" " \$'$(printf 'A%.0s' $(seq 16370))'" 15 > "$tmp/long-ansi.json"
+long_input 'npm run deploy' "$work" " \$'$(printf '\\\\\\\\x41%.0s' $(seq 4090))'" 12 > "$tmp/long-ansiesc.json"
 # Glob ba chữ *{*,*}* của case chạy bậc ba trên bash 3.2: 4000 `{,` (8 KB) mất 22 giây, here-doc CSV 190 KB sau
-# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60).
+# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60). long-brace là ca canh glob dưới timeout 10 giây (bản bậc ba 18
+# giây); long-csv chỉ canh thêm đường here-doc dài (bản bậc ba ~8–10 giây, dưới timeout; reviewer PR #85).
 printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo %s; git push --force origin x","description":"test"}}\n' \
   "$work" "$(printf '{,%.0s' $(seq 4000))" > "$tmp/long-brace.json"
 {
   printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"awk -F, '"'"'{print $1}'"'"' <<EOF' "$work"
-  printf '\\na,b,c,d,%s' $(seq 19000)
+  printf '\\na,b,c,d,%s' $(seq 17000) # dưới RAW_MAX (reviewer PR #85)
   printf '\\nEOF\\ngit push --force origin x","description":"test"}}\n'
 } > "$tmp/long-csv.json"
 # Reviewer PR #64: dòng mở ngoặc nhọn của dz2 phình theo tích (`{a,…×3000}{b,…×3000}` thành 9 triệu từ), và tìm biên từ
@@ -1366,6 +1392,13 @@ hook_limit() {
     $SIG{ALRM} = sub { kill "KILL", -$p; waitpid $p, 0; exit 142 };
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
+# Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
+# (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
+raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66; do
+  sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
+  assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
+done
 for mode in $modes; do
   for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
@@ -1381,6 +1414,21 @@ for mode in $modes; do
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
     *) bad "guard phải hỏi trong 5 giây [$mode]: 740 git -C có 66 đoạn nháy (từ quá 64 đoạn không được bỏ qua ngân sách) → [$out]" ;;
+  esac
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" guard_timeout=3 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-raw4m.json" 2>/dev/null)"
+  case "$out" in
+    *'lệnh quá dài để kiểm kịp'*) ok ;;
+    *) bad "guard phải hỏi trong 3 giây vì RAW_MAX [$mode]: lệnh ~4 MB rồi git -C <repo ở main> push → [$out]" ;;
+  esac
+  out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-raw300k.json" 2>/dev/null)"
+  case "$out" in
+    *'lệnh quá dài để kiểm kịp'*) ok ;;
+    *) bad "guard phải hỏi vì RAW_MAX [$mode]: lệnh ~300 KB → [$out]" ;;
+  esac
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-raw300ku.json" 2>/dev/null)"
+  case "$out" in
+    *'lệnh quá dài để kiểm kịp'*) ok ;;
+    *) bad "guard phải đếm RAW_MAX theo byte [$mode]: 100000 ký tự 3 byte → [$out]" ;;
   esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
