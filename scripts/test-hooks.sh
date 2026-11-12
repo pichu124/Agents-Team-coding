@@ -1062,6 +1062,13 @@ mkdir -p "$tmp/a b"
   awk 'BEGIN { for (i = 0; i < 17000; i++) printf "echo hello world; " }'
   printf 'true","description":"test"}}\n'
 } > "$tmp/long-raw300k.json"
+# Nhánh đếm byte của RAW_MAX (reviewer PR #85): 100000 `ệ` (3 byte) là ~100 K ký tự nhưng ~300 KB, ${#input} dưới trần
+# mà số byte trên trần: phải hỏi qua wc.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo ' "$work"
+  awk 'BEGIN { for (i = 0; i < 100000; i++) printf "\341\273\207" }'
+  printf '","description":"test"}}\n'
+} > "$tmp/long-raw300ku.json"
 # `bash -o ` lặp 23000 lần (~184 KB) rồi cd vào repo ở main: mẫu thân -c (SHC) khớp chuỗi option `-o <chữ>` nối nhau rồi
 # hỏng ở cuối, grep ở locale UTF-8 thử lại từ mọi vị trí (bậc hai, quá 40 giây; reviewer PR #62 lần 8). Locale C dùng DFA.
 {
@@ -1289,7 +1296,8 @@ done
 long_input 'npm run deploy' "$work" " \$'$(printf 'A%.0s' $(seq 16370))'" 15 > "$tmp/long-ansi.json"
 long_input 'npm run deploy' "$work" " \$'$(printf '\\\\\\\\x41%.0s' $(seq 4090))'" 12 > "$tmp/long-ansiesc.json"
 # Glob ba chữ *{*,*}* của case chạy bậc ba trên bash 3.2: 4000 `{,` (8 KB) mất 22 giây, here-doc CSV 190 KB sau
-# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60).
+# awk '{…}' mất 6 giây (main 1 giây; reviewer PR #60). long-brace là ca canh glob dưới timeout 10 giây (bản bậc ba 18
+# giây); long-csv chỉ canh thêm đường here-doc dài (bản bậc ba ~8–10 giây, dưới timeout; reviewer PR #85).
 printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo %s; git push --force origin x","description":"test"}}\n' \
   "$work" "$(printf '{,%.0s' $(seq 4000))" > "$tmp/long-brace.json"
 {
@@ -1416,6 +1424,11 @@ for mode in $modes; do
   case "$out" in
     *'lệnh quá dài để kiểm kịp'*) ok ;;
     *) bad "guard phải hỏi vì RAW_MAX [$mode]: lệnh ~300 KB → [$out]" ;;
+  esac
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-raw300ku.json" 2>/dev/null)"
+  case "$out" in
+    *'lệnh quá dài để kiểm kịp'*) ok ;;
+    *) bad "guard phải đếm RAW_MAX theo byte [$mode]: 100000 ký tự 3 byte → [$out]" ;;
   esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
