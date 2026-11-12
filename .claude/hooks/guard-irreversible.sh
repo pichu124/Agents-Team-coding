@@ -613,13 +613,32 @@ nb_add() {
   # Cận trên số byte, không phụ thuộc locale: tên toàn ký tự 4 byte có số byte gấp 4 số ký tự (reviewer PR #69), mà
   # LC_ALL=C không giúp được trên Git Bash (Cygwin coi locale C là UTF-8, ${#RD} vẫn đếm ký tự: CI Windows PR #70).
   # Đường có ký tự ngoài ASCII thì tính 4 byte mỗi ký tự (UTF-8 dài nhất).
+  local b="${#RD}"
   case "$RD" in
-    *[![:ascii:]]*) nb=$((nb + 4 * ${#RD})) ;;
-    *) nb=$((nb + ${#RD})) ;;
+    *[![:ascii:]]*) b=$((4 * b)) ;;
   esac
-  [ "$nb" -le "$BYTE_MAX" ] && return 0
-  reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
+  nb=$((nb + b))
+  # Công ghép (resolve_dir, nối mảng) cũng tính vào ngân sách UQW_MAX, ~2 µs mỗi ký tự với bash 3.2: lệnh gộp nhiều trần
+  # (cd nhiều đoạn nháy, nhiều `cd .`, -C đường dài) dưới mọi trần từng mất 6,5 giây (reviewer PR #83). Theo ký tự, không
+  # theo cận byte: nhân 4 thì đường tiếng Việt bị hỏi thừa (reviewer PR #84).
+  uqw=$((uqw + 2 * ${#RD}))
+  if [ "$nb" -gt "$BYTE_MAX" ]; then
+    reason="push sau cd qua đường nối dồn quá dài: hơn $BYTE_MAX byte"
+    return 1
+  fi
+  [ "$uqw" -le "$UQW_MAX" ] && return 0
+  uqw_reason
   return 1
+}
+# uqw_reason: lý do khi vượt ngân sách công UQW_MAX, như nhau dù chỗ nào (nb_add hay bước kiểm sau expand_dir) làm vượt
+# trước: thứ tự đó tuỳ độ dài các đường, tức tuỳ cwd (CI macOS PR #84). Các đường đã gom quá PART_MAX thành phần thì nói
+# thêm (như sau vòng lặp, trên các đường đã bỏ trùng: cl nằm cả trong dl, RD có thể là đường đã gom; reviewer PR #84):
+# một lần awk, chỉ khi vượt ngân sách.
+uqw_reason() {
+  local np
+  reason="push sau cd hay git -C qua đường nối dồn quá dài hay quá nhiều đoạn nháy: không đọc hết các thư mục"
+  np="$(printf '%s\n' "${dl[@]}" "${cl[@]}" "$RD" | awk '!s[$0]++ { n += gsub("/", "/") } END { print n + 0 }')"
+  [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường nối dồn quá dài: hơn $PART_MAX thành phần"
 }
 # Đối số: trong nháy, hoặc chuỗi không có khoảng trắng. ARG_BS cho \<ký tự> là escape (bash:
 # main\ repo); ARG_PS coi \ là ký tự thường (PowerShell: C:\vnstock\; git push). Xét cả hai.
@@ -750,7 +769,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # đọc từ 60 đoạn nháy tốn ~8 ms với bash 3.2 ở UTF-8 (đường 1 đoạn ~1 ms): 740 `git -C "a"'b'…(60 đoạn)` rồi push từng
   # mất 25 giây, 299 cd như vậy 10,6 giây (reviewer PR #82). Đơn vị xấp xỉ µs với bash 3.2 ở UTF-8 (đo trong guard):
   # 12 mỗi ký tự của từ (last_arg, strip_q, subst_dir, regex), cộng mỗi đoạn (độ dài + 64)/2. Quá ~2 giây thì hỏi. Chỉ
-  # tính expand_dir: gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần BYTE_MAX) vẫn tới ~6 giây (4.3).
+  # tính expand_dir và nb_add (2 mỗi ký tự ghép): trước đó gộp nhiều trần (cd nhiều đoạn, cd ., -C đường dài ghép tới gần
+  # BYTE_MAX) dưới mọi trần từng mất 6,5 giây (4.3).
   UQW_MAX=2000000
   # Tổng độ dài các đường gom được: mỗi cd nối vào đường trước (cur), nên chuỗi cd dài nối dồn (3 cd `a/..`×1000 rồi 289
   # `cd ..`) là ~3,5 MB mỗi cách đọc, 13,5 giây với bash ở UTF-8 (verifier PR #68). Quá thì hỏi.
@@ -793,6 +813,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   ngc=0
   ngx=0
   uqw=0
+  RD="" # uqw_reason đọc RD, có thể trước lần resolve_dir đầu tiên (set -u)
   nb=0
   # Dạng che `\"` trong nháy kép (lex_awk với dm = 1: `\"` thành `\<002>`, đọc nháy như bash): `echo "x\" cd q"; cd M` thì mọi
   # lượt trên dạng gốc đều thấy `cd q"; cd "…` (ARG_BSQ đóng chuỗi ở `\"`, ARG_BSQE bắt đầu khớp ở `"` thứ hai) và nuốt cd
@@ -888,7 +909,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         # bỏ qua ngân sách bên dưới: 740 `git -C ("a"'b')×33` rồi push từng mất 10,9 giây với bash 3.2 (reviewer PR #83).
         expand_dir "$LA" "$um" || { unknown=1; break 2; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
-          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          uqw_reason
           break 2
         fi
         # Lượt ARG_BS/ARG_PS nối cd sau theo cách đọc cũ (gom đúng các thư mục như trước) và xét thêm cách mới; lượt từ
@@ -933,7 +954,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         [ -n "$q" ] && [ "${#LA}" -gt 4096 ] && { longw=1; continue; }
         expand_dir "$LA" "$um" || { unknown=1; break 3; }
         if [ "$uqw" -gt "$UQW_MAX" ]; then
-          reason="push sau quá nhiều cd hay git -C có đường dài hay nhiều đoạn nháy: không đọc hết các thư mục"
+          uqw_reason
           break 3
         fi
         for c in "${cl[@]}"; do

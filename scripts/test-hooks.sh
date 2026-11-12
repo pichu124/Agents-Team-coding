@@ -388,6 +388,36 @@ EOF
   # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
   # lệnh 32767 ký tự (2000 `git -C q status; ` là 34 KB: "Argument list too long", input rỗng, guard cho qua; CI PR #82).
   expect_guard ask "$(printf 'git -C q; %.0s' $(seq 2000))git push origin HEAD"
+  # Gộp nhiều trần (reviewer PR #83): 45 cd × 60 đoạn nháy, 249 `cd .`, 2 `git -C "a×600"` rồi push, dưới UQW_MAX, CD_MAX,
+  # GC_MAX và BYTE_MAX, mà mất 6,5 giây với bash 3.2 (runner macOS chậm hơn thì sát timeout): công ghép đường (nb_add)
+  # chưa tính vào ngân sách. Nay mỗi byte ghép cộng 2 vào uqw, quá UQW_MAX thì hỏi.
+  sg="$(printf '"a"'"'b'"'%.0s' $(seq 30))"
+  expect_guard ask "$(printf "cd $sg; %.0s" $(seq 45))$(printf 'cd .; %.0s' $(seq 249))$(printf 'git -C "%s" status; ' "$(printf 'a%.0s' $(seq 600))" "$(printf 'a%.0s' $(seq 600))")git push origin HEAD"
+  # Đường có dấu (reviewer PR #84): BYTE_MAX đếm cận 4 byte mỗi ký tự ngoài ASCII, nhưng công ghép tính theo ký tự. Nhân 4
+  # vào ngân sách thì monorepo ở thư mục tiếng Việt (15 cd, 15 `git -C` có nháy) bị hỏi thừa, main cho qua.
+  vnr="$tmp/vn/Người dùng Nguyễn Văn Ấn/Tài liệu dự án/Ứng dụng tài chính"
+  [ -d "$vnr/gói-số-15/src" ] || { new_repo "$vnr" feat/x && for i in $(seq 15); do mkdir -p "$vnr/gói-số-$i/src"; done; }
+  vc="cd \"gói-số-1\" && npm test; "
+  for i in $(seq 2 15); do vc="${vc}cd \"../gói-số-$i\" && npm test; "; done
+  for i in $(seq 15); do vc="${vc}git -C \"../gói-số-$i/src\" add -A; "; done
+  expect_guard allow "${vc}git push origin HEAD" "$vnr"
+  # Lý do khi vượt ngân sách đếm thành phần trên các đường đã bỏ trùng, như bước kiểm PART_MAX sau vòng lặp (reviewer
+  # PR #84): monorepo 62 cd rồi 62 `git -C` tới cùng các đường tuyệt đối ~100 ký tự không có đường nối dồn nào, mà
+  # đếm cả bản trùng (dl, cl, RD) thì lý do thành "hơn 60000 thành phần". Đường đệm tới ~100 ký tự để ngân sách
+  # chạm như nhau dù $tmp dài ngắn.
+  if [ "$mode" = auto ]; then
+    mpad=""; while [ $((${#tmp} + ${#mpad})) -lt 70 ]; do mpad="${mpad}p"; done
+    mor="$tmp/mo${mpad}/services/backend/platform-core/modules"
+    [ -d "$mor/pkg-62/src" ] || { new_repo "$tmp/mo$mpad" feat/x && for i in $(seq -w 62); do mkdir -p "$mor/pkg-$i/src"; done; }
+    mc=""
+    for i in $(seq -w 62); do mc="${mc}cd $mor/pkg-$i/src && npm test; "; done
+    for i in $(seq -w 62); do mc="${mc}git -C $mor/pkg-$i/src add -A; "; done
+    out="$(bash_input "${mc}git push origin HEAD" "$tmp/mo$mpad" | KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'thành phần'*) bad "guard không được báo PART_MAX khi các đường đã bỏ trùng dưới trần: 62 cd + 62 git -C tuyệt đối → [$out]" ;;
+      *) ok ;;
+    esac
+  fi
   # Dưới trần thì vẫn đọc như trước (GCX_MAX đếm mỗi -C ở mỗi cách đọc: hỏi từ ~1501 -C không nháy, ~751 có nháy).
   expect_guard allow "$(printf "git -C 'q' status; %.0s" $(seq 300))git push origin HEAD"
   # `\\` trong nháy đơn là hai ký tự thường (reviewer PR #79): thay mọi `\\` bằng \003 thì `"` sau nó không còn bị che,
@@ -1193,17 +1223,36 @@ for mode in $modes; do
     *'push trong lệnh quá dài'*) ok ;;
     *) bad "guard phải đếm PUSH_CMD_MAX theo byte [$mode]: lệnh 108000 ký tự 3 byte → [$out]" ;;
   esac
-  case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json")" in
+  out="$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotparts.json" 2>&1)"
+  case "$out" in
     *'hơn 60000 thành phần'*) ok ;;
-    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode]" ;;
+    *) bad "guard phải hỏi vì trần PART_MAX trước khi cd tới hàng trăm nghìn thành phần [$mode] (cwd $tmp/dz) → [$out]" ;;
   esac
+  # Lý do không được phụ thuộc chỗ nào làm ngân sách công vượt trước (CI macOS PR #84: cwd /var/folders/… thì bước kiểm
+  # sau expand_dir vượt trước nb_add, lý do mất "thành phần"). Chạy lại với cwd dài thêm 1..40 ký tự (chỉ lượt auto).
+  if [ "$mode" = auto ]; then
+    pad=""
+    dpok=1
+    for _ in $(seq 40); do
+      pad="${pad}d"
+      mkdir -p "$tmp/dp/$pad/dz/a"
+      out="$(sed "s|\"cwd\":\"[^\"]*\"|\"cwd\":\"$tmp/dp/$pad/dz\"|" "$tmp/long-dotparts.json" | "$hooks/guard-irreversible.sh" 2>&1)"
+      case "$out" in
+        *'hơn 60000 thành phần'*) ;;
+        *) bad "guard phải hỏi vì trần PART_MAX với mọi độ dài cwd (cwd $tmp/dp/$pad/dz) → [$out]"; dpok=""; break ;;
+      esac
+    done
+    [ -n "$dpok" ] && ok
+  fi
   # BYTE_MAX đếm cận trên byte (reviewer PR #69): tên toàn ký tự 3 byte (ệ, U+1EC7): đếm ký tự thì dưới trần (đọc tới
   # nhánh main), đếm byte thì quá trần. Không dùng ký tự ngoài BMP (U+1D538): trên Git Bash guard
   # vẫn đọc tới nhánh main dù bash ở đó khớp mẫu ngoài ASCII (CI Windows PR #70), nguyên nhân chưa rõ (4.3).
   # LC_ALL=C.UTF-8: ở locale C bản đếm ký tự cũng đếm byte, ca này mất tác dụng (reviewer PR #70).
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain4.json")"
+  # Lý do đúng của BYTE_MAX, không chỉ "nối dồn quá dài": từ PR #84 ngân sách UQW_MAX cũng ra chữ đó, bỏ phép nhân 4
+  # trong nb_add vẫn hỏi qua ngân sách mà ca này không còn bắt được (reviewer PR #84).
   case "$out" in
-    *'nối dồn quá dài'*) ok ;;
+    *'hơn 2000000 byte'*) ok ;;
     *) bad "guard phải đếm BYTE_MAX theo byte [$mode]: chuỗi cd nối dồn tên ký tự 3 byte → [$out]" ;;
   esac
   case "$(KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh" < "$tmp/long-dotchain.json")" in
