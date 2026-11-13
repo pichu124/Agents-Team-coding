@@ -444,7 +444,9 @@ case "$raw" in
         j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
-      LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
+      LC_ALL=C awk "$dec_awk")"
+    dzp="$dz"
+    dz="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
     # dz2 (4.10, Luật): như dz, thêm dòng chỉ có \ sau dòng nối (`git pu\` ⏎ `\` ⏎ `sh`), $(…) và ${…} lồng (8 lượt:
     # `pu$(echo $(true))sh`, `pu${X:-${Y}}sh`), backtick có nội dung (``pu`true`sh``), biến (`pu$@sh`, `pu$9sh`, `pu$!sh`,
@@ -474,8 +476,29 @@ case "$raw" in
           l = substr(h, 1, a - 1) out t
           if (length(l) > cap) break }
         tot += length(l); print l }')"
-    dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`")"
+    dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk")"
+    dzp="$(printf '%s\n' "$dzp" "$dz2" | LC_ALL=C awk '!s[$0]++')"
+    dz2="$(printf '%s\n' "$dz2" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz2"
+    # dz, dz2 xoá hết nháy nên giá trị option có `\"` và dấu cách bị tách đôi: `git -c user.name="\"a b\"" pu``sh -f` thành
+    # `user.name=a b push`, `b` là lệnh con (verifier PR #87; dq, dq2 không ghép `pu``sh`). Dạng dzq: các dòng của dz, dz2
+    # trước khi xoá nháy, đọc như dq2 (và dq3 khi có `\\"`), để giá trị thành một từ có nháy và `push` đứng sau nó.
+    # Chỉ các dòng có dấu xé (bỏ dòng trùng giữa dz và dz2), cùng trần 65536 ký tự như dq2.
+    case "$dzp" in
+      *'\"'*)
+        if [ "${#dzp}" -le 65536 ]; then
+          dzs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
+          dzq="$(printf '%s\n' "$dzp" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
+          cmd="$cmd$nl$dzq"
+          case "$dzp" in
+            *'\\"'*)
+              dzq="$(printf '%s\n' "$dzp" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
+              cmd="$cmd$nl$dzq"
+              ;;
+          esac
+        fi
+        ;;
+    esac
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
     # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
     # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9
