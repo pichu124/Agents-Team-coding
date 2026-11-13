@@ -475,6 +475,19 @@ EOF
   expect_guard allow "git \\${nl}pu\`\`sh origin HEAD"
   expect_guard allow "echo a \\${nl}\`date\` b"
   expect_guard ask "git \\${nl}\\${nl}pu\`\`sh -f origin feat/x"
+  # Dấu xé duy nhất là `\` dính chữ trong chuỗi nối thường (reviewer PR #89 lần 2): dz, dz2 chỉ ghép nửa từ.
+  expect_guard ask "git \\${nl}pu\\${nl}sh -f origin feat/x"
+  expect_guard ask "git pu\\${nl}sh \\${nl}-f origin feat/x"
+  expect_guard ask "npm \\${nl}pub\\${nl}lish"
+  expect_guard ask "git re\\${nl}set \\${nl}--hard"
+  expect_guard ask "git \\${nl}pu\\${nl}sh origin HEAD" "$on_main"
+  # Cần dạng dz2 (backtick có nội dung, $(…) lồng, biến dính chữ) và giải $'…' trên chuỗi nối.
+  expect_guard ask "git \\${nl}pu\`true\`sh -f origin feat/x"
+  expect_guard ask "git \\${nl}pu\$(echo \$(true))sh -f origin feat/x"
+  expect_guard ask "git \\${nl}pu\$X''sh -f origin feat/x"
+  expect_guard ask "git \\${nl}pu\$'\\x73'h -f origin feat/x"
+  # Chuỗi nối chưa đóng ở cuối lệnh (bộ đọc JSON cắt xuống dòng cuối).
+  expect_guard ask "git \\${nl}pu\`\`sh -f origin feat/x \\${nl}"
   # Gộp chuỗi nối thay cho dòng cũ thì mất dòng mà main vẫn đọc (reviewer PR #89): `rm` không còn ở đầu dòng sau
   # `timeout 60`, dòng gộp quá 4096 ký tự thì không mở ngoặc nhọn, quá 16384 thì không giải $'…'.
   expect_guard ask "timeout 60 \\${nl}r\`\`m -rf ~"
