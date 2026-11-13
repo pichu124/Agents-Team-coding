@@ -463,6 +463,17 @@ EOF
   expect_guard ask "bash -'c' 'cd '\\''$on_main'\\'' && git push'"
   expect_guard ask "git pu\\${nl}sh --force origin feat/x"
   expect_guard ask "r\\${nl}m -rf /"
+  # Nối dòng thường (` \` cuối dòng) rồi dòng sau có chữ xé (reviewer PR #88): dz, dz2 chỉ nối khi `\` dính chữ, dạng
+  # nối của join_lines thì không bỏ mở rộng rỗng, nên không dạng nào thấy `git push -f`.
+  expect_guard ask "git \\${nl}pu\`\`sh -f origin feat/x"
+  expect_guard ask "r\`\`m -rf \\${nl}~"
+  expect_guard ask "git \\${nl}re\`\`set --hard"
+  expect_guard ask "npm \\${nl}pub\`\`lish"
+  expect_guard ask "git \\${nl}-c x=1 \\${nl}pu\$()sh -f origin feat/x"
+  expect_guard ask "git -c user.name='a b' \\${nl}pu\`\`sh -f origin feat/x"
+  expect_guard ask "git \\${nl}pu\`\`sh origin HEAD" "$on_main"
+  expect_guard allow "git \\${nl}pu\`\`sh origin HEAD"
+  expect_guard allow "echo a \\${nl}\`date\` b"
   expect_guard ask "git \$'\\x70'ush --force origin feat/x"
   expect_guard ask "git \$'pu\\163h' --force origin feat/x"
   # Octal một hai chữ số như bash (reviewer PR #60).
