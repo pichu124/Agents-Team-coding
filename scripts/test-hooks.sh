@@ -383,6 +383,15 @@ EOF
   expect_guard ask 'git -c "main\\" -c u="\"a b\"" "push" -f origin feat/x'
   expect_guard ask 'git -c u="\"a b\\\"" "push" -f origin feat/x'
   expect_guard allow 'git -c user.name="\"a b\\" "push" origin HEAD'
+  # Như trên nhưng chữ lệnh con xé bằng mở rộng rỗng (verifier PR #87): chỉ dạng dz ghép lại được `pu``sh`, mà dz xoá hết
+  # nháy nên `"\"a b\""` thành `a b`, `b` thành lệnh con.
+  expect_guard ask 'git -c user.name="\"a b\"" pu``sh -f origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\"" "pu$()sh" -f origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\"" pu${X}sh --force origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\"" re``set --hard'
+  expect_guard ask 'git -c user.name="\"a b\"" pu`true`sh -f origin feat/x'
+  expect_guard ask 'git -c user.name="\"a b\\" pu``sh -f origin feat/x'
+  expect_guard allow 'git -c user.name="\"a b\"" pu``sh origin HEAD'
   # Mỗi `-C` tốn một lần last_arg + expand_dir mà GC_MAX chỉ đếm lần ghép: `git -C q status; `×5000 rồi push (ngay dưới
   # GC_MAX) mất 7,3 giây với bash 3.2 ở UTF-8 mà không hỏi, Git Bash chậm gấp đôi thì quá timeout (4.3, reviewer PR #75).
   # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
