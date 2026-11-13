@@ -485,21 +485,45 @@ case "$raw" in
     # dq, dq2 không ghép `pu``sh`). Dạng dzq: các dòng của dz, dz2 trước khi xoá nháy, đọc như dq2 (và dq3 khi có `\\"`),
     # để giá trị thành một từ có nháy và `push` đứng sau nó. `$'a b'` vẫn lọt: dec_awk đã bỏ nháy của nó.
     # Chỉ các dòng có dấu xé (bỏ dòng trùng giữa dz và dz2), cùng trần 65536 ký tự như dq2.
-    case "$dzp" in
-      *[\"\'\\]*)
-        if [ "${#dzp}" -le 65536 ]; then
-          dzs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
-          dzq="$(printf '%s\n' "$dzp" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
-          cmd="$cmd$nl$dzq"
-          case "$dzp" in
-            *'\\"'*)
-              dzq="$(printf '%s\n' "$dzp" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
-              cmd="$cmd$nl$dzq"
-              ;;
-          esac
-        fi
-        ;;
-    esac
+    dzq_add() {
+      case "$1" in
+        *[\"\'\\]*)
+          if [ "${#1}" -le 65536 ]; then
+            dzs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
+            dzq="$(printf '%s\n' "$1" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
+            cmd="$cmd$nl$dzq"
+            case "$1" in
+              *'\\"'*)
+                dzq="$(printf '%s\n' "$1" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
+                cmd="$cmd$nl$dzq"
+                ;;
+            esac
+          fi
+          ;;
+      esac
+    }
+    dzq_add "$dzp"
+    # Nối dòng thường (` \` cuối dòng) rồi dòng sau có chữ xé (`git \` ⏎ `pu``sh -f`, `npm \` ⏎ `pub``lish`, reviewer PR #88):
+    # awk của dz, dz2 chỉ nối khi `\` dính chữ, dạng nối của join_lines không bỏ mở rộng rỗng. Dạng dzc: mỗi chuỗi nối có ít
+    # nhất một ` \` (cả `\` dính chữ và dòng chỉ có `\` trong chuỗi) nối thành một dòng, chỉ giữ chuỗi có dấu xé, rồi đọc như
+    # dz, dz2 (bỏ mở rộng rỗng, nhánh đầu của ngoặc nhọn, giải $'…', xoá nháy) và dzq. Chỉ thêm dòng: dz, dz2, dzq ở trên
+    # giữ nguyên như trước, vì gộp thay cho dòng cũ làm `timeout 60 \` ⏎ `r``m -rf ~` mất `rm` ở đầu dòng (reviewer PR #89).
+    # Chuỗi dài hơn 4096 ký tự bỏ qua (dec_awk và bước mở ngoặc nhọn bỏ dòng dài), tổng dừng ở 65536.
+    cj="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        { l = $0
+          if (l ~ /[ \t]\\$/ || (c && l ~ /\\$/)) { if (l ~ /[ \t]\\$/) o = 1; c = 1; b = b substr(l, 1, length(l) - 1); next }
+          if (c) { l = b l
+            if (o && length(l) <= 4096 && tot <= 65536 && l ~ /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/) { tot += length(l); print l } }
+          b = ""; c = 0; o = 0 }')"
+    if [ -n "$cj" ]; then
+      dzc="$(printf '%s\n' "$cj" | LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' -e "$bz" |
+        LC_ALL=C awk "$dec_awk")"
+      dzc2="$(printf '%s\n' "$cj" | LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" \
+        -e "$vz" -e "$bz" -e "$bz" -e "$bz" -e "$bz" | LC_ALL=C awk "$dec_awk")"
+      dzcp="$(printf '%s\n' "$dzc" "$dzc2" | LC_ALL=C awk '!s[$0]++')"
+      cmd="$cmd$nl$(printf '%s\n' "$dzcp" | LC_ALL=C tr -d "\"'\\\\\`")"
+      dzq_add "$dzcp"
+    fi
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
     # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
     # mục của push thành chưa biết, tức hỏi. Nối dòng (kể cả dòng chỉ có \ sau nó), $(…), ${…}, cặp backtick và $@ $* $0-9
