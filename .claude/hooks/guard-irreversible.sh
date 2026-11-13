@@ -439,16 +439,9 @@ dec_awk='
 case "$raw" in
   *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]* | *'$'[A-Za-z_]* | *'$!'*)
     # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
-    # cl_awk: nối dòng. `\` dính chữ (`pu\` ⏎ `sh`) nối không chèn gì và luôn in; nối dòng thường (` \` cuối dòng) gom
-    # vào cùng dòng (bỏ `\`, giữ khoảng trắng) và chỉ in khi cả chuỗi có dấu xé (re): `git \` ⏎ `pu``sh -f`, `npm \` ⏎
-    # `pub``lish` (reviewer PR #88). Bộ đệm nối thường dừng ở 16384 ký tự để lệnh dài nối dòng (long-uni) không thành một
-    # dòng cỡ cả lệnh; quá thì phần sau gom thành chuỗi mới. gl: dòng chỉ có `\` sau dòng dính chữ (dạng dz2).
-    cl_awk='{ l = $0
-        if (l ~ /[^ \t\\]\\$/ || (gl && j && l == "\\")) { b = b substr(l, 1, length(l) - 1); j = 1; next }
-        if (l ~ /[ \t]\\$/ && length(b) < 16384) { b = b substr(l, 1, length(l) - 1); next }
-        l = b l; b = ""; if (j || l ~ re) print l; j = 0 }
-      END { if (b != "" && (j || b ~ re)) print b }'
-    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk -v gl=0 'BEGIN { re = "[$][({\047]|`|[{][^{}]*," }'"$cl_awk" |
+    dz="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' \
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk "$dec_awk")"
@@ -467,7 +460,9 @@ case "$raw" in
     xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
     bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
     vz='s/\([[:alnum:]_]\)[$][@*0-9!]/\1/g;s/\([[:alnum:]_]\)[$][A-Za-z_][A-Za-z0-9_]*/\1/g'
-    dz2="$(printf '%s\n' "$raw" | LC_ALL=C awk -v gl=1 'BEGIN { re = "[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*," }'"$cl_awk" |
+    dz2="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        $0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
+        j || /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$vz")"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C sed -e "$bz" -e "$bz" -e "$bz" -e "$bz"
       printf '%s\n' "$dz2" | LC_ALL=C awk 'tot <= 65536 && length($0) <= 4096 && /[{][^{}]*,/ {

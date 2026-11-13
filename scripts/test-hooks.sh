@@ -474,6 +474,13 @@ EOF
   expect_guard ask "git \\${nl}pu\`\`sh origin HEAD" "$on_main"
   expect_guard allow "git \\${nl}pu\`\`sh origin HEAD"
   expect_guard allow "echo a \\${nl}\`date\` b"
+  expect_guard ask "git \\${nl}\\${nl}pu\`\`sh -f origin feat/x"
+  # Gộp chuỗi nối thay cho dòng cũ thì mất dòng mà main vẫn đọc (reviewer PR #89): `rm` không còn ở đầu dòng sau
+  # `timeout 60`, dòng gộp quá 4096 ký tự thì không mở ngoặc nhọn, quá 16384 thì không giải $'…'.
+  expect_guard ask "timeout 60 \\${nl}r\`\`m -rf ~"
+  expect_guard ask "sudo -n \\${nl}r\`\`m -rf /"
+  expect_guard ask "echo \\${nl}$(printf 'a%.0s' $(seq 4100)) \\${nl}; git {,pu\`\`sh} -f origin feat/x"
+  expect_guard ask "echo $(printf 'a%.0s' $(seq 16400)) \\${nl}; git \$'\\x70'ush -f origin feat/x"
   expect_guard ask "git \$'\\x70'ush --force origin feat/x"
   expect_guard ask "git \$'pu\\163h' --force origin feat/x"
   # Octal một hai chữ số như bash (reviewer PR #60).
@@ -1138,6 +1145,15 @@ mkdir -p "$tmp/a b"
   awk 'BEGIN { for (i = 0; i < 7000; i++) printf "x" }'
   printf ' push'"'"'; git -c user.name=\\"\\\\\\"a b\\\\\\"\\" \\"push\\" -f origin feat/x","description":"test"}}\n'
 } > "$tmp/long-dq2un.json"
+# Chuỗi nối dòng thường dài (5 đoạn × 165 dòng `x×90 \` và một dòng `$(true) \`) rồi `git -C "x y" pu``sh -f` ở dòng
+# riêng (~77 KB): dz, dz2 chỉ có 5 dòng `$(true)` nên dzq dựng và hỏi; chép chuỗi gộp vào cùng $dzp thì $dzp quá trần
+# 65536, dzq bị bỏ, push được cho qua (reviewer PR #89).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\\\\\n' "$work"
+  awk 'BEGIN { x = sprintf("%90s", ""); gsub(/ /, "x", x)
+    for (k = 0; k < 5; k++) { for (i = 0; i < 165; i++) printf "%s \\\\\\n", x; printf "$(true) \\\\\\n" } }'
+  printf 'x\\ngit -C \\"x y\\" pu``sh -f origin feat/x","description":"test"}}\n'
+} > "$tmp/long-dzcap.json"
 # Cùng lớp với long-basho cho mẫu cd: tiền tố gán biến của CDA (`x= ` lặp 66000 lần, ~198 KB) khớp tới cuối rồi hỏng ở
 # mọi vị trí; một cặp nháy làm lượt từ ghép chạy thêm, ~19 giây ở UTF-8.
 {
@@ -1457,7 +1473,7 @@ hook_limit() {
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
-for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un; do
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap; do
   sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
   assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
 done
@@ -1476,6 +1492,11 @@ for mode in $modes; do
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
     *) bad "guard phải hỏi trong 5 giây [$mode]: 740 git -C có 66 đoạn nháy (từ quá 64 đoạn không được bỏ qua ngân sách) → [$out]" ;;
+  esac
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-dzcap.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi [$mode]: chuỗi nối dòng ~77 KB rồi git -C có dấu cách và push xé bằng backtick (dzq không được bỏ vì chuỗi gộp) → [$out]" ;;
   esac
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-dq2un.json" 2>/dev/null)"
   case "$out" in
