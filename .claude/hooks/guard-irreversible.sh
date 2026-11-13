@@ -509,12 +509,18 @@ case "$raw" in
     # dz, dz2 (bỏ mở rộng rỗng, nhánh đầu của ngoặc nhọn, giải $'…', xoá nháy) và dzq. Chỉ thêm dòng: dz, dz2, dzq ở trên
     # giữ nguyên như trước, vì gộp thay cho dòng cũ làm `timeout 60 \` ⏎ `r``m -rf ~` mất `rm` ở đầu dòng (reviewer PR #89).
     # Chuỗi dài hơn 4096 ký tự bỏ qua (dec_awk và bước mở ngoặc nhọn bỏ dòng dài), tổng dừng ở 65536.
+    # `\` dính chữ cũng mở hay nối tiếp chuỗi và tự là dấu xé (`git \` ⏎ `pu\` ⏎ `sh -f`, `git pu\` ⏎ `sh \` ⏎ `-f`: dz, dz2
+    # chỉ ghép nửa từ; reviewer PR #89 lần 2). Chuỗi chưa đóng ở cuối lệnh cũng in (bộ đọc JSON cắt xuống dòng cuối).
     cj="$(printf '%s\n' "$raw" | LC_ALL=C awk '
+        function pr(l) { if (o && length(l) <= 4096 && tot <= 65536 && (s || l ~ /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/)) {
+            tot += length(l); print l } }
         { l = $0
-          if (l ~ /[ \t]\\$/ || (c && l ~ /\\$/)) { if (l ~ /[ \t]\\$/) o = 1; c = 1; b = b substr(l, 1, length(l) - 1); next }
-          if (c) { l = b l
-            if (o && length(l) <= 4096 && tot <= 65536 && l ~ /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/) { tot += length(l); print l } }
-          b = ""; c = 0; o = 0 }')"
+          if (l ~ /[ \t]\\$/ || l ~ /[^ \t\\]\\$/ || (c && l ~ /\\$/)) {
+            if (l ~ /[ \t]\\$/) o = 1; if (l ~ /[^ \t\\]\\$/) s = 1
+            c = 1; if (length(b) <= 4096) b = b substr(l, 1, length(l) - 1); next }
+          if (c) pr(b l)
+          b = ""; c = 0; o = 0; s = 0 }
+        END { if (c) pr(b) }')"
     if [ -n "$cj" ]; then
       dzc="$(printf '%s\n' "$cj" | LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' -e "$bz" |
         LC_ALL=C awk "$dec_awk")"
@@ -522,7 +528,9 @@ case "$raw" in
         -e "$vz" -e "$bz" -e "$bz" -e "$bz" -e "$bz" | LC_ALL=C awk "$dec_awk")"
       dzcp="$(printf '%s\n' "$dzc" "$dzc2" | LC_ALL=C awk '!s[$0]++')"
       cmd="$cmd$nl$(printf '%s\n' "$dzcp" | LC_ALL=C tr -d "\"'\\\\\`")"
-      dzq_add "$dzcp"
+      # Riêng từng dạng: gộp dzc với dzc2 thì trần 65536 của dzq_add đầy ở ~35 KB chuỗi nối (reviewer PR #89 lần 2).
+      dzq_add "$dzc"
+      dzq_add "$dzc2"
     fi
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
     # thành từ khoá thư mục (`c$()d M`, ``c``d M``, `$'\x63'd M`, `git -$'\x43' M push`, `c\` ⏎ `d M`, `c{d..d} M`) làm thư
