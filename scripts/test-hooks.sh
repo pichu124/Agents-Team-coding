@@ -392,6 +392,19 @@ EOF
   expect_guard ask 'git -c user.name="\"a b\"" pu`true`sh -f origin feat/x'
   expect_guard ask 'git -c user.name="\"a b\\" pu``sh -f origin feat/x'
   expect_guard allow 'git -c user.name="\"a b\"" pu``sh origin HEAD'
+  # Không riêng `\"` (reviewer PR #88): dz xoá mọi nháy, nên mọi giá trị có dấu cách trong nháy hay sau `\` bị tách đôi.
+  expect_guard ask 'git -C "x y" pu``sh -f origin feat/x'
+  expect_guard ask "git -C 'x y' pu\$()sh -f origin feat/x"
+  expect_guard ask "git -c user.name='a b' pu\`\`sh -f origin feat/x"
+  expect_guard ask 'git -c "user.name=a b" pu``sh -f origin feat/x'
+  expect_guard ask "git -c 'user.name=\"a b\"' pu\`\`sh -f origin feat/x"
+  expect_guard ask 'git -c user.name=a\ b pu``sh -f origin feat/x'
+  expect_guard ask "npm --otp 'a b' pub\`\`lish"
+  expect_guard ask "git -c user.name='a b' pu\`\`sh origin HEAD" "$on_main"
+  # Backtick lẻ trong nháy đơn: dz2 bỏ cả `…` có nội dung nên ghép nó với backtick của `re``set` và nuốt mất lệnh; dz chỉ
+  # bỏ cặp rỗng nên còn đọc được (reset, không phải push: cổng push đã hỏi vì backtick).
+  expect_guard ask "echo '\`'; git -c user.name='a b' re\`\`set --hard"
+  expect_guard allow "git -c user.name='a b' commit -m 'x \`y\` z'"
   # Mỗi `-C` tốn một lần last_arg + expand_dir mà GC_MAX chỉ đếm lần ghép: `git -C q status; `×5000 rồi push (ngay dưới
   # GC_MAX) mất 7,3 giây với bash 3.2 ở UTF-8 mà không hỏi, Git Bash chậm gấp đôi thì quá timeout (4.3, reviewer PR #75).
   # Nay quá GCX_MAX lần -C thì hỏi. Lệnh dưới ~32 KB: bash_input truyền lệnh qua đối số của python, mà Windows giới hạn dòng
