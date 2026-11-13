@@ -480,12 +480,13 @@ case "$raw" in
     dzp="$(printf '%s\n' "$dzp" "$dz2" | LC_ALL=C awk '!s[$0]++')"
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz2"
-    # dz, dz2 xoá hết nháy nên giá trị option có `\"` và dấu cách bị tách đôi: `git -c user.name="\"a b\"" pu``sh -f` thành
-    # `user.name=a b push`, `b` là lệnh con (verifier PR #87; dq, dq2 không ghép `pu``sh`). Dạng dzq: các dòng của dz, dz2
-    # trước khi xoá nháy, đọc như dq2 (và dq3 khi có `\\"`), để giá trị thành một từ có nháy và `push` đứng sau nó.
+    # dz, dz2 xoá hết nháy nên giá trị option có dấu cách trong nháy hay sau `\` bị tách đôi: `git -C "x y" pu``sh -f`,
+    # `user.name='a b'`, `a\ b`, `user.name="\"a b\""` thành `x y push`, `b` là lệnh con (verifier PR #87, reviewer PR #88;
+    # dq, dq2 không ghép `pu``sh`). Dạng dzq: các dòng của dz, dz2 trước khi xoá nháy, đọc như dq2 (và dq3 khi có `\\"`),
+    # để giá trị thành một từ có nháy và `push` đứng sau nó. `$'a b'` vẫn lọt: dec_awk đã bỏ nháy của nó.
     # Chỉ các dòng có dấu xé (bỏ dòng trùng giữa dz và dz2), cùng trần 65536 ký tự như dq2.
     case "$dzp" in
-      *'\"'*)
+      *[\"\'\\]*)
         if [ "${#dzp}" -le 65536 ]; then
           dzs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
           dzq="$(printf '%s\n' "$dzp" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dzs")"
