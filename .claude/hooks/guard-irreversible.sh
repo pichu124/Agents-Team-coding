@@ -953,12 +953,16 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Locale cho grep của vòng cd theo từng dạng, tính một lần cho mọi lượt. Locale gốc chỉ khi dạng có khoảng trắng Unicode
   # (USP: PowerShell `Set-Location<U+3000>M`) hay ſ, ı (grep -i gập thành s, i: `ſl M`, `Set-Locatıon M`): chỉ ở đó UTF-8
   # khớp khác C. Còn lại locale C (byte ≥ 0x80 vẫn là ký tự không phải khoảng trắng): tiền tố gán biến của CDA bậc hai ở
-  # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86).
+  # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86). Dạng cần locale gốc mà dài
+  # hơn SHU_MAX (`echo ı; ` rồi `x= `×60000: 16 giây) thì grep ở locale C và thư mục là chưa biết (push hỏi), như thân -c ở
+  # decode_shell_c: lệnh thật dài như vậy hiếm khi có ſ, ı hay khoảng trắng Unicode.
   CDU="$USP|$(printf '\305\277|\304\261')"
   flc=()
   for f in "${cforms[@]}"; do
     GL=C
-    LC_ALL=C text_grep "$f" -Eq -- "$CDU" && GL="$LC0"
+    if LC_ALL=C text_grep "$f" -Eq -- "$CDU"; then
+      if [ "${#f}" -gt "$SHU_MAX" ]; then unknown=1; else GL="$LC0"; fi
+    fi
     flc+=("$GL")
   done
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ" "$ARG_BSQE"; do
@@ -986,9 +990,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       cur="$base"
       cl=("$base")
       ncd=0
-      # Locale C cho dạng toàn ASCII như grep thân -c ở trên: tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8.
-      # Dạng có byte ≥ 0x80 giữ locale gốc: dạng đổi sang ASCII (un) đổi cả chữ trong tên thư mục (en dash, nháy cong), nên
-      # dạng gốc vẫn phải khớp `Set-Location<U+3000>'proj–x'` hay `ſl 'proj–x'` (reviewer PR #74).
+      # Locale theo flc (ở trên): tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8. Dạng có khoảng trắng Unicode
+      # hay ſ, ı giữ locale gốc: dạng đổi sang ASCII (un) đổi cả chữ trong tên thư mục (en dash, nháy cong), nên dạng gốc vẫn
+      # phải khớp `Set-Location<U+3000>'proj–x'` hay `ſl 'proj–x'` (reviewer PR #74).
       for m in $(printf '%s' "$f" | LC_ALL="${flc[$fx]}" grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
