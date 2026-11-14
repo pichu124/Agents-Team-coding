@@ -954,14 +954,19 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # (USP: PowerShell `Set-Location<U+3000>M`) hay ſ, ı (grep -i gập thành s, i: `ſl M`, `Set-Locatıon M`): chỉ ở đó UTF-8
   # khớp khác C. Còn lại locale C (byte ≥ 0x80 vẫn là ký tự không phải khoảng trắng): tiền tố gán biến của CDA bậc hai ở
   # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86). Dạng cần locale gốc mà dài
-  # hơn SHU_MAX (`echo ı; ` rồi `x= `×60000: 16 giây) thì grep ở locale C và thư mục là chưa biết (push hỏi), như thân -c ở
-  # decode_shell_c: lệnh thật dài như vậy hiếm khi có ſ, ı hay khoảng trắng Unicode.
+  # hơn CDU_MAX thì grep ở locale C và thư mục là chưa biết (push hỏi), như thân -c ở decode_shell_c: `echo ı; ` rồi
+  # `x= `×60000 mất 16 giây, `echo "ı" \` ⏎ `x='' `×1600 `\` ⏎ `x='' `×1600 (16 K ký tự, gán có nháy bậc hai nặng hơn) 12 giây;
+  # 4 K ký tự ~1,5 giây. Không ghi đè lý do đã có; locale gốc là C thì grep đã nhanh, khỏi hỏi.
   CDU="$USP|$(printf '\305\277|\304\261')"
+  CDU_MAX=4096
   flc=()
   for f in "${cforms[@]}"; do
     GL=C
     if LC_ALL=C text_grep "$f" -Eq -- "$CDU"; then
-      if [ "${#f}" -gt "$SHU_MAX" ]; then unknown=1; else GL="$LC0"; fi
+      case "$LC0" in
+        C | POSIX) ;;
+        *) if [ "${#f}" -gt "$CDU_MAX" ]; then [ -n "$reason" ] || unknown=1; else GL="$LC0"; fi ;;
+      esac
     fi
     flc+=("$GL")
   done
