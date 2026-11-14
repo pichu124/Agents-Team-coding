@@ -799,9 +799,9 @@ EOF
   fi
   # Thông điệp commit dài có ı hay khoảng trắng Unicode mà không có cd: vòng cd không cần locale gốc, push lên nhánh feature
   # không được hỏi thừa vì trần độ dài của locale gốc (main cho qua; reviewer 4.3 lần 3).
-  m=""; for _ in $(seq 70); do m="${m}Bu de$(printf '\304\237')i$(printf '\305\237')iklik hatay$(printf '\304\261') d$(printf '\303\274')zeltir. "; done
+  m=""; for _ in $(seq 150); do m="${m}Bu de$(printf '\304\237')i$(printf '\305\237')iklik hatay$(printf '\304\261') d$(printf '\303\274')zeltir. "; done
   expect_guard allow "git commit -am \"$m\" && git push origin HEAD"
-  m=""; for _ in $(seq 300); do m="${m}x${ideo}y "; done
+  m=""; for _ in $(seq 1200); do m="${m}x${ideo}y "; done
   expect_guard allow "git commit -am \"$m\" && git push origin HEAD"
   # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
   expect_guard ask "git pu$(printf '\305\277')h -f"
