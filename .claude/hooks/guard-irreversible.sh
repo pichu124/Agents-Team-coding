@@ -950,10 +950,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       done
       ;;
   esac
-  # Locale cho grep của vòng cd theo từng dạng (grep_lc ở trên), tính một lần cho mọi lượt.
+  # Locale cho grep của vòng cd theo từng dạng, tính một lần cho mọi lượt. Locale gốc chỉ khi dạng có khoảng trắng Unicode
+  # (USP: PowerShell `Set-Location<U+3000>M`) hay ſ, ı (grep -i gập thành s, i: `ſl M`, `Set-Locatıon M`): chỉ ở đó UTF-8
+  # khớp khác C. Còn lại locale C (byte ≥ 0x80 vẫn là ký tự không phải khoảng trắng): tiền tố gán biến của CDA bậc hai ở
+  # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86).
+  CDU="$USP|$(printf '\305\277|\304\261')"
   flc=()
   for f in "${cforms[@]}"; do
-    grep_lc "$f"
+    GL=C
+    LC_ALL=C text_grep "$f" -Eq -- "$CDU" && GL="$LC0"
     flc+=("$GL")
   done
   for a in "$ARG_BS" "$ARG_PS" "$ARG_BSQ" "$ARG_PSQ" "$ARG_BSQE"; do
