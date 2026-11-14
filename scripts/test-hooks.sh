@@ -486,6 +486,7 @@ EOF
   expect_guard ask "git \\${nl}pu\$(echo \$(true))sh -f origin feat/x"
   expect_guard ask "git \\${nl}pu\$X''sh -f origin feat/x"
   expect_guard ask "git \\${nl}pu\$'\\x73'h -f origin feat/x"
+  expect_guard ask "git -C \"x y\" \\${nl}pu\`true\`sh -f origin feat/x"
   # Chuỗi nối chưa đóng ở cuối lệnh (bộ đọc JSON cắt xuống dòng cuối).
   expect_guard ask "git \\${nl}pu\`\`sh -f origin feat/x \\${nl}"
   # Gộp chuỗi nối thay cho dòng cũ thì mất dòng mà main vẫn đọc (reviewer PR #89): `rm` không còn ở đầu dòng sau
@@ -1167,6 +1168,14 @@ mkdir -p "$tmp/a b"
     for (k = 0; k < 5; k++) { for (i = 0; i < 165; i++) printf "%s \\\\\\n", x; printf "$(true) \\\\\\n" } }'
   printf 'x\\ngit -C \\"x y\\" pu``sh -f origin feat/x","description":"test"}}\n'
 } > "$tmp/long-dzcap.json"
+# 15 chuỗi nối khác nhau `echo `t` <i> a×3900 \` ⏎ `x` rồi `git -C "x y" \` ⏎ `pu``sh -f` (~59 KB): dzc, dzc2 mỗi dạng
+# dưới trần 65536 của dzq, cộng lại thì quá; gọi dzq một lần cho cả hai thì bỏ dzq và push được cho qua (reviewer PR #89 lần 3).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  awk 'BEGIN { x = sprintf("%3900s", ""); gsub(/ /, "a", x)
+    for (i = 0; i < 15; i++) printf "echo `t` %d %s \\\\\\nx\\n", i, x }'
+  printf 'git -C \\"x y\\" \\\\\\npu``sh -f origin feat/x","description":"test"}}\n'
+} > "$tmp/long-dzcjoin.json"
 # Cùng lớp với long-basho cho mẫu cd: tiền tố gán biến của CDA (`x= ` lặp 66000 lần, ~198 KB) khớp tới cuối rồi hỏng ở
 # mọi vị trí; một cặp nháy làm lượt từ ghép chạy thêm, ~19 giây ở UTF-8.
 {
@@ -1486,7 +1495,7 @@ hook_limit() {
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
-for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap; do
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
   sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
   assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
 done
@@ -1505,6 +1514,11 @@ for mode in $modes; do
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
     *) bad "guard phải hỏi trong 5 giây [$mode]: 740 git -C có 66 đoạn nháy (từ quá 64 đoạn không được bỏ qua ngân sách) → [$out]" ;;
+  esac
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-dzcjoin.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi [$mode]: 15 chuỗi nối ~3,9 KB rồi git -C có dấu cách và push xé bằng backtick (dzq của dzc, dzc2 tính riêng) → [$out]" ;;
   esac
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/long-dzcap.json" 2>/dev/null)"
   case "$out" in
