@@ -790,6 +790,13 @@ EOF
     fi
     LC_ALL="$ul" TOOL=Other expect_guard ask "Set-Location${ideo}'$pdx'; git push"
   fi
+  # Dạng không có khoảng trắng Unicode, ſ hay ı thì vòng cd grep ở locale C: byte ≥ 0x80 của tên thư mục vẫn phải khớp như
+  # ký tự thường (reviewer PR 4.3 vòng cd). Bỏ mode sed như trên.
+  if [ "$mode" != sed ]; then
+    expect_guard ask "cd '$pdx' && git push"
+    expect_guard ask "x=é cd \"$pdx\"; git push"
+    TOOL=PowerShell expect_guard ask "Set-Location -LiteralPath '$pdx'; git push"
+  fi
   # GNU grep ở locale UTF-8 gập ſ thành s: main hỏi, luật ở locale C thì không.
   expect_guard ask "git pu$(printf '\305\277')h -f"
   # Thân bash -c vô hại có đủ chữ p, u, s, h chiếm hết chỗ của các dạng: thân thật phía sau không được bỏ trong im lặng.
@@ -1191,6 +1198,16 @@ mkdir -p "$tmp/a b"
   for _ in $(seq 60000); do printf '%s' 'x= '; done
   printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-xassignu.json"
+# Như long-xassignu nhưng ký tự ngoài ASCII là ı hay ſ: grep -i ở UTF-8 gập chúng thành i, s nên vòng cd phải đọc dạng đó ở
+# locale gốc, và tiền tố gán biến của CDA bậc hai ở đó: 15,6 giây với bash 5, quá timeout thì push lên main chạy không hỏi
+# (reviewer PR 4.3 vòng cd).
+for c in 'i:\304\261' 's:\305\277'; do
+  {
+    printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo '"${c#*:}"'; ' "$tmp"
+    for _ in $(seq 60000); do printf '%s' 'x= '; done
+    printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+  } > "$tmp/long-xassign${c%%:*}.json"
+done
 # Nháy kép không đóng trên dòng của nó (`true \`⏎`cd "` + `a`×190000 + ⏎`"`) rồi cd vào repo ở main: mẫu cd ở locale UTF-8
 # thử lại từ mọi `a` (bậc hai, ~27 giây với bash 5 trên main), quá timeout. Locale C: ~3 giây.
 {
@@ -1503,12 +1520,12 @@ hook_limit() {
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
-for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
   sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
   assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
 done
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
