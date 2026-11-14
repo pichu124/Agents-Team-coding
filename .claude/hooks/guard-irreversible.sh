@@ -953,19 +953,30 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Locale cho grep của vòng cd theo từng dạng, tính một lần cho mọi lượt. Locale gốc chỉ khi dạng có khoảng trắng Unicode
   # (USP: PowerShell `Set-Location<U+3000>M`) hay ſ, ı (grep -i gập thành s, i: `ſl M`, `Set-Locatıon M`): chỉ ở đó UTF-8
   # khớp khác C. Còn lại locale C (byte ≥ 0x80 vẫn là ký tự không phải khoảng trắng): tiền tố gán biến của CDA bậc hai ở
-  # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86). Dạng cần locale gốc mà dài
-  # hơn CDU_MAX thì grep ở locale C và thư mục là chưa biết (push hỏi), như thân -c ở decode_shell_c: `echo ı; ` rồi
-  # `x= `×60000 mất 16 giây, `echo "ı" \` ⏎ `x='' `×1600 `\` ⏎ `x='' `×1600 (16 K ký tự, gán có nháy bậc hai nặng hơn) 12 giây;
-  # 4 K ký tự ~1,5 giây. Không ghi đè lý do đã có; locale gốc là C thì grep đã nhanh, khỏi hỏi.
+  # UTF-8, `echo é; ` rồi `x= `×60000 và cd từng mất 14 giây với bash 5 (4.3, reviewer PR #86). Chỉ cần locale gốc khi dạng
+  # còn có từ khoá cd (CDS, cả bản viết bằng ſ, ı) theo sau là khoảng trắng hay USP, lọc ở locale C: không có thì grep ở UTF-8
+  # cũng không khớp gì, nên thông điệp commit dài có ı hay U+3000 không bị hỏi thừa. Dạng cần locale gốc mà dài hơn CDU_MAX
+  # thì hỏi: chi phí bậc hai theo độ dài và theo mật độ ký tự ngoài ASCII, `echo "\"ı" \` ⏎ (`x=` + ı×20 + ` `)×173 rồi cd
+  # (4 K ký tự) mất 11,5 giây với bash 3.2, `x='' `×3200 nối dòng (16 K) 12 giây với bash 5. Không ghi đè lý do đã có;
+  # locale gốc là C thì grep đã nhanh, khỏi hỏi.
   CDU="$USP|$(printf '\305\277|\304\261')"
-  CDU_MAX=4096
+  CDK_I="(i|$(printf '\304\261'))"
+  CDK_S="(s|$(printf '\305\277'))"
+  CDK="(cd|chd${CDK_I}r|pu${CDK_S}hd|${CDK_S}l|${CDK_S}et-locat${CDK_I}on|pu${CDK_S}h-locat${CDK_I}on)([[:space:]]|$USP)"
+  CDU_MAX=1024
   flc=()
   for f in "${cforms[@]}"; do
     GL=C
-    if LC_ALL=C text_grep "$f" -Eq -- "$CDU"; then
+    if LC_ALL=C text_grep "$f" -Eq -- "$CDU" && LC_ALL=C text_grep "$f" -Eiq -- "$CDK"; then
       case "$LC0" in
         C | POSIX) ;;
-        *) if [ "${#f}" -gt "$CDU_MAX" ]; then [ -n "$reason" ] || unknown=1; else GL="$LC0"; fi ;;
+        *)
+          if [ "${#f}" -le "$CDU_MAX" ]; then
+            GL="$LC0"
+          elif [ -z "$reason" ]; then
+            reason="push sau cd trong lệnh dài hơn $CDU_MAX ký tự có ſ, ı hay khoảng trắng Unicode: không kịp đọc thư mục"
+          fi
+          ;;
       esac
     fi
     flc+=("$GL")
