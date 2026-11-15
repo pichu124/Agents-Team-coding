@@ -1679,19 +1679,20 @@ work_p="$(cd "$work" && pwd -P)"
 slow_p="$(cd "$tmp/tbslow" && pwd -P)"
 mkdir -p "$tmp/tbtr" "$tmp/tbgit3" "$tmp/tbgit4" "$tmp/tbgit7"
 printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_tr" > "$tmp/tbtr/tr"
-printf '#!/bin/sh\nsleep 3\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
 printf '#!/bin/sh\nsleep 7\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit7/git"
 # Chậm ở mọi thư mục trừ $work, ghi lại thư mục mỗi lần chậm.
-printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 4; }\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 6; }\nexec "%s" "$@"\n' \
   "$work_p" "$tmp/tbgit4.log" "$real_git" > "$tmp/tbgit4/git"
 chmod +x "$tmp/tbtr/tr" "$tmp/tbgit3/git" "$tmp/tbgit4/git" "$tmp/tbgit7/git"
 tb_guard ask 'T-a: ngưỡng 0' 'git status' KIT_GUARD_SECS=0
 tb_guard ask 'T-b: SECONDS âm từ môi trường' 'git status' SECONDS=-999999 KIT_GUARD_SECS=0
 tb_guard ask 'T-c: tr chậm' "echo 'hi'" PATH="$tmp/tbtr:$PATH" KIT_GUARD_SECS=1
-# Mốc ở đầu vòng đọc nhánh: đọc $tmp/tbslow (4 giây) thì quá ngưỡng 3, không đọc tiếp $tmp/axb.
+# Mốc ở đầu vòng đọc nhánh: đọc $tmp/tbslow (6 giây) thì quá ngưỡng 5, không đọc tiếp $tmp/axb. SECONDS nguyên giây nên
+# ngưỡng 5 bật trong (4, 5]: guard phải tới vòng đọc nhánh trong 4 giây (biên cho Git Bash), tổng ~6 giây dưới hook_limit.
 : > "$tmp/tbgit4.log"
 tb_guard ask 'T-d: vòng đọc nhánh' "cd \"$tmp/tbslow\"; cd \"$tmp/axb\"; cd \"$work\" && git push origin HEAD" \
-  PATH="$tmp/tbgit4:$PATH" KIT_GUARD_SECS=3
+  PATH="$tmp/tbgit4:$PATH" KIT_GUARD_SECS=5
 assert "guard phải đọc nhánh ở $slow_p trước khi chạm ngân sách → $(cat "$tmp/tbgit4.log")" \
   grep -qx -- "$slow_p" "$tmp/tbgit4.log"
 if grep -q -- axb "$tmp/tbgit4.log"; then
@@ -1702,7 +1703,7 @@ fi
 # KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
 tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
 # Ngưỡng không quá chặt: hai lần git 3 giây (~6 giây) vẫn cho qua.
-tb_guard allow 'T-f: 6 giây vẫn kịp' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
 # Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
 # mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
 for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do

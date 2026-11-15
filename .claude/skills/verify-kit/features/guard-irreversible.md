@@ -11,7 +11,7 @@ Trước mỗi lần agent gọi tool Bash hoặc PowerShell, Claude Code chạy
 - `sigpipe-ignored` tiến trình cha bỏ qua SIGPIPE thì guard vẫn hỏi và stderr sạch.
 - `load` dưới tải (nhiều bản test chạy song song), không ca "phải hỏi" nào bị bỏ sót.
 - `plugin-entry` bản plugin gọi cùng guard qua `plugin/run-hook.sh guard-irreversible`, không bao giờ nhường.
-- `time-budget` guard chạy quá khoảng 5–6 giây thì hỏi, kịp trước timeout 10 giây của hook (quá timeout thì Claude Code cho lệnh chạy mà không hỏi).
+- `time-budget` guard chạy quá khoảng 5–6 giây thì hỏi (cộng thêm tối đa một lần gọi git sau mốc cuối), để kịp trước timeout 10 giây của hook (quá timeout thì Claude Code cho lệnh chạy mà không hỏi).
 
 ## How to get to it (user POV)
 
