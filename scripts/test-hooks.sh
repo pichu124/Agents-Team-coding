@@ -1489,6 +1489,14 @@ bq="echo $(printf 'A%.0s' $(seq 4059))$(printf ' {,}%.0s' $(seq 8))"
   printf "$bq"'\\n%.0s' $(seq 17)
   printf 'rm -rf ~","description":"test"}}\n'
 } > "$tmp/long-bracepre.json"
+# Dưới mọi trần mà chạm hầu hết các dạng (dz, dz2, dzq, dq2, vòng cd): 3444 dòng có $@, biến, $(…), ngoặc nhọn, \" và
+# backtick rồi cd vào repo ở main, ~199 KB mất 6,9–7,8 giây với bash 3.2 và awk BWK khi chưa có ngân sách, sát timeout (ngân sách thời gian, 4.3).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  # shellcheck disable=SC2016  # $@, $OUT, $(d) là chữ của lệnh
+  printf 'echo $@ $OUT \\"$dir\\" $(d) {a,b}{c,d} \\\\\\"q\\\\\\" %s `x`\\n' $(seq 3444)
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-umix.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -1550,12 +1558,12 @@ hook_limit() {
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
-for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-umix long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
   sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
   assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
 done
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-umix; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
@@ -1650,6 +1658,15 @@ fi
 tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
 # Ngưỡng không quá chặt: hai lần git 3 giây (~6 giây) vẫn cho qua.
 tb_guard allow 'T-f: 6 giây vẫn kịp' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+# Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
+# mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
+for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL=auto KIT_GUARD_SECS=1 guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
+  esac
+done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
 # ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
 for mode in $modes; do
