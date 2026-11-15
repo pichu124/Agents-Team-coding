@@ -886,8 +886,9 @@ EOF
   mkdir -p "$on_main/sub"
   out="$(bash_input "cd \"$on_main/sub\" && make && cd \"$on_main\" && git push origin HEAD" "$work" |
     GIT_CEILING_DIRECTORIES="$on_main" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  # Thư mục con bị chặn có .git ở tầng trên mà git không đọc ra nhánh: từ khi có git_unread, push hỏi ngay ở đó.
   case "$out" in
-    *'nhánh main'*) ok ;;
+    *'nhánh main'* | *'git không đọc được nhánh'*) ok ;;
     *) bad "thư mục con bị GIT_CEILING_DIRECTORIES chặn rồi gốc repo ở main phải hỏi [$mode] → $out" ;;
   esac
   # Git còn dừng ở thư mục là git dir (có HEAD), không chỉ ở `.git`: repo bare lồng trong repo nhánh feature, và
