@@ -1226,12 +1226,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
       break
     fi
-    # Thư mục nằm trong repo đã đọc nhánh (cùng `.git` gần nhất, tìm bằng builtin, không fork) thì khỏi gọi git lại: git
-    # tìm repo cũng dừng ở `.git` gần nhất, nên nhánh như nhau. Monorepo 40 cd từng gọi git 42 lần, 5–6 giây trên Git Bash,
-    # chạm ngân sách thời gian. Không thấy `.git` (repo bare, thư mục ngoài repo) thì vẫn gọi git. nsub vẫn đếm mọi thư mục.
+    # Thư mục nằm trong repo đã đọc nhánh thì khỏi gọi git lại (tìm bằng builtin, không fork). Git đi lên từ thư mục, ở mỗi
+    # tầng dừng khi có `.git` hay khi chính tầng đó là git dir (có HEAD: repo bare lồng, `.git/worktrees/x`,
+    # `.git/modules/x`, reviewer). Vòng dưới dừng ở tầng đầu tiên có `.git` hoặc HEAD (kể cả HEAD là symlink gãy); chỉ gom
+    # khi dừng vì `.git` mà tầng đó không có HEAD: khi đó mọi tầng dưới không có gì git dừng lại được, nên git đọc ra
+    # cùng một repo từ mọi thư mục cùng tầng dừng. Monorepo 40 cd từng gọi git 42 lần, 5–6 giây trên Git Bash, chạm ngân
+    # sách thời gian. Không gom được thì vẫn gọi git. nsub vẫn đếm mọi thư mục.
     gr="$p"
-    while [ ! -e "$gr/.git" ] && [ -n "$gr" ]; do gr="${gr%/*}"; done
-    if [ -e "$gr/.git" ]; then
+    while [ ! -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ] && [ -n "$gr" ]; do gr="${gr%/*}"; done
+    if [ -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ]; then
       case "$seen_git$nl" in *"${nl}r:$gr$nl"*) continue ;; esac
     else
       gr=""
