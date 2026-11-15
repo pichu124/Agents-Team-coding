@@ -1648,6 +1648,9 @@ tb_guard() {
 real_git="$(command -v git)"
 real_tr="$(command -v tr)"
 work_p="$(cd "$work" && pwd -P)"
+# Repo riêng (nhánh feature) cho T-d: thư mục con của $work cùng repo với $work nên vòng đọc nhánh khỏi gọi git lại.
+[ -d "$tmp/tbslow/.git" ] || new_repo "$tmp/tbslow" feat/x
+slow_p="$(cd "$tmp/tbslow" && pwd -P)"
 mkdir -p "$tmp/tbtr" "$tmp/tbgit3" "$tmp/tbgit4" "$tmp/tbgit7"
 printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_tr" > "$tmp/tbtr/tr"
 printf '#!/bin/sh\nsleep 3\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
@@ -1659,12 +1662,12 @@ chmod +x "$tmp/tbtr/tr" "$tmp/tbgit3/git" "$tmp/tbgit4/git" "$tmp/tbgit7/git"
 tb_guard ask 'T-a: ngưỡng 0' 'git status' KIT_GUARD_SECS=0
 tb_guard ask 'T-b: SECONDS âm từ môi trường' 'git status' SECONDS=-999999 KIT_GUARD_SECS=0
 tb_guard ask 'T-c: tr chậm' "echo 'hi'" PATH="$tmp/tbtr:$PATH" KIT_GUARD_SECS=1
-# Mốc ở đầu vòng đọc nhánh: đọc $work/sub (4 giây) thì quá ngưỡng 3, không đọc tiếp $tmp/axb.
+# Mốc ở đầu vòng đọc nhánh: đọc $tmp/tbslow (4 giây) thì quá ngưỡng 3, không đọc tiếp $tmp/axb.
 : > "$tmp/tbgit4.log"
-tb_guard ask 'T-d: vòng đọc nhánh' "cd sub; cd \"$tmp/axb\"; cd \"$work\" && git push origin HEAD" \
+tb_guard ask 'T-d: vòng đọc nhánh' "cd \"$tmp/tbslow\"; cd \"$tmp/axb\"; cd \"$work\" && git push origin HEAD" \
   PATH="$tmp/tbgit4:$PATH" KIT_GUARD_SECS=3
-assert "guard phải đọc nhánh ở $work_p/sub trước khi chạm ngân sách → $(cat "$tmp/tbgit4.log")" \
-  grep -qx -- "$work_p/sub" "$tmp/tbgit4.log"
+assert "guard phải đọc nhánh ở $slow_p trước khi chạm ngân sách → $(cat "$tmp/tbgit4.log")" \
+  grep -qx -- "$slow_p" "$tmp/tbgit4.log"
 if grep -q -- axb "$tmp/tbgit4.log"; then
   bad "guard phải dừng đọc nhánh khi chạm ngân sách, không đọc $tmp/axb → $(cat "$tmp/tbgit4.log")"
 else
