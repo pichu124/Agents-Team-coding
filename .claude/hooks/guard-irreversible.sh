@@ -1231,10 +1231,13 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # `.git/modules/x`, reviewer). Vòng dưới dừng ở tầng đầu tiên có `.git` hoặc HEAD (kể cả HEAD là symlink gãy); chỉ gom
     # khi dừng vì `.git` mà tầng đó không có HEAD: khi đó mọi tầng dưới không có gì git dừng lại được, nên git đọc ra
     # cùng một repo từ mọi thư mục cùng tầng dừng. Monorepo 40 cd từng gọi git 42 lần, 5–6 giây trên Git Bash, chạm ngân
-    # sách thời gian. Không gom được thì vẫn gọi git. nsub vẫn đếm mọi thư mục.
+    # sách thời gian. Không gom được thì vẫn gọi git. nsub vẫn đếm mọi thư mục. Gom giả định git dò repo chỉ theo nội dung
+    # các tầng, không theo cwd: GIT_DIR hay GIT_COMMON_DIR trong env (tương đối thì git ghép với từng cwd: `GIT_DIR=meta`,
+    # a/meta ở feature, b/meta ở main) phá giả định đó, nên khi có thì không gom (reviewer). GIT_CEILING_DIRECTORIES và
+    # ranh giới filesystem chỉ làm git đọc lỗi (nhánh rỗng, không nhớ), không đổi repo.
     gr="$p"
     while [ ! -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ] && [ -n "$gr" ]; do gr="${gr%/*}"; done
-    if [ -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ]; then
+    if [ -z "${GIT_DIR+x}${GIT_COMMON_DIR+x}" ] && [ -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ]; then
       case "$seen_git$nl" in *"${nl}r:$gr$nl"*) continue ;; esac
     else
       gr=""
