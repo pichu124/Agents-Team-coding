@@ -1213,6 +1213,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   fi
   budget
   nsub=0
+  seen_git=""
   for p in $phys; do
     budget
     [ -n "$reason" ] && break
@@ -1225,6 +1226,16 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
       break
     fi
+    # Thư mục nằm trong repo đã đọc nhánh (cùng `.git` gần nhất, tìm bằng builtin, không fork) thì khỏi gọi git lại: git
+    # tìm repo cũng dừng ở `.git` gần nhất, nên nhánh như nhau. Monorepo 40 cd từng gọi git 42 lần, 5–6 giây trên Git Bash,
+    # chạm ngân sách thời gian. Không thấy `.git` (repo bare, thư mục ngoài repo) thì vẫn gọi git. nsub vẫn đếm mọi thư mục.
+    gr="$p"
+    while [ ! -e "$gr/.git" ] && [ -n "$gr" ]; do gr="${gr%/*}"; done
+    if [ -e "$gr/.git" ]; then
+      case "$seen_git$nl" in *"${nl}r:$gr$nl"*) continue ;; esac
+    else
+      gr=""
+    fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
     branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -1232,6 +1243,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       reason="push khi đang ở nhánh $branch"
       break
     fi
+    # Chỉ nhớ repo khi đọc được nhánh: GIT_CEILING_DIRECTORIES hay safe.directory có thể làm git không thấy repo từ thư
+    # mục này mà vẫn thấy từ thư mục khác cùng `.git` (gốc repo ở nhánh main sau một thư mục con bị chặn).
+    if [ -n "$gr" ] && [ -n "$branch" ]; then seen_git="$seen_git${nl}r:$gr"; fi
   done
   IFS=$' \t\n'
   set +f

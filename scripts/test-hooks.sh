@@ -880,8 +880,16 @@ EOF
   out="$(bash_input "$mc && git push origin HEAD" "$mono" |
     PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
-  assert "guard chỉ được đọc nhánh mỗi repo một lần [$mode]: 40 cd trong monorepo → $nrev lần" [ "$nrev" -eq 1 ]
+  assert "guard chỉ được đọc nhánh mỗi repo một lần (cộng lần đọc thư mục của phiên) [$mode]: 40 cd trong monorepo → $nrev lần" [ "$nrev" -le 2 ]
   assert "monorepo 40 cd rồi push lên nhánh feature phải cho qua [$mode] → $out" [ -z "$out" ]
+  # Repo chỉ được nhớ khi đọc được nhánh: GIT_CEILING_DIRECTORIES chặn git tìm repo từ thư mục con, gốc repo ở main đọc sau.
+  mkdir -p "$on_main/sub"
+  out="$(bash_input "cd \"$on_main/sub\" && make && cd \"$on_main\" && git push origin HEAD" "$work" |
+    GIT_CEILING_DIRECTORIES="$on_main" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "thư mục con bị GIT_CEILING_DIRECTORIES chặn rồi gốc repo ở main phải hỏi [$mode] → $out" ;;
+  esac
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
