@@ -874,6 +874,48 @@ EOF
   for i in $(seq 2 40); do mc="$mc && cd ../p$i && make"; done
   expect_guard allow "$mc && git push origin HEAD" "$mono"
   expect_guard ask "$mc && cd \"$on_main\" && git push origin HEAD" "$mono"
+  # 40 thư mục của cùng một repo: đọc nhánh một lần cho mỗi repo (`.git` gần nhất), không phải mỗi thư mục. 42 lần git
+  # tốn 5–6 giây trên Git Bash, chạm ngân sách thời gian 6 giây nên push bị hỏi thừa (reviewer ngân sách thời gian).
+  : > "$tmp/gitlog.txt"
+  out="$(bash_input "$mc && git push origin HEAD" "$mono" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  assert "guard chỉ được đọc nhánh mỗi repo một lần (cộng lần đọc thư mục của phiên) [$mode]: 40 cd trong monorepo → $nrev lần" [ "$nrev" -le 2 ]
+  assert "monorepo 40 cd rồi push lên nhánh feature phải cho qua [$mode] → $out" [ -z "$out" ]
+  # Repo chỉ được nhớ khi đọc được nhánh: GIT_CEILING_DIRECTORIES chặn git tìm repo từ thư mục con, gốc repo ở main đọc sau.
+  mkdir -p "$on_main/sub"
+  out="$(bash_input "cd \"$on_main/sub\" && make && cd \"$on_main\" && git push origin HEAD" "$work" |
+    GIT_CEILING_DIRECTORIES="$on_main" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "thư mục con bị GIT_CEILING_DIRECTORIES chặn rồi gốc repo ở main phải hỏi [$mode] → $out" ;;
+  esac
+  # Git còn dừng ở thư mục là git dir (có HEAD), không chỉ ở `.git`: repo bare lồng trong repo nhánh feature, và
+  # `.git/worktrees/x` của worktree ở main, có cùng `.git` gần nhất với repo ngoài mà đọc ra main (reviewer).
+  if [ ! -d "$tmp/nestb/bare.git" ]; then
+    new_repo "$tmp/nestb" feat/x
+    git clone -q --bare "$on_main" "$tmp/nestb/bare.git" 2>/dev/null
+  fi
+  expect_guard ask "cd bare.git && git push origin HEAD" "$tmp/nestb"
+  if [ ! -d "$tmp/wtb/.git/worktrees/wtb2" ]; then
+    new_repo "$tmp/wtb" feat/x
+    git -C "$tmp/wtb" worktree add -q -b main "$tmp/wtb2" 2>/dev/null
+  fi
+  expect_guard ask "cd .git/worktrees/wtb2 && git push origin HEAD" "$tmp/wtb"
+  # GIT_DIR tương đối trong môi trường: git ghép nó với từng cwd, không dò theo `.git`, nên hai thư mục cùng tầng dừng
+  # đọc ra hai repo khác nhau (a/meta ở feature, b/meta ở main). Không gom khi có GIT_DIR (reviewer).
+  if [ ! -d "$tmp/gdr/b/meta" ]; then
+    new_repo "$tmp/gdr" feat/x
+    mkdir -p "$tmp/gdr/a" "$tmp/gdr/b"
+    git clone -q --bare "$work" "$tmp/gdr/a/meta" 2>/dev/null
+    git clone -q --bare "$on_main" "$tmp/gdr/b/meta" 2>/dev/null
+  fi
+  out="$(bash_input "make && cd \"$tmp/gdr/b\" && git push origin HEAD" "$tmp/gdr/a" |
+    (cd "$tmp/gdr/a" && GIT_DIR=meta KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh"))"
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "GIT_DIR=meta, cd từ a (meta ở feature) sang b (meta ở main) rồi push phải hỏi [$mode] → $out" ;;
+  esac
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
@@ -1489,6 +1531,14 @@ bq="echo $(printf 'A%.0s' $(seq 4059))$(printf ' {,}%.0s' $(seq 8))"
   printf "$bq"'\\n%.0s' $(seq 17)
   printf 'rm -rf ~","description":"test"}}\n'
 } > "$tmp/long-bracepre.json"
+# Dưới mọi trần mà chạm hầu hết các dạng (dz, dz2, dzq, dq2, vòng cd): 3444 dòng có $@, biến, $(…), ngoặc nhọn, \" và
+# backtick rồi cd vào repo ở main, ~199 KB mất 6,9–7,8 giây với bash 3.2 và awk BWK khi chưa có ngân sách, sát timeout (ngân sách thời gian, 4.3).
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$work"
+  # shellcheck disable=SC2016  # $@, $OUT, $(d) là chữ của lệnh
+  printf 'echo $@ $OUT \\"$dir\\" $(d) {a,b}{c,d} \\\\\\"q\\\\\\" %s `x`\\n' $(seq 3444)
+  printf 'cd \\"%s\\" && git push origin HEAD","description":"test"}}\n' "$on_main"
+} > "$tmp/long-umix.json"
 # Như long-qcd và long-push nhưng thư mục của phiên ở nhánh khác: guard không hỏi ngay được, phải duyệt mọi cd tới repo ở main.
 long_qinput "cd \\\"$on_main\\\"; cd x\\\"" "$work" > "$tmp/long-qcdw.json"
 long_input "cd \\\"$on_main\\\" && git push" "$work" > "$tmp/long-pushw.json"
@@ -1550,12 +1600,12 @@ hook_limit() {
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
-for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
+for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-umix long-gitcuq66 long-dq2un long-dzcap long-dzcjoin; do
   sz="$(wc -c < "$tmp/$f.json" | tr -d ' \t\r')"
   assert "fixture $f ($sz byte) phải dưới RAW_MAX ($raw_max)" [ "$sz" -le "$raw_max" ]
 done
 for mode in $modes; do
-  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre; do
+  for f in long-deploy long-push long-cont long-qcd long-qecho long-shc long-shcp long-qcdw long-pushw long-colon long-uni long-ghm long-pushc long-pppp long-gitx long-manycd long-manydot long-manycd6k long-manycdalt long-manygitc long-gitcq long-gitcexp long-gitcuq long-cduq long-manydotdot long-dotparts long-dotchain long-bscd long-qword long-qword490 long-basho long-bashou long-xassign long-xassignu long-xassigni long-xassigns long-xassigniq long-cdui long-cdus long-cdup long-uquote long-uquoteq long-xassignq long-uquoteqe long-cddq long-qwordu long-assign long-ansi long-ansiesc long-brace long-csv long-braceprod long-bracewords long-bracejson long-bracelines long-bracelinesm long-bracepre long-umix; do
     # Locale UTF-8 (mặc định trên macOS và đa số Linux): phép cắt chuỗi của bash chậm hơn ở locale C nhiều lần.
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
@@ -1599,6 +1649,68 @@ for mode in $modes; do
   case "$out" in
     *'lệnh quá dài để kiểm kịp'*) ok ;;
     *) bad "guard phải đếm RAW_MAX theo byte [$mode]: 100000 ký tự 3 byte → [$out]" ;;
+  esac
+done
+# Ngân sách thời gian (4.3): các trần trên đếm việc chứ không đếm giây, máy chậm (runner CI, bash 3.2 + awk BWK) vẫn có thể
+# quá timeout của hook dưới mọi trần, và Claude Code cho lệnh chạy mà không hỏi. Guard quá 6 giây thì hỏi; KIT_GUARD_SECS
+# (0–5) chỉ hạ ngưỡng, SECONDS từ môi trường bị đặt lại. Chỉ mode auto; git, tr giả chậm để ca tất định.
+# tb_guard <ask|allow> <ca> <lệnh> [biến=giá trị…]: guard trong hook_limit, cwd $work; ask thì stdout đúng một dòng JSON có
+# lý do ngân sách, allow thì stdout rỗng; stderr luôn rỗng.
+tb_guard() {
+  local want="$1" name="$2" c="$3" out
+  shift 3
+  out="$(bash_input "$c" "$work" | hook_limit env "$@" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" 2>"$tmp/tb.err")"
+  assert "guard không được in ra stderr (ngân sách $name): $c → $(cat "$tmp/tb.err")" [ ! -s "$tmp/tb.err" ]
+  if [ "$want" = allow ]; then
+    assert "guard không được chặn (ngân sách $name): $c → $out" [ -z "$out" ]
+    return
+  fi
+  case "$out" in
+    *"$nl"*) bad "guard phải in đúng một dòng JSON (ngân sách $name): $c → [$out]" ;;
+    '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'không kiểm kịp trong'*'}}') ok ;;
+    *) bad "guard phải hỏi vì ngân sách thời gian (ngân sách $name): $c → [$out]" ;;
+  esac
+}
+real_git="$(command -v git)"
+real_tr="$(command -v tr)"
+work_p="$(cd "$work" && pwd -P)"
+# Repo riêng (nhánh feature) cho T-d: thư mục con của $work cùng repo với $work nên vòng đọc nhánh khỏi gọi git lại.
+[ -d "$tmp/tbslow/.git" ] || new_repo "$tmp/tbslow" feat/x
+slow_p="$(cd "$tmp/tbslow" && pwd -P)"
+mkdir -p "$tmp/tbtr" "$tmp/tbgit3" "$tmp/tbgit4" "$tmp/tbgit7"
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_tr" > "$tmp/tbtr/tr"
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
+printf '#!/bin/sh\nsleep 7\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit7/git"
+# Chậm ở mọi thư mục trừ $work, ghi lại thư mục mỗi lần chậm.
+printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 6; }\nexec "%s" "$@"\n' \
+  "$work_p" "$tmp/tbgit4.log" "$real_git" > "$tmp/tbgit4/git"
+chmod +x "$tmp/tbtr/tr" "$tmp/tbgit3/git" "$tmp/tbgit4/git" "$tmp/tbgit7/git"
+tb_guard ask 'T-a: ngưỡng 0' 'git status' KIT_GUARD_SECS=0
+tb_guard ask 'T-b: SECONDS âm từ môi trường' 'git status' SECONDS=-999999 KIT_GUARD_SECS=0
+tb_guard ask 'T-c: tr chậm' "echo 'hi'" PATH="$tmp/tbtr:$PATH" KIT_GUARD_SECS=1
+# Mốc ở đầu vòng đọc nhánh: đọc $tmp/tbslow (6 giây) thì quá ngưỡng 5, không đọc tiếp $tmp/axb. SECONDS nguyên giây nên
+# ngưỡng 5 bật trong (4, 5]: guard phải tới vòng đọc nhánh trong 4 giây (biên cho Git Bash), tổng ~6 giây dưới hook_limit.
+: > "$tmp/tbgit4.log"
+tb_guard ask 'T-d: vòng đọc nhánh' "cd \"$tmp/tbslow\"; cd \"$tmp/axb\"; cd \"$work\" && git push origin HEAD" \
+  PATH="$tmp/tbgit4:$PATH" KIT_GUARD_SECS=5
+assert "guard phải đọc nhánh ở $slow_p trước khi chạm ngân sách → $(cat "$tmp/tbgit4.log")" \
+  grep -qx -- "$slow_p" "$tmp/tbgit4.log"
+if grep -q -- axb "$tmp/tbgit4.log"; then
+  bad "guard phải dừng đọc nhánh khi chạm ngân sách, không đọc $tmp/axb → $(cat "$tmp/tbgit4.log")"
+else
+  ok
+fi
+# KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
+tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
+# Ngưỡng không quá chặt: hai lần git 3 giây (~6 giây) vẫn cho qua.
+tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+# Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
+# mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
+for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do
+  out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL=auto KIT_GUARD_SECS=1 guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
   esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
