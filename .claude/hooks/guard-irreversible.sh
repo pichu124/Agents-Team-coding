@@ -5,8 +5,23 @@
 # Khớp thừa chỉ tốn một câu hỏi, bỏ sót thì mất dữ liệu, nên các mẫu cố ý bắt rộng.
 # Thêm mẫu: gọi thêm một dòng `rule '<regex ERE>' '<lý do>'` ở dưới, và thêm ca vào scripts/test-hooks.sh.
 set -uo pipefail
+# Ngân sách thời gian (4.3): các trần bên dưới đếm việc, không đếm giây, nên máy chậm (bash 3.2 + awk BWK, runner CI bận) vẫn
+# có thể quá timeout 10 giây của hook dưới mọi trần, và Claude Code cho lệnh chạy mà không hỏi. Quá TMAX giây thì hỏi (budget,
+# gọi ở đầu từng bước của shell chính, không trong $(…)). SECONDS từ môi trường bị đặt lại (giá trị âm sẽ tắt ngân sách);
+# KIT_GUARD_SECS (một chữ số 0–5) chỉ hạ được ngưỡng, cho test.
+SECONDS=0
+TMAX=6
+case "${KIT_GUARD_SECS-}" in [0-5]) TMAX="$KIT_GUARD_SECS" ;; esac
+reason=""
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
+# ask_exit <lý do>: hỏi người rồi thoát.
+ask_exit() {
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Hành động không đảo ngược được (%s). Cần người xác nhận, xem mục Quyền tự chủ trong CLAUDE.md."}}\n' "$1"
+  exit 0
+}
+# Giữ lý do cụ thể đã có (luật đã khớp, thư mục ở main): vẫn hỏi, chỉ thôi đọc tiếp.
+budget() { [ "$SECONDS" -lt "$TMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -14,16 +29,11 @@ input="$(cat)"
 # hỏi luôn (hỏi thừa: lệnh dài hơn 256 KiB, hiếm). ${#input} đếm ký tự (≤ số byte); có thể vượt theo cận 6 byte mỗi ký
 # tự (glibc đếm cả dãy 5–6 byte không hợp lệ là một ký tự; reviewer PR #85) thì đếm byte bằng wc, so bằng `[` (bỏ `\r` của wc.exe; số vẫn hỏng thì `[` lỗi, coi như quá trần như PUSH_CMD_MAX).
 RAW_MAX=262144
-raw_reason=""
 if [ "${#input}" -gt "$RAW_MAX" ]; then
-  raw_reason="lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
+  ask_exit "lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
 elif [ $((6 * ${#input})) -gt "$RAW_MAX" ]; then
   rawb="$(printf '%s' "$input" | wc -c | tr -d ' \t\r')"
-  [ "$rawb" -le "$RAW_MAX" ] 2>/dev/null || raw_reason="lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
-fi
-if [ -n "$raw_reason" ]; then
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Hành động không đảo ngược được (%s). Cần người xác nhận, xem mục Quyền tự chủ trong CLAUDE.md."}}\n' "$raw_reason"
-  exit 0
+  [ "$rawb" -le "$RAW_MAX" ] 2>/dev/null || ask_exit "lệnh quá dài để kiểm kịp: hơn $RAW_MAX byte"
 fi
 cwd="$(json_get "$input" cwd)"
 cmd="$(json_get "$input" tool_input.command)"
@@ -177,6 +187,7 @@ decode_shell_c() {
     # thử lại từ mọi vị trí: bậc hai, quá 40 giây (reviewer PR #62 lần 8). Chỉ dạng toàn ASCII: dạng có byte ≥ 0x80 chạy ở
     # locale gốc như trước, vì ở locale C [[:space:]] không khớp khoảng trắng Unicode (`bash<U+3000>-c` của PowerShell;
     # reviewer PR #74). Lệnh dài có ký tự không phải ASCII vẫn chậm như trước.
+    budget
     grep_lc "${forms[$i]}"
     # Dạng dài có byte ≥ 0x80 (một `é ` trước `bash -o `×23000, 184 KB) thì grep ở locale gốc cũng bậc hai: quá 60 giây với
     # bash 5, quá timeout thì push lên main chạy không hỏi (reviewer PR #85). Dạng dài hơn SHU_MAX ký tự thì grep ở locale C;
@@ -188,6 +199,7 @@ decode_shell_c() {
     fi
     for m in $(printf '%s' "${forms[$i]}" | LC_ALL="$GL" grep -Eo -- "$SHC$SHW"); do
       [[ $m =~ ($SHW)$ ]] || continue
+      budget
       w="${BASH_REMATCH[1]}"
       # Chỉ cổng push cần đọc thân: thân không có chữ p, u, s, h theo thứ tự thì khỏi bỏ nháy (Git Bash chậm hơn Linux
       # nhiều lần). Không đòi bốn chữ liền nhau: nháy có thể xé đôi chữ (pu'\''sh'\''). Regex, không dùng glob
@@ -220,11 +232,13 @@ SHV='(^|[;&|(`{[:space:]])"?([$][{]?[A-Za-z_][A-Za-z0-9_]*([:]?[-=?+][^}[:space:
 SHO='([^'"'"'"[:space:]\\]|\\.|'"'"'[^'"'"']*'"'"'|"([^"\\]|\\.)*")*('"'"'[^'"'"']*|"([^"\\]|\\.)*)$'
 # Thân ANSI-C ($'…\n…') thì chưa giải: \n là xuống dòng thật trong thân. Thân lấy từ biến hay lệnh lồng ("$X", $X,
 # "$(printf …)", `…`) thì guard không biết thân.
+budget
 if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$cmd" -Eq -- "$SHV"; then
   shc_unknown=1
 fi
 # Bỏ dòng trùng (dạng nối cả hai kiểu thường y hệt dạng nối theo tool): mọi luật và các dạng dưới chạy trên cmd, chi phí theo
 # độ dài của nó.
+budget
 cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
 
 # PowerShell tách token ở mọi khoảng trắng Unicode (nhóm Zs, NBSP, U+0085), coi nháy cong là nháy và en/em dash là dấu -,
@@ -235,6 +249,7 @@ cmd="$(printf '%s\n' "$cmd" | LC_ALL=C awk '!s[$0]++')"
 # \uXXXX, nên đổi cả các escape đó (lệnh thật có đúng chuỗi \u2003 thì chỉ bị hỏi thừa).
 src="$cmd"
 src_extra=0
+budget
 if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *'\u'*) true ;; *) false ;; esac; then
   uni="$(printf 's/\302[\205\240]/ /g;s/\341\232\200/ /g;s/\342\200[\200-\212\250\251\257]/ /g;s/\342\201\237/ /g;s/\343\200\200/ /g;s/\342\200[\223-\225]/-/g;s/\342\200[\230-\233]/'"'"'/g;s/\342\200[\234-\236]/"/g;s/\305\277/s/g;s/\304\261/i/g')"
   uesc='s/\\u00[aA]0/ /g;s/\\u0085/ /g;s/\\u1680/ /g;s/\\u200[0-9aA]/ /g;s/\\u202[89fF]/ /g;s/\\u205[fF]/ /g;s/\\u3000/ /g'
@@ -251,6 +266,7 @@ if LC_ALL=C text_grep "$cmd" -q -- "$(printf '[\200-\377]')" || case "$cmd" in *
     shc_new=""
     decode_shell_c $((${#forms[@]} - 1))
     src="$src$shc_new"; src_extra=${#shc_new}
+    budget
     if LC_ALL=C text_grep "$un" -Eq -- "$SHC($SHO|\"?[$\`])" || LC_ALL=C text_grep "$un" -Eq -- "$SHV"; then
       shc_unknown=1
     fi
@@ -276,11 +292,14 @@ kw_awk='
   cd = cd "|^((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\\.exe)?$" }
   { s = $0; gsub(/["\047\\$]/, "", s); s = tolower(s)
     if (s ~ kw || (s ~ cd && $0 != q s && $0 != s q && $0 != "\"" s && $0 != s "\"")) { print "x"; exit } }'
+budget
 case "$src" in
   *[\"\'\\]*)
     dq="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\$\\(['\"]\\)/\\1/g" -e "s/'\\([^'[:space:]]*\\)'/\\1/g" \
       -e 's/"\([^"[:space:]]*\)"/\1/g' -e 's/\\\([^[:space:]\\]\)/\1/g')"
+    budget
     dx="$(printf '%s\n' "$src" | LC_ALL=C tr -d "\"'\\\\")"
+    budget
     torn="$(printf '%s\n' "$cmd" | grep -Eo -- "[[:alnum:]_'\"\\\\\$-]+" | grep -E -- "[\"'\\\\\$]" | LC_ALL=C awk "$kw_awk")"
     [ -z "$torn" ] || shc_unknown=1
     cmd="$cmd$nl$dq$nl$dx"
@@ -295,10 +314,12 @@ case "$src" in
       *'\"'*)
         if [ $((${#src} - src_extra)) -le 65536 ]; then
           dqs="s/\\$\\(['\"]\\)/\\1/g;s/'\\([^'[:space:]]*\\)'/\\1/g;"'s/"\([^"[:space:]]*\)"/\1/g;s/\\\([^[:space:]\\]\)/\1/g'
+          budget
           dq2="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
           cmd="$cmd$nl$dq2"
           case "$src" in
             *'\\"'*)
+              budget
               dq3="$(printf '%s\n' "$src" | LC_ALL=C sed -e "s/\\\\\\\\/$(printf '\003')/g" -e "s/\\\\\"/$(printf '\002')/g" -e "$dqs")"
               cmd="$cmd$nl$dq3"
               ;;
@@ -311,6 +332,7 @@ case "$src" in
     # khớp, lệnh gốc vẫn được so). Đoạn có khoảng trắng thường là thân lệnh (`bash -c "git push … && gh pr create --base
     # main"`, `ssh h 'a; b'`): nối các lệnh trong đó lại thì luật khớp xuyên qua chúng (reviewer PR #53). Dòng quá 16 KB
     # bỏ qua: substr của onetrue-awk 2 chép cả dòng, vòng match bậc hai theo độ dài.
+    budget
     if LC_ALL=C text_grep "$src" -Eq -- '"[^"[:space:]]*[;&|][^"[:space:]]*"|'"'"'[^'"'"'[:space:]]*[;&|][^'"'"'[:space:]]*'"'"''; then
       qm="$(printf '%s\n' "$src" | LC_ALL=C awk 'length($0) > 16384 { print ""; next }
         { s = $0; out = ""
@@ -436,6 +458,7 @@ dec_awk='
               if (k < n - 1 && q[k] ~ /[$]$/) { printf "%s", substr(q[k], 1, length(q[k]) - 1); dec(q[k + 1], m); k += 2; continue }
               printf "%s%s", q[k], (k < n ? "\047" : ""); k++ }
             print "" } }'
+budget
 case "$raw" in
   *[!\ \	\\]"\\$nl"* | *'$('* | *'`'* | *'${'* | *"\$'"* | *'{'* | *'$@'* | *'$*'* | *'$'[0-9]* | *'$'[A-Za-z_]* | *'$!'*)
     # Chỉ giữ dòng được nối hay có dấu xé ($(, ${, $', `, {a,b}): dòng khác đã có ở các dạng sẵn có, chép lại chỉ làm luật chậm.
@@ -446,6 +469,7 @@ case "$raw" in
         -e 's/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g' |
       LC_ALL=C awk "$dec_awk")"
     dzp="$dz"
+    budget
     dz="$(printf '%s\n' "$dz" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz"
     # dz2 (4.10, Luật): như dz, thêm dòng chỉ có \ sau dòng nối (`git pu\` ⏎ `\` ⏎ `sh`), $(…) và ${…} lồng (8 lượt:
@@ -460,10 +484,12 @@ case "$raw" in
     xz='s/[$](\([^()]*\))//g;s/[$]{[^{}]*}//g;s/`[^`]*`//g'
     bz='s/{\([^,{}[:space:]]*\),[^{}[:space:]]*}/\1/g'
     vz='s/\([[:alnum:]_]\)[$][@*0-9!]/\1/g;s/\([[:alnum:]_]\)[$][A-Za-z_][A-Za-z0-9_]*/\1/g'
+    budget
     dz2="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         $0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") { printf "%s", substr($0, 1, length($0) - 1); j = 1; next }
         j || /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/ { print; j = 0 }' |
       LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$vz")"
+    budget
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C sed -e "$bz" -e "$bz" -e "$bz" -e "$bz"
       printf '%s\n' "$dz2" | LC_ALL=C awk 'tot <= 65536 && length($0) <= 4096 && /[{][^{}]*,/ {
         l = $0; cap = 4 * length($0) + 256
@@ -476,8 +502,11 @@ case "$raw" in
           l = substr(h, 1, a - 1) out t
           if (length(l) > cap) break }
         tot += length(l); print l }')"
+    budget
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C awk "$dec_awk")"
+    budget
     dzp="$(printf '%s\n' "$dzp" "$dz2" | LC_ALL=C awk '!s[$0]++')"
+    budget
     dz2="$(printf '%s\n' "$dz2" | LC_ALL=C tr -d "\"'\\\\\`")"
     cmd="$cmd$nl$dz2"
     # dz, dz2 xoá hết nháy nên giá trị option có dấu cách trong nháy hay sau `\` bị tách đôi: `git -C "x y" pu``sh -f`,
@@ -502,6 +531,7 @@ case "$raw" in
           ;;
       esac
     }
+    budget
     dzq_add "$dzp"
     # Nối dòng thường (` \` cuối dòng) rồi dòng sau có chữ xé (`git \` ⏎ `pu``sh -f`, `npm \` ⏎ `pub``lish`, reviewer PR #88):
     # awk của dz, dz2 chỉ nối khi `\` dính chữ, dạng nối của join_lines không bỏ mở rộng rỗng. Dạng dzc: mỗi chuỗi nối có ít
@@ -511,6 +541,7 @@ case "$raw" in
     # Chuỗi dài hơn 4096 ký tự bỏ qua (dec_awk và bước mở ngoặc nhọn bỏ dòng dài), tổng dừng ở 65536.
     # `\` dính chữ cũng mở hay nối tiếp chuỗi và tự là dấu xé (`git \` ⏎ `pu\` ⏎ `sh -f`, `git pu\` ⏎ `sh \` ⏎ `-f`: dz, dz2
     # chỉ ghép nửa từ; reviewer PR #89 lần 2). Chuỗi chưa đóng ở cuối lệnh cũng in (bộ đọc JSON cắt xuống dòng cuối).
+    budget
     cj="$(printf '%s\n' "$raw" | LC_ALL=C awk '
         function pr(l) { if (o && length(l) <= 4096 && tot <= 65536 && (s || l ~ /[$][({\047@*!0-9A-Za-z_]|`|[{][^{}]*,/)) {
             tot += length(l); print l } }
@@ -521,15 +552,20 @@ case "$raw" in
           if (c) pr(b l)
           b = ""; c = 0; o = 0; s = 0 }
         END { if (c) pr(b) }')"
+    budget
     if [ -n "$cj" ]; then
       dzc="$(printf '%s\n' "$cj" | LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/``//g' -e "$bz" |
         LC_ALL=C awk "$dec_awk")"
+      budget
       dzc2="$(printf '%s\n' "$cj" | LC_ALL=C sed -e "$vz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" -e "$xz" \
         -e "$vz" -e "$bz" -e "$bz" -e "$bz" -e "$bz" | LC_ALL=C awk "$dec_awk")"
       dzcp="$(printf '%s\n' "$dzc" "$dzc2" | LC_ALL=C awk '!s[$0]++')"
+      budget
       cmd="$cmd$nl$(printf '%s\n' "$dzcp" | LC_ALL=C tr -d "\"'\\\\\`")"
       # Riêng từng dạng: gộp dzc với dzc2 thì trần 65536 của dzq_add đầy ở ~35 KB chuỗi nối (reviewer PR #89 lần 2).
+      budget
       dzq_add "$dzc"
+      budget
       dzq_add "$dzc2"
     fi
     # Cổng push không đọc dz. Một token của lệnh có dấu xé ($(, ${, $', backtick, {, hay \ nối dòng dính chữ) mà xé xong
@@ -545,6 +581,7 @@ case "$raw" in
 # sai không làm lọt thứ đã bắt; đường cũ bỏ cả backtick đơn ở cuối token trừ từ khoá thư mục (tb_awk); $(…) ${…} `…` thay 8 lượt cho
     # dạng lồng (`c$($(true))d`, `c${X:-${Y}}d`); $X, $! thành \001 (`c$X'd'`, `c$!d`); dãy có bước (`c{d..d..1}`, `..+1`). Còn lọt: lồng quá
     # 8 tầng, ngoặc trong $(…) (`c$( (:) )d`), $(…) hay backtick trải nhiều dòng (4.10 của docs/viec-can-lam.md).
+    budget
     jn="$(printf '%s\n' "$raw" | LC_ALL=C awk '$0 ~ /[^ \t\\]\\$/ || (j && $0 == "\\") {
           printf "%s\001", substr($0, 1, length($0) - 1); j = 1; next }
         { j = 0; print }')"
@@ -552,6 +589,7 @@ case "$raw" in
     # lex_awk chạy hai lần: bản mới, và bản ov = 1 đọc $$, $( như main (không lưu/xoá sb, bd ở $(; $$[, $${ vẫn mở $[, ${).
     # Bộ đếm ngoặc không biết ) trong ${…} (`$(echo ${x:-) #})`), nên mỗi bản đọc sai một kiểu; đường nào ra từ khoá cũng hỏi.
     for lx in "$lex_awk" "BEGIN { ov = 1 }$lex_awk" '{ gsub(/\\`/, "\001"); print }'; do
+    budget
     tk="$(printf '%s\n' "$jn" | LC_ALL=C awk "$lx" |
       LC_ALL=C sed -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" -e "$ex" \
         -e "s/[$][@*0-9!]/$soh/g" -e "s/[$][A-Za-z_][A-Za-z0-9_]*/$soh/g" |
@@ -561,6 +599,7 @@ case "$raw" in
       LC_ALL=C awk "$dec_awk" | LC_ALL=C tr -d "\"'\\\\\`$soh" | LC_ALL=C awk "$kw_awk")"
     [ -z "$tk" ] || shc_unknown=1
     done
+    budget
     tk="$(printf '%s\n' "$jn" | LC_ALL=C grep -Eo -- "[[:alnum:]_'\"\\\\\$(){}\`,.+@*!$soh-]+" |
       LC_ALL=C sed -e 's/^`\([^`]*\)$/\1/' -e '/^["'"'"']*`[^`]*`["'"'"']*$/d' | LC_ALL=C awk "$tb_awk" | LC_ALL=C grep -E -- "[\$][({'A-Za-z_@*0-9!]|\`|[{]|$soh" |
       LC_ALL=C sed -e 's/[$](\([^()]*\))//g' -e 's/[$]{[^{}]*}//g' -e 's/[$][A-Za-z_][A-Za-z0-9_]*//g' -e 's/[$][@*0-9!]//g' \
@@ -575,16 +614,19 @@ case "$raw" in
     # Đọc mọi dạng của $cmd (cả dx, dz đã bỏ hết nháy): bỏ dạng nào cũng làm lọt lệnh main vẫn hỏi (đường dẫn shell có
     # khoảng trắng trong nháy, đối số --rcfile có nháy lẻ, cờ xé cả nháy lẫn $(…); reviewer PR #63), nên chịu hỏi thừa
     # `--title "fix zsh" --body "$(…)"`.
+    budget
     if LC_ALL=C text_grep "$cmd" -Eiq -- '(^|[^[:alnum:]_.-])((ba|da|z|k|a|mk|y)?sh|bash[0-9.]*|fish)(\.exe)?([[:space:]]+([-+][oO][[:space:]]+[[:alnum:]_]+|[-+][^[:space:]`$"]*))*[[:space:]]+"?(`|[$][(])'; then
       shc_unknown=1
     fi
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
     # thư mục chưa biết. `mkdir -p src/{a,b}` thì không.
+    budget
     if LC_ALL=C text_grep "$raw" -Eiq -- '[{](cd|chdir|pushd|sl|set-location|push-location|builtin|command|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)[=,]|(^|[^[:alnum:]_-])(cd|chdir|pushd|sl|set-location|push-location|-C|--chdir|--git-dir|--work-tree|git_dir|git_work_tree)([[:space:]=]+-[^[:space:]]*)*[[:space:]=]+[^[:space:];&|]*[{][^}]*,'; then
       shc_unknown=1
     fi
     ;;
 esac
+budget
 case "$raw" in
   *'$@'* | *'$*'* | *'${@'* | *'${*'* | *'$'[0-9]* | *'${'[0-9]*)
     if LC_ALL=C text_grep "$cmd" -Eq -- "$SHC"; then
@@ -593,7 +635,6 @@ case "$raw" in
     ;;
 esac
 
-reason=""
 # rule <mẫu> <lý do>: gom luật; sau luật cuối, một lần grep với mọi mẫu lấy dòng khớp đầu tiên, rồi mới xét từng luật theo
 # thứ tự trên dòng đó (cmd gồm nhiều dạng của lệnh, 24 lần quét cả cmd từng mất vài giây với lệnh dài). LC_ALL=C: mọi mẫu là
 # ASCII, và grep -Ei ở locale UTF-8 chậm bậc hai trên dòng nối rất dài (luật refspec `:` trên 253 KB mất 10 giây).
@@ -656,11 +697,13 @@ rule "(vercel|netlify)[^;&|]*--prod|fly(ctl)?${O}${S}+deploy|${B}((npm|pnpm|yarn
 rule "gh${O}${S}+pr${S}+merge|gh${O}${S}+release${S}+create" "merge PR hoặc tạo release (quyết định của người)"
 # Chỉ lấy dòng khớp đầu tiên (-m 1): xét thứ tự luật trên mọi dòng khớp từng chậm gấp đôi main khi mọi dòng chỉ khớp luật
 # cuối. Lý do có thể khác bản cũ ở lệnh nhiều dòng, nhưng vẫn hỏi; không luật nào khớp riêng dòng đó thì vẫn hỏi.
+budget
 hits="$(LC_ALL=C text_grep "$cmd" -Ei -m 1 "${rule_e[@]}")"
 if [ -n "$hits" ]; then
   reason="lệnh khớp một mẫu hành động không đảo ngược được"
   i=0
   while [ "$i" -lt "${#rule_re[@]}" ]; do
+    budget
     if LC_ALL=C text_grep "$hits" -Eiq -- "${rule_re[$i]}"; then
       reason="${rule_why[$i]}"
       break
@@ -830,6 +873,7 @@ subst_dir() {
 # Có một thư mục ở nhánh chính là hỏi; đích là biến hay lệnh lồng (không biết trước) cũng hỏi.
 # LC_ALL=C như rule(): cmd gồm các dạng bỏ nháy, mà grep -Ei ở locale UTF-8 chậm bậc hai trên dòng dài có nhiều chữ git
 # (`g\it -x` ×6000 thành `git -x git -x …` mất 11 giây). Mẫu là ASCII, dạng đã đổi Unicode sang ASCII nằm trong cmd.
+budget
 if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   { [ -n "$shc_unknown" ] && LC_ALL=C text_grep "$cmd" -iq -- push; }; }; then
   base="${cwd:-.}"
@@ -903,6 +947,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   longw=""
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
+  budget
   branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
@@ -929,9 +974,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # `\"` từng quá 10 giây với bash 3.2, reviewer PR #76 lần 4). Chỉ tính dạng che khi awk thật sự che `\"` trong nháy kép
   # (có \002): lex_awk còn đổi `$` trong nháy đơn, bỏ comment, mà các đổi đó không cần đọc lại.
   stx="$(printf '\002')"
+  budget
   [ -n "$reason$unknown" ] || case "$cmd" in
     *'\"'*)
       for f in "${forms[@]}"; do
+        budget
         case "$f" in *'\"'*) ;; *) continue ;; esac
         mf="$(printf '%s\n' "$f" | LC_ALL=C awk "BEGIN { dm = 1 }$lex_awk")"
         case "$mf" in *"$stx"*) ;; *) continue ;; esac
@@ -966,6 +1013,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   CDU_MAX=1024
   flc=()
   for f in "${cforms[@]}"; do
+    budget
     GL=C
     if LC_ALL=C text_grep "$f" -Eq -- "$CDU" && LC_ALL=C text_grep "$f" -Eiq -- "$CDK"; then
       case "$LC0" in
@@ -994,6 +1042,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # Thư mục git chạy trong đó mà không cần cd.
     GDRE="(^|[[:space:];&|(])(-C${S}+|--chdir(=|${S}+)|--git-dir(=|${S}+)|--work-tree(=|${S}+)|GIT_DIR=|GIT_WORK_TREE=)${a}"
     for fx in "${!cforms[@]}"; do
+      budget
       f="${cforms[$fx]}"
       [ "$fx" -ge "$nf" ] && [ "$a" != "$ARG_BSQ" ] && continue
       # Không có nháy hay \ thì lượt từ ghép khớp đúng như lượt cũ: khỏi chạy lại (chuỗi dirs dài bậc hai theo số cd).
@@ -1012,6 +1061,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       for m in $(printf '%s' "$f" | LC_ALL="${flc[$fx]}" grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
+        budget
         ncd=$((ncd + 1))
         if [ "$ncd" -gt "$CD_MAX" ]; then
           reason="push sau hơn $CD_MAX lần cd: không đọc hết các thư mục"
@@ -1069,8 +1119,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       # Dạng che không giúp vòng -C (GDRE nhận -C sau mọi khoảng trắng, `echo "x\" -C q"` vẫn nuốt), mà tiêu chung GC_MAX:
       # `git -C . status; `×1800 sau `echo "\""` từng hỏi thừa sau 9,4 giây (reviewer PR #76 lần 5). Bỏ qua.
       [ "$fx" -ge "$nf" ] && continue
+      budget
       for m in $(printf '%s' "$f" | grep -Eo -- "$GDRE"); do
         [ -n "$m" ] || continue
+        budget
         ngx=$((ngx + 1))
         if [ "$ngx" -gt "$GCX_MAX" ]; then
           reason="push sau quá nhiều git -C: không đọc hết các thư mục"
@@ -1112,6 +1164,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       done
     done
   done
+  budget
   dirs="$(printf '%s\n' "${dl[@]}" | awk '!s[$0]++')"
   [ -n "$unknown" ] && reason="push vào thư mục chưa biết trước (biến hoặc lệnh lồng)"
   [ -n "$longw" ] && [ -z "$reason" ] && reason="push sau cd qua từ có nháy hay dấu thoát dài hơn 4096 ký tự: không đọc được thư mục"
@@ -1123,12 +1176,14 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Mỗi thành phần của đường là một lần stat khi cd (-P và -L), đường nối dồn (`cd a/..` dài rồi 289 `cd ..`) thành hàng
   # triệu thành phần: quá timeout (reviewer PR #68). Đếm `/` của mọi đường bằng một lần awk (tuyến tính), quá thì hỏi;
   # đếm trước vòng gone bên dưới (vòng đó cũng tuyến tính theo độ dài các đường).
+  budget
   if [ -z "$reason" ] && [ -n "$dirs" ]; then
     np="$(printf '%s\n' "$dirs" | awk '{ n += gsub("/", "/") } END { print n + 0 }')"
     [ "$np" -gt "$PART_MAX" ] && reason="push sau cd qua đường quá dài: hơn $PART_MAX thành phần"
   fi
   nd=0
   [ -n "$reason" ] || for d in $dirs; do
+    budget
     [ -n "$d" ] || continue # cd "" ở lại thư mục của chính hook, không phải của lệnh
     gone "$d" || nd=$((nd + 1))
   done
@@ -1136,10 +1191,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $DIR_MAX đường"
   fi
   phys=""
+  budget
   if [ -z "$reason" ] && [ "$nd" -gt 0 ]; then
     # Mỗi đường tính từ chỗ đứng của hook: cd về đó sau mỗi lần; không về được thì in dòng không bắt đầu bằng / và thôi.
     phys="$(here="$PWD"
       for d in $dirs; do
+        [ "$SECONDS" -lt "$TMAX" ] || { echo '?'; exit 0; }
         [ -n "$d" ] || continue
         gone "$d" && continue
         for o in -P -L; do
@@ -1154,8 +1211,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
         done
       done | awk '!s[$0]++')"
   fi
+  budget
   nsub=0
   for p in $phys; do
+    budget
     [ -n "$reason" ] && break
     case "$p" in
       /*) ;;
@@ -1178,7 +1237,5 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   set +f
 fi
 
-if [ -n "$reason" ]; then
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Hành động không đảo ngược được (%s). Cần người xác nhận, xem mục Quyền tự chủ trong CLAUDE.md."}}\n' "$reason"
-fi
+[ -n "$reason" ] && ask_exit "$reason"
 exit 0
