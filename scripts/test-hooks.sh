@@ -902,6 +902,20 @@ EOF
     git -C "$tmp/wtb" worktree add -q -b main "$tmp/wtb2" 2>/dev/null
   fi
   expect_guard ask "cd .git/worktrees/wtb2 && git push origin HEAD" "$tmp/wtb"
+  # GIT_DIR tương đối trong môi trường: git ghép nó với từng cwd, không dò theo `.git`, nên hai thư mục cùng tầng dừng
+  # đọc ra hai repo khác nhau (a/meta ở feature, b/meta ở main). Không gom khi có GIT_DIR (reviewer).
+  if [ ! -d "$tmp/gdr/b/meta" ]; then
+    new_repo "$tmp/gdr" feat/x
+    mkdir -p "$tmp/gdr/a" "$tmp/gdr/b"
+    git clone -q --bare "$work" "$tmp/gdr/a/meta" 2>/dev/null
+    git clone -q --bare "$on_main" "$tmp/gdr/b/meta" 2>/dev/null
+  fi
+  out="$(bash_input "make && cd \"$tmp/gdr/b\" && git push origin HEAD" "$tmp/gdr/a" |
+    (cd "$tmp/gdr/a" && GIT_DIR=meta KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh"))"
+  case "$out" in
+    *'nhánh main'*) ok ;;
+    *) bad "GIT_DIR=meta, cd từ a (meta ở feature) sang b (meta ở main) rồi push phải hỏi [$mode] → $out" ;;
+  esac
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
