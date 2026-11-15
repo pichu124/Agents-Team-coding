@@ -719,6 +719,19 @@ fi
 # mỗi cd vào thư mục chưa có tốn một subshell (PR #55). Trên Linux đường đó vốn không cd được. Đường có .. (cd -L khác -P),
 # có \ hay chỉ `C:` thì không kết luận: coi như có. Hệ nào bỏ `..` theo
 # chữ (/nope/.. vào được) thì cd ../M sau cd /nope vẫn tới được M: cũng coi như có.
+# git_unread <thư mục>: gọi khi git đọc nhánh ở thư mục ra rỗng. 0 nếu thư mục (đường vật lý) hay một tầng trên có `.git`
+# hay HEAD, tức git có repo để đọc mà không đọc được: safe.directory khi chủ sở hữu khác, repo hỏng, git không chạy. Khi
+# đó nhánh thật có thể là nhánh chính, nên push phải hỏi (main cho qua như thư mục ngoài repo; reviewer PR #92). Thư mục
+# ngoài repo (không có gì ở mọi tầng) thì 1. Chỉ chạy khi nhánh rỗng: một subshell cho đường vật lý, còn lại là builtin.
+git_unread() {
+  local g
+  g="$(CDPATH='' cd -P -- "$1" 2>/dev/null && printf '%s' "$PWD")" || return 1
+  while :; do
+    if [ -e "$g/.git" ] || [ -e "$g/HEAD" ] || [ -L "$g/HEAD" ]; then return 0; fi
+    [ -n "$g" ] || return 1
+    g="${g%/*}"
+  done
+}
 gone() {
   case "$1" in
     *..* | *\\*) return 1 ;;
@@ -950,6 +963,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   budget
   branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
+  if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
+    reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
+  fi
   # Duyệt dòng trong bộ nhớ (IFS là xuống dòng, set -f để đường dẫn không bị glob), không dùng
   # here-doc, cùng lý do text_grep (lib.sh) tránh <<<: here-doc lớn (và mọi here-doc trên bash
   # < 5.1) đi qua file tạm, đĩa đầy hay TMPDIR không ghi được thì vòng không chạy lần nào và push
@@ -1247,6 +1263,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
+      break
+    fi
+    if [ -z "$branch" ] && git_unread "$p"; then
+      reason="push sau cd vào repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
       break
     fi
     # Chỉ nhớ repo khi đọc được nhánh: GIT_CEILING_DIRECTORIES hay safe.directory có thể làm git không thấy repo từ thư
