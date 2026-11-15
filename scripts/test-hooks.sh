@@ -916,6 +916,26 @@ EOF
     *'nhánh main'*) ok ;;
     *) bad "GIT_DIR=meta, cd từ a (meta ở feature) sang b (meta ở main) rồi push phải hỏi [$mode] → $out" ;;
   esac
+  # Git từ chối đọc repo (safe.directory khi chủ sở hữu khác, repo hỏng) thì nhánh đọc ra rỗng như thư mục ngoài repo, và
+  # push lọt dù repo có thể ở nhánh chính. Thư mục có `.git` hay HEAD mà git không đọc ra nhánh thì phải hỏi. git giả từ
+  # chối ở $tmp/refu (nhánh feature: guard không biết nhánh thật nên vẫn phải hỏi).
+  if [ ! -x "$tmp/gitref/git" ]; then
+    mkdir -p "$tmp/gitref" "$tmp/nogit"
+    [ -d "$tmp/refu/.git" ] || new_repo "$tmp/refu" feat/x
+    printf '#!/bin/sh\n[ "$(pwd -P)" = "%s" ] && { echo "fatal: detected dubious ownership" >&2; exit 128; }\nexec "%s" "$@"\n' \
+      "$(cd "$tmp/refu" && pwd -P)" "$(command -v git)" > "$tmp/gitref/git"
+    chmod +x "$tmp/gitref/git"
+  fi
+  for c in "cd \"$tmp/refu\" && git push origin HEAD|$work" "git push origin HEAD|$tmp/refu"; do
+    out="$(bash_input "${c%|*}" "${c##*|}" | PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+    case "$out" in
+      *'"ask"'*) ok ;;
+      *) bad "git từ chối đọc repo thì push phải hỏi [$mode]: ${c%|*} (cwd ${c##*|}) → $out" ;;
+    esac
+  done
+  out="$(bash_input "cd \"$tmp/nogit\" && make && cd \"$work\" && git push origin HEAD" "$work" |
+    PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  assert "thư mục ngoài repo (git không đọc được nhánh, không có .git) không làm push hỏi thừa [$mode] → $out" [ -z "$out" ]
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
