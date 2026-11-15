@@ -890,6 +890,18 @@ EOF
     *'nhánh main'*) ok ;;
     *) bad "thư mục con bị GIT_CEILING_DIRECTORIES chặn rồi gốc repo ở main phải hỏi [$mode] → $out" ;;
   esac
+  # Git còn dừng ở thư mục là git dir (có HEAD), không chỉ ở `.git`: repo bare lồng trong repo nhánh feature, và
+  # `.git/worktrees/x` của worktree ở main, có cùng `.git` gần nhất với repo ngoài mà đọc ra main (reviewer).
+  if [ ! -d "$tmp/nestb/bare.git" ]; then
+    new_repo "$tmp/nestb" feat/x
+    git clone -q --bare "$on_main" "$tmp/nestb/bare.git" 2>/dev/null
+  fi
+  expect_guard ask "cd bare.git && git push origin HEAD" "$tmp/nestb"
+  if [ ! -d "$tmp/wtb/.git/worktrees/wtb2" ]; then
+    new_repo "$tmp/wtb" feat/x
+    git -C "$tmp/wtb" worktree add -q -b main "$tmp/wtb2" 2>/dev/null
+  fi
+  expect_guard ask "cd .git/worktrees/wtb2 && git push origin HEAD" "$tmp/wtb"
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
