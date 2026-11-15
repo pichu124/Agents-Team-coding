@@ -1601,6 +1601,55 @@ for mode in $modes; do
     *) bad "guard phải đếm RAW_MAX theo byte [$mode]: 100000 ký tự 3 byte → [$out]" ;;
   esac
 done
+# Ngân sách thời gian (4.3): các trần trên đếm việc chứ không đếm giây, máy chậm (runner CI, bash 3.2 + awk BWK) vẫn có thể
+# quá timeout của hook dưới mọi trần, và Claude Code cho lệnh chạy mà không hỏi. Guard quá 6 giây thì hỏi; KIT_GUARD_SECS
+# (0–5) chỉ hạ ngưỡng, SECONDS từ môi trường bị đặt lại. Chỉ mode auto; git, tr giả chậm để ca tất định.
+# tb_guard <ask|allow> <ca> <lệnh> [biến=giá trị…]: guard trong hook_limit, cwd $work; ask thì stdout đúng một dòng JSON có
+# lý do ngân sách, allow thì stdout rỗng; stderr luôn rỗng.
+tb_guard() {
+  local want="$1" name="$2" c="$3" out
+  shift 3
+  out="$(bash_input "$c" "$work" | hook_limit env "$@" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" 2>"$tmp/tb.err")"
+  assert "guard không được in ra stderr (ngân sách $name): $c → $(cat "$tmp/tb.err")" [ ! -s "$tmp/tb.err" ]
+  if [ "$want" = allow ]; then
+    assert "guard không được chặn (ngân sách $name): $c → $out" [ -z "$out" ]
+    return
+  fi
+  case "$out" in
+    *"$nl"*) bad "guard phải in đúng một dòng JSON (ngân sách $name): $c → [$out]" ;;
+    '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'không kiểm kịp trong'*'}}') ok ;;
+    *) bad "guard phải hỏi vì ngân sách thời gian (ngân sách $name): $c → [$out]" ;;
+  esac
+}
+real_git="$(command -v git)"
+real_tr="$(command -v tr)"
+work_p="$(cd "$work" && pwd -P)"
+mkdir -p "$tmp/tbtr" "$tmp/tbgit3" "$tmp/tbgit4" "$tmp/tbgit7"
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_tr" > "$tmp/tbtr/tr"
+printf '#!/bin/sh\nsleep 3\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
+printf '#!/bin/sh\nsleep 7\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit7/git"
+# Chậm ở mọi thư mục trừ $work, ghi lại thư mục mỗi lần chậm.
+printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 4; }\nexec "%s" "$@"\n' \
+  "$work_p" "$tmp/tbgit4.log" "$real_git" > "$tmp/tbgit4/git"
+chmod +x "$tmp/tbtr/tr" "$tmp/tbgit3/git" "$tmp/tbgit4/git" "$tmp/tbgit7/git"
+tb_guard ask 'T-a: ngưỡng 0' 'git status' KIT_GUARD_SECS=0
+tb_guard ask 'T-b: SECONDS âm từ môi trường' 'git status' SECONDS=-999999 KIT_GUARD_SECS=0
+tb_guard ask 'T-c: tr chậm' "echo 'hi'" PATH="$tmp/tbtr:$PATH" KIT_GUARD_SECS=1
+# Mốc ở đầu vòng đọc nhánh: đọc $work/sub (4 giây) thì quá ngưỡng 3, không đọc tiếp $tmp/axb.
+: > "$tmp/tbgit4.log"
+tb_guard ask 'T-d: vòng đọc nhánh' "cd sub; cd \"$tmp/axb\"; cd \"$work\" && git push origin HEAD" \
+  PATH="$tmp/tbgit4:$PATH" KIT_GUARD_SECS=3
+assert "guard phải đọc nhánh ở $work_p/sub trước khi chạm ngân sách → $(cat "$tmp/tbgit4.log")" \
+  grep -qx -- "$work_p/sub" "$tmp/tbgit4.log"
+if grep -q -- axb "$tmp/tbgit4.log"; then
+  bad "guard phải dừng đọc nhánh khi chạm ngân sách, không đọc $tmp/axb → $(cat "$tmp/tbgit4.log")"
+else
+  ok
+fi
+# KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
+tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
+# Ngưỡng không quá chặt: hai lần git 3 giây (~6 giây) vẫn cho qua.
+tb_guard allow 'T-f: 6 giây vẫn kịp' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
 # ra stderr. Kết quả đã theo mã của grep, nên vẫn phải hỏi và stderr phải sạch.
 for mode in $modes; do
