@@ -874,6 +874,14 @@ EOF
   for i in $(seq 2 40); do mc="$mc && cd ../p$i && make"; done
   expect_guard allow "$mc && git push origin HEAD" "$mono"
   expect_guard ask "$mc && cd \"$on_main\" && git push origin HEAD" "$mono"
+  # 40 thư mục của cùng một repo: đọc nhánh một lần cho mỗi repo (`.git` gần nhất), không phải mỗi thư mục. 42 lần git
+  # tốn 5–6 giây trên Git Bash, chạm ngân sách thời gian 6 giây nên push bị hỏi thừa (reviewer ngân sách thời gian).
+  : > "$tmp/gitlog.txt"
+  out="$(bash_input "$mc && git push origin HEAD" "$mono" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  assert "guard chỉ được đọc nhánh mỗi repo một lần [$mode]: 40 cd trong monorepo → $nrev lần" [ "$nrev" -eq 1 ]
+  assert "monorepo 40 cd rồi push lên nhánh feature phải cho qua [$mode] → $out" [ -z "$out" ]
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
