@@ -12,6 +12,10 @@ set -uo pipefail
 SECONDS=0
 TMAX=6
 case "${KIT_GUARD_SECS-}" in [0-5]) TMAX="$KIT_GUARD_SECS" ;; esac
+# Một lần git không ngắt được giữa chừng (mốc chỉ ở giữa các bước): CI Windows từng có một lần git 5,6 giây bắt đầu ở ~4,6
+# giây, tổng 10,2 giây (guard_gaps, PR #95). Không bắt đầu lần git mới sau GTMAX = TMAX − 3 giây, nên một lần git tới ~6–7
+# giây vẫn kịp trước timeout 10 giây.
+GTMAX=$((TMAX > 3 ? TMAX - 3 : 0))
 reason=""
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -22,6 +26,8 @@ ask_exit() {
 }
 # Giữ lý do cụ thể đã có (luật đã khớp, thư mục ở main): vẫn hỏi, chỉ thôi đọc tiếp.
 budget() { [ "$SECONDS" -lt "$TMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
+# budget_git: gọi ngay trước mỗi lần gọi git (đọc nhánh).
+budget_git() { [ "$SECONDS" -lt "$GTMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -961,6 +967,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
   budget
+  budget_git
   branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
@@ -1263,6 +1270,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
+    budget_git
     branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
