@@ -961,7 +961,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
   budget
-  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  # symbolic-ref trước: repo chưa có commit thì rev-parse --abbrev-ref in "HEAD", không ra tên nhánh (reviewer PR #93).
+  # HEAD detached thì symbolic-ref lỗi, rev-parse in "HEAD" như trước. Ca thường vẫn một lần gọi git.
+  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && { git symbolic-ref --short -q HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null; })"
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
     reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
@@ -1263,7 +1265,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
-    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && { git symbolic-ref --short -q HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null; })"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
