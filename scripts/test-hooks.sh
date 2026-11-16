@@ -960,6 +960,39 @@ EOF
   expect_guard ask "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbm"
   expect_guard ask "cd \"$tmp/unbm\" && git add -A && git commit -m init && git push -u origin HEAD" "$work"
   expect_guard allow "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbf"
+  # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
+  # lại trong vòng đọc nhánh) tốn thêm một lần git muộn, gần hạn chót của git_branch trên máy chậm (CI macOS PR #95:
+  # `\"` ngoài nháy kép, ~70 KB, từng bị hỏi thừa với một mốc bắt đầu git cố định). Ghi thứ tự các lần gọi git và awk.
+  if [ ! -x "$tmp/gitawk/git" ]; then
+    mkdir -p "$tmp/gitawk"
+    printf '#!/bin/sh\necho git >> "%s"\nexec "%s" "$@"\n' "$tmp/gitawk.log" "$(command -v git)" > "$tmp/gitawk/git"
+    printf '#!/bin/sh\necho awk >> "%s"\nexec "%s" "$@"\n' "$tmp/gitawk.log" "$(command -v awk)" > "$tmp/gitawk/awk"
+    chmod +x "$tmp/gitawk/git" "$tmp/gitawk/awk"
+  fi
+  : > "$tmp/gitawk.log"
+  out="$(bash_input "echo hi && git push origin feat/x" "$work" |
+    PATH="$tmp/gitawk:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  ngit="$(grep -c '^git$' "$tmp/gitawk.log")"
+  assert "push không cd: một lần gọi git (không đọc lại thư mục của phiên) [$mode] → $ngit lần" [ "$ngit" -eq 1 ]
+  case "$mode" in
+    sed) ;; # đọc JSON bằng awk: awk đứng trước git
+    auto) # không có Python hay jq thì mode auto cũng đọc JSON bằng awk (reviewer)
+      if [ -n "$py" ] || command -v jq >/dev/null 2>&1; then
+        first="$(awk 'NR == 1' "$tmp/gitawk.log")"
+        assert "push không cd: đọc nhánh trước mọi lần gọi awk [$mode] → $first" [ "$first" = git ]
+      fi ;;
+    *) first="$(awk 'NR == 1' "$tmp/gitawk.log")"
+       assert "push không cd: đọc nhánh trước mọi lần gọi awk [$mode] → $first" [ "$first" = git ] ;;
+  esac
+  assert "push không cd ở repo nhánh feature cho qua [$mode] → $out" [ -z "$out" ]
+  # cwd có xuống dòng: vòng phys đọc dirs theo dòng nên base bị cắt; đoạn đầu không có thì dòng đầu của phys là thư mục
+  # khác (đích thật của lệnh), không được bỏ qua như thư mục của phiên (reviewer). Cần Python hay jq để dựng JSON.
+  if [ -n "$py" ] || command -v jq >/dev/null 2>&1; then
+    nlc="$work/x$nl$on_main"
+    mkdir -p "$nlc"
+    expect_guard ask "cd \"$on_main\" && git push origin HEAD" "$nlc"
+    expect_guard ask "git -C \"$on_main\" push origin HEAD" "$nlc"
+  fi
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
@@ -1641,6 +1674,30 @@ hook_limit() {
     $SIG{ALRM} = sub { kill "KILL", -$p; waitpid $p, 0; exit 142 };
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
+# guard_gaps <json> <mode> [biến=giá trị…]: chẩn đoán khi một ca canh thời gian đỏ. Chạy lại guard với dấu thời gian ở mỗi
+# mốc budget (EPOCHREALTIME, bash ≥ 5; không có thì không đo), trần 30 giây, in tổng và ba khoảng dài nhất giữa hai mốc
+# (số dòng của guard). Đặt ở đầu thông báo đỏ: test-install chỉ in 300 ký tự đầu mỗi dòng đỏ của lần chạy trong repo đích
+# (long-xassign đỏ ở đó trên CI Linux mà lần chạy chính cùng job xanh; PR #91–#94).
+guard_gaps() {
+  local j="$1" m="$2" d="$tmp/gprof" t0 t1
+  shift 2
+  [ -n "${EPOCHREALTIME:-}" ] || { printf 'không đo được (bash %s)' "$BASH_VERSION"; return; }
+  mkdir -p "$d"
+  cp "$hooks/lib.sh" "$d/lib.sh"
+  sed 's/^budget() { /budget() { printf "B %s %s\\n" "$EPOCHREALTIME" "${BASH_LINENO[0]}" >\&2; /' \
+    "$hooks/guard-irreversible.sh" > "$d/g.sh"
+  chmod +x "$d/g.sh"
+  t0="$EPOCHREALTIME"
+  env LC_ALL=C.UTF-8 KIT_JSON_TOOL="$m" "$@" bash -c 'guard_timeout=30; '"$(declare -f hook_limit)"'; hook_limit "$0"' \
+    "$d/g.sh" < "$j" > "$d/out" 2> "$d/log"
+  t1="$EPOCHREALTIME"
+  awk -v s="$t0" -v e="$t1" '$1 == "B" { g = $2 - (pt == "" ? s : pt); k = (pl == "" ? "đầu" : pl) "->" $3
+      n++; gap[n] = g; key[n] = k; pt = $2; pl = $3 }
+    END { printf "tổng %.2fs, %d mốc", e - s, n
+      for (r = 0; r < 3; r++) { b = 0; for (i = 1; i <= n; i++) if (!(i in used) && (b == 0 || gap[i] > gap[b])) b = i
+        if (b) { used[b] = 1; printf "; %s %.2fs", key[b], gap[b] } }
+      if (pt != "") printf "; sau mốc cuối %.2fs", e - pt }' "$d/log"
+}
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
@@ -1654,7 +1711,7 @@ for mode in $modes; do
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
       *'"permissionDecision":"ask"'*) ok ;;
-      *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+      *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode] $f [$(guard_gaps "$tmp/$f.json" "$mode")]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
     esac
   done
 done
@@ -1729,6 +1786,15 @@ printf '#!/bin/sh\nsleep 7\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit7/git"
 printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 6; }\nexec "%s" "$@"\n' \
   "$work_p" "$tmp/tbgit4.log" "$real_git" > "$tmp/tbgit4/git"
 chmod +x "$tmp/tbtr/tr" "$tmp/tbgit3/git" "$tmp/tbgit4/git" "$tmp/tbgit7/git"
+# Lần gọi git đầu chậm 4 giây (một lần cho mỗi ca), ở $tmp/tbslow chậm 6 giây.
+mkdir -p "$tmp/tbgit46"
+printf '#!/bin/sh
+[ -e "%s" ] || { : > "%s"; sleep 4; }
+[ "$(pwd -P)" = "%s" ] && sleep 6
+exec "%s" "$@"
+' \
+  "$tmp/tbgit46.once" "$tmp/tbgit46.once" "$slow_p" "$real_git" > "$tmp/tbgit46/git"
+chmod +x "$tmp/tbgit46/git"
 tb_guard ask 'T-a: ngưỡng 0' 'git status' KIT_GUARD_SECS=0
 tb_guard ask 'T-b: SECONDS âm từ môi trường' 'git status' SECONDS=-999999 KIT_GUARD_SECS=0
 tb_guard ask 'T-c: tr chậm' "echo 'hi'" PATH="$tmp/tbtr:$PATH" KIT_GUARD_SECS=1
@@ -1746,15 +1812,20 @@ else
 fi
 # KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
 tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
-# Ngưỡng không quá chặt: hai lần git 3 giây (~6 giây) vẫn cho qua.
-tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+# Ngưỡng không quá chặt: hai lần git 2 giây (thư mục của phiên và $tmp/axb, hai repo nhánh feature) vẫn cho qua.
+tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$tmp/axb\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+# Một lần git không ngắt được bằng mốc: bắt đầu một lần git chậm khi đã dùng ~4 giây thì quá timeout 10 giây (CI
+# Windows: một lần git 5,6 giây ở vòng đọc nhánh, guard_gaps PR #95). git_branch giết git chưa xong ở giây TMAX + 2: hỏi
+# sau ~8 giây. git giả là script có sleep con: phải giết cả nhóm tiến trình, không thì $(…) đợi sleep.
+rm -f "$tmp/tbgit46.once"
+tb_guard ask 'T-g: không bắt đầu git chậm sau mốc' "cd \"$tmp/tbslow\" && git push origin HEAD" PATH="$tmp/tbgit46:$PATH"
 # Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
 # mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
 for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL=auto KIT_GUARD_SECS=1 guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
-    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
+    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f [$(guard_gaps "$tmp/$f.json" auto KIT_GUARD_SECS=1)] ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
   esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi

@@ -12,6 +12,9 @@ set -uo pipefail
 SECONDS=0
 TMAX=6
 case "${KIT_GUARD_SECS-}" in [0-5]) TMAX="$KIT_GUARD_SECS" ;; esac
+# Một lần git không ngắt được bằng mốc (mốc chỉ ở giữa các bước): CI Windows từng có một lần git 5,6 giây bắt đầu ở ~4,6
+# giây, tổng 10,2 giây (guard_gaps, PR #95). git_branch giết lần đọc nhánh nào chưa xong ở giây GDEAD = TMAX + 2.
+GDEAD=$((TMAX + 2))
 reason=""
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -22,6 +25,29 @@ ask_exit() {
 }
 # Giữ lý do cụ thể đã có (luật đã khớp, thư mục ở main): vẫn hỏi, chỉ thôi đọc tiếp.
 budget() { [ "$SECONDS" -lt "$TMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
+# git_branch: in nhánh ở thư mục hiện tại (chạy trong $(…) sau cd); git chưa xong ở giây GDEAD thì bị giết và in `?` (không
+# là tên nhánh hợp lệ), người gọi hỏi với lý do ngân sách. symbolic-ref, không rev-parse --abbrev-ref: repo chưa có commit
+# thì rev-parse in "HEAD", không ra tên nhánh (reviewer PR #93). Mã 1 chỉ khi HEAD detached (rev-parse vốn in "HEAD"): in
+# HEAD. Mã khác (ngoài repo, git từ chối, repo hỏng) không in gì, như rev-parse, để git_unread/gm xét. Job nền thoát với mã
+# của git, nên git bị giết (mã ≥ 129) vẫn ra `?`. Mỗi thư mục đúng một lần gọi git. Không dùng lệnh timeout
+# (macOS không có, Windows có thể gặp timeout.exe khác cú pháp) hay file tạm: git chạy nền, một subshell ngủ rồi giết nó;
+# subshell đó ghi ra /dev/null nên $(…) không đợi nó, bị giết khi git xong (sleep con của nó tự hết sau ≤ GDEAD giây).
+git_branch() {
+  local t=$((GDEAD - SECONDS)) gp wp rc
+  if [ "$t" -lt 1 ]; then printf '?'; return 0; fi
+  # set -m (chỉ trong $(…) này): job nền có nhóm tiến trình riêng, giết cả nhóm để tiến trình con của git (hay của wrapper)
+  # không giữ pipe của $(…). Giết nhóm không được thì giết git.
+  set -m
+  { git symbolic-ref --short -q HEAD 2>/dev/null; rc=$?; [ "$rc" -ne 1 ] || echo HEAD; exit "$rc"; } &
+  gp=$!
+  { sleep "$t"; kill -- -"$gp" 2>/dev/null || kill "$gp"; } >/dev/null 2>&1 &
+  wp=$!
+  wait "$gp"
+  rc=$?
+  kill "$wp" 2>/dev/null
+  [ "$rc" -lt 129 ] || printf '?'
+  return 0
+}
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -40,6 +66,18 @@ cmd="$(json_get "$input" tool_input.command)"
 # Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
 raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dưới cần `\` + xuống dòng còn nguyên
+# Đọc nhánh của thư mục của phiên sớm, trước các dạng và các bước nặng, khi lệnh có chữ push: lần git đầu xong sớm thì phần
+# còn lại của ngân sách cho các bước sau, và vòng đọc nhánh khỏi đọc lại nó (một lần git ít hơn; 1,5 → 0,16 giây với bash
+# 3.2 + BWK trên lệnh ~70 KB). Lệnh chỉ có push bị xé (`pu\sh`) thì đọc ở cổng push như trước.
+base_branch=""
+base_read=""
+case "$raw" in
+  *[pP][uU][sS][hH]*)
+    base_branch="$(CDPATH='' cd -P -- "${cwd:-.}" 2>/dev/null && git_branch)"
+    [ "$base_branch" = '?' ] && ask_exit "không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)"
+    base_read=1
+    ;;
+esac
 # Nối dòng: bash dùng \ cuối dòng, PowerShell dùng `. Ở tool kia, ký tự đó cuối dòng là thứ
 # khác (C:\ trong PowerShell, dấu đóng `...` trong bash), còn \\ là dấu \ thật. grep so từng
 # dòng, nên so trên nhiều dạng: nối theo tool (đích nằm ở dòng sau), giữ dòng nhưng bỏ dấu
@@ -961,10 +999,17 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
   budget
-  # symbolic-ref: repo chưa có commit thì rev-parse --abbrev-ref in "HEAD", không ra tên nhánh (reviewer PR #93). Mã 1 chỉ
-  # khi HEAD detached (rev-parse vốn in "HEAD"): in HEAD. Mã khác (ngoài repo, git từ chối, repo hỏng) không in gì, như
-  # rev-parse, để git_unread/gm xét. Mỗi thư mục đúng một lần gọi git (luật ngân sách: tối đa một lần git sau mốc cuối).
-  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && { git symbolic-ref --short -q HEAD 2>/dev/null || [ $? -ne 1 ] || echo HEAD; })"
+  if [ -n "$base_read" ]; then
+    branch="$base_branch"
+  else
+    branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git_branch)"
+  fi
+  [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
+  # Đọc được nhánh thì thư mục của phiên có mặt, nên dòng đầu của phys (đường vật lý của dirs, bắt đầu bằng base) là nó:
+  # vòng đọc nhánh khỏi gọi git lại ở đó (cùng thư mục, cùng env, cùng kết quả).
+  skip_base=""
+  # base có xuống dòng thì vòng phys (đọc dirs theo dòng) cắt nó, dòng đầu có thể là thư mục khác: không bỏ (reviewer).
+  case "$base" in *"$nl"*) ;; *) [ -n "$branch" ] && skip_base=1 ;; esac
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
     reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
@@ -1245,6 +1290,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
       break
     fi
+    if [ -n "$skip_base" ]; then
+      skip_base=""
+      continue
+    fi
     # Thư mục nằm trong repo đã đọc nhánh thì khỏi gọi git lại (tìm bằng builtin, không fork). Git đi lên từ thư mục, ở mỗi
     # tầng dừng khi có `.git` hay khi chính tầng đó là git dir (có HEAD: repo bare lồng, `.git/worktrees/x`,
     # `.git/modules/x`, reviewer). Vòng dưới dừng ở tầng đầu tiên có `.git` hoặc HEAD (kể cả HEAD là symlink gãy); chỉ gom
@@ -1266,7 +1315,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
-    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && { git symbolic-ref --short -q HEAD 2>/dev/null || [ $? -ne 1 ] || echo HEAD; })"
+    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git_branch)"
+    [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break
