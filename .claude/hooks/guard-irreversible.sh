@@ -12,10 +12,9 @@ set -uo pipefail
 SECONDS=0
 TMAX=6
 case "${KIT_GUARD_SECS-}" in [0-5]) TMAX="$KIT_GUARD_SECS" ;; esac
-# Một lần git không ngắt được giữa chừng (mốc chỉ ở giữa các bước): CI Windows từng có một lần git 5,6 giây bắt đầu ở ~4,6
-# giây, tổng 10,2 giây (guard_gaps, PR #95). Không bắt đầu lần git mới sau GTMAX = TMAX − 3 giây, nên một lần git tới ~6–7
-# giây vẫn kịp trước timeout 10 giây.
-GTMAX=$((TMAX > 3 ? TMAX - 3 : 0))
+# Một lần git không ngắt được bằng mốc (mốc chỉ ở giữa các bước): CI Windows từng có một lần git 5,6 giây bắt đầu ở ~4,6
+# giây, tổng 10,2 giây (guard_gaps, PR #95). git_branch giết lần đọc nhánh nào chưa xong ở giây GDEAD = TMAX + 2.
+GDEAD=$((TMAX + 2))
 reason=""
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -26,8 +25,26 @@ ask_exit() {
 }
 # Giữ lý do cụ thể đã có (luật đã khớp, thư mục ở main): vẫn hỏi, chỉ thôi đọc tiếp.
 budget() { [ "$SECONDS" -lt "$TMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
-# budget_git: gọi ngay trước mỗi lần gọi git (đọc nhánh).
-budget_git() { [ "$SECONDS" -lt "$GTMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
+# git_branch: in nhánh ở thư mục hiện tại (chạy trong $(…) sau cd), như git rev-parse --abbrev-ref HEAD; git chưa xong ở
+# giây GDEAD thì bị giết và in `?` (không là tên nhánh hợp lệ), người gọi hỏi với lý do ngân sách. Không dùng lệnh timeout
+# (macOS không có, Windows có thể gặp timeout.exe khác cú pháp) hay file tạm: git chạy nền, một subshell ngủ rồi giết nó;
+# subshell đó ghi ra /dev/null nên $(…) không đợi nó, bị giết khi git xong (sleep con của nó tự hết sau ≤ GDEAD giây).
+git_branch() {
+  local t=$((GDEAD - SECONDS)) gp wp rc
+  if [ "$t" -lt 1 ]; then printf '?'; return 0; fi
+  # set -m (chỉ trong $(…) này): job nền có nhóm tiến trình riêng, giết cả nhóm để tiến trình con của git (hay của wrapper)
+  # không giữ pipe của $(…). Giết nhóm không được thì giết git.
+  set -m
+  git rev-parse --abbrev-ref HEAD 2>/dev/null &
+  gp=$!
+  { sleep "$t"; kill -- -"$gp" 2>/dev/null || kill "$gp"; } >/dev/null 2>&1 &
+  wp=$!
+  wait "$gp"
+  rc=$?
+  kill "$wp" 2>/dev/null
+  [ "$rc" -lt 129 ] || printf '?'
+  return 0
+}
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -46,15 +63,14 @@ cmd="$(json_get "$input" tool_input.command)"
 # Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
 raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dưới cần `\` + xuống dòng còn nguyên
-# Đọc nhánh của thư mục của phiên sớm, trước các dạng và các bước nặng, khi lệnh có chữ push: đọc muộn (sau các dạng) thì
-# trên máy chậm lần git rơi sau mốc bắt đầu git (GTMAX) và lệnh dài trên nhánh feature bị hỏi thừa (CI macOS PR #95). Lệnh
-# chỉ có push bị xé (`pu\sh`) thì đọc ở cổng push như trước.
+# Đọc nhánh của thư mục của phiên sớm, trước các dạng và các bước nặng, khi lệnh có chữ push: lần git đầu xong sớm thì phần
+# còn lại của ngân sách cho các bước sau, và vòng đọc nhánh khỏi đọc lại nó (một lần git ít hơn; 1,5 → 0,16 giây với bash
+# 3.2 + BWK trên lệnh ~70 KB). Lệnh chỉ có push bị xé (`pu\sh`) thì đọc ở cổng push như trước.
 base_branch=""
 base_read=""
 case "$raw" in
   *[pP][uU][sS][hH]*)
-    budget_git
-    base_branch="$(CDPATH='' cd -P -- "${cwd:-.}" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    base_branch="$(CDPATH='' cd -P -- "${cwd:-.}" 2>/dev/null && git_branch)"
     base_read=1
     ;;
 esac
@@ -982,9 +998,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   if [ -n "$base_read" ]; then
     branch="$base_branch"
   else
-    budget_git
-    branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git_branch)"
   fi
+  [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
   # Đọc được nhánh thì thư mục của phiên có mặt, nên dòng đầu của phys (đường vật lý của dirs, bắt đầu bằng base) là nó:
   # vòng đọc nhánh khỏi gọi git lại ở đó (cùng thư mục, cùng env, cùng kết quả).
   skip_base=""
@@ -1294,8 +1310,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     fi
     # cd (trong $(...)) rồi mới gọi git, không dùng git -C: Git Bash không đổi đường /c/... có [ ] sang
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
-    budget_git
-    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git_branch)"
+    [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
     if text_grep "$branch" -Eqx -- "$MAIN"; then
       reason="push khi đang ở nhánh $branch"
       break

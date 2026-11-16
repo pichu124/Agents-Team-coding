@@ -938,8 +938,8 @@ EOF
     PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   assert "thư mục ngoài repo (git không đọc được nhánh, không có .git) không làm push hỏi thừa [$mode] → $out" [ -z "$out" ]
   # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
-  # lại trong vòng đọc nhánh) thì trên macOS chậm lần git đến sau mốc bắt đầu git (GTMAX) nên lệnh dài trên nhánh feature bị
-  # hỏi thừa (CI macOS PR #95: `\"` ngoài nháy kép, ~70 KB). Ghi thứ tự các lần gọi git và awk.
+  # lại trong vòng đọc nhánh) tốn thêm một lần git muộn, gần hạn chót của git_branch trên máy chậm (CI macOS PR #95:
+  # `\"` ngoài nháy kép, ~70 KB, từng bị hỏi thừa với một mốc bắt đầu git cố định). Ghi thứ tự các lần gọi git và awk.
   if [ ! -x "$tmp/gitawk/git" ]; then
     mkdir -p "$tmp/gitawk"
     printf '#!/bin/sh\necho git >> "%s"\nexec "%s" "$@"\n' "$tmp/gitawk.log" "$(command -v git)" > "$tmp/gitawk/git"
@@ -1776,11 +1776,11 @@ else
 fi
 # KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
 tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
-# Ngưỡng không quá chặt: hai lần git 1 giây vẫn cho qua (lần sau bắt đầu ở ~1 giây, dưới mốc bắt đầu git; SECONDS của bash
-# 3.2 đếm qua ranh giới giây nên 2 giây có thể đọc ra 3).
+# Ngưỡng không quá chặt: hai lần git 1 giây vẫn cho qua.
 tb_guard allow 'T-f: hai lần git 1 giây vẫn cho qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
-# Một lần git không ngắt được giữa chừng: bắt đầu một lần git chậm khi đã dùng ~4 giây thì quá timeout 10 giây (CI
-# Windows: một lần git 5,6 giây ở vòng đọc nhánh, guard_gaps PR #95). Không bắt đầu git mới sau TMAX − 3 giây: hỏi.
+# Một lần git không ngắt được bằng mốc: bắt đầu một lần git chậm khi đã dùng ~4 giây thì quá timeout 10 giây (CI
+# Windows: một lần git 5,6 giây ở vòng đọc nhánh, guard_gaps PR #95). git_branch giết git chưa xong ở giây TMAX + 2: hỏi
+# sau ~8 giây. git giả là script có sleep con: phải giết cả nhóm tiến trình, không thì $(…) đợi sleep.
 rm -f "$tmp/tbgit46.once"
 tb_guard ask 'T-g: không bắt đầu git chậm sau mốc' "cd \"$tmp/tbslow\" && git push origin HEAD" PATH="$tmp/tbgit46:$PATH"
 # Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
