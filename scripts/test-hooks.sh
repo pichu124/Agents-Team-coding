@@ -943,7 +943,16 @@ EOF
   out="$(bash_input "cd \"$work\" && git push origin HEAD" "$tmp/nogit" |
     PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   ngit="$(grep -c . "$tmp/gitlog.txt")"
-  assert "cwd ngoài repo rồi cd vào repo nhánh feature: mỗi thư mục một lần gọi git [$mode] → $ngit lần" [ "$ngit" -le 3 ]
+  # 3 lần: thư mục của phiên (ngoài repo, nhánh rỗng nên không nhớ) được đọc lại trong vòng đọc nhánh, như main.
+  assert "cwd ngoài repo rồi cd vào repo nhánh feature: một lần gọi git mỗi lần đọc nhánh [$mode] → $ngit lần" [ "$ngit" -le 3 ]
+  # HEAD detached: symbolic-ref mã 1, coi là HEAD, không gọi thêm rev-parse (bản gọi thêm: 4 lần).
+  if [ ! -d "$tmp/detr/.git" ]; then new_repo "$tmp/detr" feat/x; git -C "$tmp/detr" checkout -q --detach 2>/dev/null; fi
+  : > "$tmp/gitlog.txt"
+  out="$(bash_input "git push origin HEAD" "$tmp/detr" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  ngit="$(grep -c . "$tmp/gitlog.txt")"
+  assert "HEAD detached: một lần gọi git mỗi lần đọc nhánh [$mode] → $ngit lần" [ "$ngit" -le 2 ]
+  assert "HEAD detached ở repo nhánh feature rồi push cho qua như main [$mode] → $out" [ -z "$out" ]
   # Repo ở nhánh chính chưa có commit: `rev-parse --abbrev-ref HEAD` in "HEAD", nên lệnh tạo commit đầu rồi push lên main
   # lọt (main cũng lọt; reviewer PR #93). Chưa có commit ở nhánh feature thì vẫn cho qua.
   [ -d "$tmp/unbm/.git" ] || git init -q -b main "$tmp/unbm"
