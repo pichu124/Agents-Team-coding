@@ -1757,7 +1757,7 @@ work_p="$(cd "$work" && pwd -P)"
 slow_p="$(cd "$tmp/tbslow" && pwd -P)"
 mkdir -p "$tmp/tbtr" "$tmp/tbgit3" "$tmp/tbgit4" "$tmp/tbgit7"
 printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_tr" > "$tmp/tbtr/tr"
-printf '#!/bin/sh\nsleep 1\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit3/git"
 printf '#!/bin/sh\nsleep 7\nexec "%s" "$@"\n' "$real_git" > "$tmp/tbgit7/git"
 # Chậm ở mọi thư mục trừ $work, ghi lại thư mục mỗi lần chậm.
 printf '#!/bin/sh\nd="$(pwd -P)"\n[ "$d" = "%s" ] || { echo "$d" >> "%s"; sleep 6; }\nexec "%s" "$@"\n' \
@@ -1789,8 +1789,8 @@ else
 fi
 # KIT_GUARD_SECS chỉ hạ ngưỡng: 9 bị bỏ qua, git 7 giây thì vẫn hỏi trước timeout 10 giây.
 tb_guard ask 'T-e: KIT_GUARD_SECS=9 bị bỏ qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit7:$PATH" KIT_GUARD_SECS=9
-# Ngưỡng không quá chặt: hai lần git 1 giây vẫn cho qua.
-tb_guard allow 'T-f: hai lần git 1 giây vẫn cho qua' "cd \"$work\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
+# Ngưỡng không quá chặt: hai lần git 2 giây (thư mục của phiên và $tmp/axb, hai repo nhánh feature) vẫn cho qua.
+tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$tmp/axb\" && git push origin HEAD" PATH="$tmp/tbgit3:$PATH"
 # Một lần git không ngắt được bằng mốc: bắt đầu một lần git chậm khi đã dùng ~4 giây thì quá timeout 10 giây (CI
 # Windows: một lần git 5,6 giây ở vòng đọc nhánh, guard_gaps PR #95). git_branch giết git chưa xong ở giây TMAX + 2: hỏi
 # sau ~8 giây. git giả là script có sleep con: phải giết cả nhóm tiến trình, không thì $(…) đợi sleep.

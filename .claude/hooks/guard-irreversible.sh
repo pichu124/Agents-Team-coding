@@ -71,6 +71,7 @@ base_read=""
 case "$raw" in
   *[pP][uU][sS][hH]*)
     base_branch="$(CDPATH='' cd -P -- "${cwd:-.}" 2>/dev/null && git_branch)"
+    [ "$base_branch" = '?' ] && ask_exit "không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)"
     base_read=1
     ;;
 esac
@@ -1004,7 +1005,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Đọc được nhánh thì thư mục của phiên có mặt, nên dòng đầu của phys (đường vật lý của dirs, bắt đầu bằng base) là nó:
   # vòng đọc nhánh khỏi gọi git lại ở đó (cùng thư mục, cùng env, cùng kết quả).
   skip_base=""
-  [ -n "$branch" ] && skip_base=1
+  # base có xuống dòng thì vòng phys (đọc dirs theo dòng) cắt nó, dòng đầu có thể là thư mục khác: không bỏ (reviewer).
+  case "$base" in *"$nl"*) ;; *) [ -n "$branch" ] && skip_base=1 ;; esac
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
     reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
