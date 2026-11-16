@@ -953,10 +953,23 @@ EOF
   assert "push không cd: một lần gọi git (không đọc lại thư mục của phiên) [$mode] → $ngit lần" [ "$ngit" -eq 1 ]
   case "$mode" in
     sed) ;; # đọc JSON bằng awk: awk đứng trước git
+    auto) # không có Python hay jq thì mode auto cũng đọc JSON bằng awk (reviewer)
+      if [ -n "$py" ] || command -v jq >/dev/null 2>&1; then
+        first="$(awk 'NR == 1' "$tmp/gitawk.log")"
+        assert "push không cd: đọc nhánh trước mọi lần gọi awk [$mode] → $first" [ "$first" = git ]
+      fi ;;
     *) first="$(awk 'NR == 1' "$tmp/gitawk.log")"
        assert "push không cd: đọc nhánh trước mọi lần gọi awk [$mode] → $first" [ "$first" = git ] ;;
   esac
   assert "push không cd ở repo nhánh feature cho qua [$mode] → $out" [ -z "$out" ]
+  # cwd có xuống dòng: vòng phys đọc dirs theo dòng nên base bị cắt; đoạn đầu không có thì dòng đầu của phys là thư mục
+  # khác (đích thật của lệnh), không được bỏ qua như thư mục của phiên (reviewer). Cần Python hay jq để dựng JSON.
+  if [ -n "$py" ] || command -v jq >/dev/null 2>&1; then
+    nlc="$work/x$nl$on_main"
+    mkdir -p "$nlc"
+    expect_guard ask "cd \"$on_main\" && git push origin HEAD" "$nlc"
+    expect_guard ask "git -C \"$on_main\" push origin HEAD" "$nlc"
+  fi
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
