@@ -1618,6 +1618,30 @@ hook_limit() {
     $SIG{ALRM} = sub { kill "KILL", -$p; waitpid $p, 0; exit 142 };
     alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$guard_timeout" "$@"
 }
+# guard_gaps <json> <mode> [biến=giá trị…]: chẩn đoán khi một ca canh thời gian đỏ. Chạy lại guard với dấu thời gian ở mỗi
+# mốc budget (EPOCHREALTIME, bash ≥ 5; không có thì không đo), trần 30 giây, in tổng và ba khoảng dài nhất giữa hai mốc
+# (số dòng của guard). Đặt ở đầu thông báo đỏ: test-install chỉ in 300 ký tự đầu mỗi dòng đỏ của lần chạy trong repo đích
+# (long-xassign đỏ ở đó trên CI Linux mà lần chạy chính cùng job xanh; PR #91–#94).
+guard_gaps() {
+  local j="$1" m="$2" d="$tmp/gprof" t0 t1
+  shift 2
+  [ -n "${EPOCHREALTIME:-}" ] || { printf 'không đo được (bash %s)' "$BASH_VERSION"; return; }
+  mkdir -p "$d"
+  cp "$hooks/lib.sh" "$d/lib.sh"
+  sed 's/^budget() { /budget() { printf "B %s %s\\n" "$EPOCHREALTIME" "${BASH_LINENO[0]}" >\&2; /' \
+    "$hooks/guard-irreversible.sh" > "$d/g.sh"
+  chmod +x "$d/g.sh"
+  t0="$EPOCHREALTIME"
+  env LC_ALL=C.UTF-8 KIT_JSON_TOOL="$m" "$@" bash -c 'guard_timeout=30; '"$(declare -f hook_limit)"'; hook_limit "$0"' \
+    "$d/g.sh" < "$j" > "$d/out" 2> "$d/log"
+  t1="$EPOCHREALTIME"
+  awk -v s="$t0" -v e="$t1" '$1 == "B" { g = $2 - (pt == "" ? s : pt); k = (pl == "" ? "đầu" : pl) "->" $3
+      n++; gap[n] = g; key[n] = k; pt = $2; pl = $3 }
+    END { printf "tổng %.2fs, %d mốc", e - s, n
+      for (r = 0; r < 3; r++) { b = 0; for (i = 1; i <= n; i++) if (!(i in used) && (b == 0 || gap[i] > gap[b])) b = i
+        if (b) { used[b] = 1; printf "; %s %.2fs", key[b], gap[b] } }
+      if (pt != "") printf "; sau mốc cuối %.2fs", e - pt }' "$d/log"
+}
 # Fixture canh thời gian phải nằm dưới RAW_MAX, không thì trần hỏi trước và ca không còn đi qua đường code nó canh
 # (reviewer PR #85: long-ansi, long-ansiesc, long-csv từng vượt). long-qword490 cố ý trên trần.
 raw_max="$(awk -F= '/^RAW_MAX=/ { print $2; exit }' "$hooks/guard-irreversible.sh")"
@@ -1631,7 +1655,7 @@ for mode in $modes; do
     out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL="$mode" hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
     case "$out" in
       *'"permissionDecision":"ask"'*) ok ;;
-      *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
+      *) bad "guard phải hỏi trong ${guard_timeout} giây [$mode] $f [$(guard_gaps "$tmp/$f.json" "$mode")]: lệnh dài hơn pipe buffer ($(wc -c < "$tmp/$f.json") byte, input: $(head -c 160 "$tmp/$f.json")...) → [$out]" ;;
     esac
   done
 done
@@ -1731,7 +1755,7 @@ for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-x
   out="$(LC_ALL=C.UTF-8 KIT_JSON_TOOL=auto KIT_GUARD_SECS=1 guard_timeout=5 hook_limit "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>/dev/null)"
   case "$out" in
     *'"permissionDecision":"ask"'*) ok ;;
-    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
+    *) bad "guard phải hỏi trong 5 giây với KIT_GUARD_SECS=1: $f [$(guard_gaps "$tmp/$f.json" auto KIT_GUARD_SECS=1)] ($(wc -c < "$tmp/$f.json") byte) → [$out]" ;;
   esac
 done
 # Tiến trình cha bỏ qua SIGPIPE (trap '' PIPE, kế thừa sang con): printf không chết mà báo lỗi ghi
