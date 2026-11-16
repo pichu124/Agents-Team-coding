@@ -937,6 +937,26 @@ EOF
   out="$(bash_input "cd \"$tmp/nogit\" && make && cd \"$work\" && git push origin HEAD" "$work" |
     PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   assert "thư mục ngoài repo (git không đọc được nhánh, không có .git) không làm push hỏi thừa [$mode] → $out" [ -z "$out" ]
+  # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
+  # lại trong vòng đọc nhánh) thì trên macOS chậm lần git đến sau mốc bắt đầu git (GTMAX) nên lệnh dài trên nhánh feature bị
+  # hỏi thừa (CI macOS PR #95: `\"` ngoài nháy kép, ~70 KB). Ghi thứ tự các lần gọi git và awk.
+  if [ ! -x "$tmp/gitawk/git" ]; then
+    mkdir -p "$tmp/gitawk"
+    printf '#!/bin/sh\necho git >> "%s"\nexec "%s" "$@"\n' "$tmp/gitawk.log" "$(command -v git)" > "$tmp/gitawk/git"
+    printf '#!/bin/sh\necho awk >> "%s"\nexec "%s" "$@"\n' "$tmp/gitawk.log" "$(command -v awk)" > "$tmp/gitawk/awk"
+    chmod +x "$tmp/gitawk/git" "$tmp/gitawk/awk"
+  fi
+  : > "$tmp/gitawk.log"
+  out="$(bash_input "echo hi && git push origin feat/x" "$work" |
+    PATH="$tmp/gitawk:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  ngit="$(grep -c '^git$' "$tmp/gitawk.log")"
+  assert "push không cd: một lần gọi git (không đọc lại thư mục của phiên) [$mode] → $ngit lần" [ "$ngit" -eq 1 ]
+  case "$mode" in
+    sed) ;; # đọc JSON bằng awk: awk đứng trước git
+    *) first="$(awk 'NR == 1' "$tmp/gitawk.log")"
+       assert "push không cd: đọc nhánh trước mọi lần gọi awk [$mode] → $first" [ "$first" = git ] ;;
+  esac
+  assert "push không cd ở repo nhánh feature cho qua [$mode] → $out" [ -z "$out" ]
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
