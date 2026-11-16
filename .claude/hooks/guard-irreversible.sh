@@ -719,6 +719,13 @@ fi
 # mỗi cd vào thư mục chưa có tốn một subshell (PR #55). Trên Linux đường đó vốn không cd được. Đường có .. (cd -L khác -P),
 # có \ hay chỉ `C:` thì không kết luận: coi như có. Hệ nào bỏ `..` theo
 # chữ (/nope/.. vào được) thì cd ../M sau cd /nope vẫn tới được M: cũng coi như có.
+gone() {
+  case "$1" in
+    *..* | *\\*) return 1 ;;
+    /* | [A-Za-z]:/*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
+    *) return 1 ;;
+  esac
+}
 # git_unread <thư mục>: gọi khi git đọc nhánh ở thư mục ra rỗng. 0 nếu thư mục (đường vật lý) hay một tầng trên có `.git`
 # hay HEAD, tức git có repo để đọc mà không đọc được: safe.directory khi chủ sở hữu khác, repo hỏng, git không chạy. Khi
 # đó nhánh thật có thể là nhánh chính, nên push phải hỏi (main cho qua như thư mục ngoài repo; reviewer PR #92). Thư mục
@@ -731,13 +738,6 @@ git_unread() {
     [ -n "$g" ] || return 1
     g="${g%/*}"
   done
-}
-gone() {
-  case "$1" in
-    *..* | *\\*) return 1 ;;
-    /* | [A-Za-z]:/*) [ ! -d "$1" ] && [ ! -d "$1/.." ] ;;
-    *) return 1 ;;
-  esac
 }
 # strip_q <từ>: bỏ một " ở đầu, một " ở cuối, rồi một ' ở đầu, một ' ở cuối, như ${d#\"} ${d%\"} ${d#\'} ${d%\'}, kết quả
 # trong SQ. Xét ký tự đầu/cuối bằng case rồi mới cắt một ký tự: ${d#\"} trên từ dài mà không khớp chậm bậc hai
@@ -1253,6 +1253,9 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # ranh giới filesystem chỉ làm git đọc lỗi (nhánh rỗng, không nhớ), không đổi repo.
     gr="$p"
     while [ ! -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ] && [ -n "$gr" ]; do gr="${gr%/*}"; done
+    # Có `.git` hay HEAD ở một tầng (p là đường vật lý): dùng cho nhánh rỗng ở dưới, thay git_unread (khỏi một subshell).
+    gm=""
+    if [ -e "$gr/.git" ] || [ -e "$gr/HEAD" ] || [ -L "$gr/HEAD" ]; then gm=1; fi
     if [ -z "${GIT_DIR+x}${GIT_COMMON_DIR+x}" ] && [ -e "$gr/.git" ] && [ ! -e "$gr/HEAD" ] && [ ! -L "$gr/HEAD" ]; then
       case "$seen_git$nl" in *"${nl}r:$gr$nl"*) continue ;; esac
     else
@@ -1265,7 +1268,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       reason="push khi đang ở nhánh $branch"
       break
     fi
-    if [ -z "$branch" ] && git_unread "$p"; then
+    if [ -z "$branch" ] && [ -n "$gm" ]; then
       reason="push sau cd vào repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
       break
     fi
