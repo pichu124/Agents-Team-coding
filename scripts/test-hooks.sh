@@ -937,6 +937,13 @@ EOF
   out="$(bash_input "cd \"$tmp/nogit\" && make && cd \"$work\" && git push origin HEAD" "$work" |
     PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   assert "thư mục ngoài repo (git không đọc được nhánh, không có .git) không làm push hỏi thừa [$mode] → $out" [ -z "$out" ]
+  # Repo ở nhánh chính chưa có commit: `rev-parse --abbrev-ref HEAD` in "HEAD", nên lệnh tạo commit đầu rồi push lên main
+  # lọt (main cũng lọt; reviewer PR #93). Chưa có commit ở nhánh feature thì vẫn cho qua.
+  [ -d "$tmp/unbm/.git" ] || git init -q -b main "$tmp/unbm"
+  [ -d "$tmp/unbf/.git" ] || git init -q -b feat/x "$tmp/unbf"
+  expect_guard ask "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbm"
+  expect_guard ask "cd \"$tmp/unbm\" && git add -A && git commit -m init && git push -u origin HEAD" "$work"
+  expect_guard allow "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbf"
   # Quá nhiều thư mục cần đọc (DIR_MAX) thì hỏi, không cd từng cái: 600 `git -C xN/..` sau một cd.
   gx="$(for i in $(seq 600); do printf 'git -C x%s/.. status; ' "$i"; done)"
   expect_guard ask "cd \"$work\"; ${gx}git push origin HEAD"
