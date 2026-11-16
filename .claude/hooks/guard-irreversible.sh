@@ -46,6 +46,18 @@ cmd="$(json_get "$input" tool_input.command)"
 # Không đọc được lệnh: so mẫu trên toàn bộ input thô (thà hỏi thừa).
 [ -n "$cmd" ] || cmd="$input"
 raw="$cmd" # lệnh như nhận, trước khi nối dòng: dạng dz bên dưới cần `\` + xuống dòng còn nguyên
+# Đọc nhánh của thư mục của phiên sớm, trước các dạng và các bước nặng, khi lệnh có chữ push: đọc muộn (sau các dạng) thì
+# trên máy chậm lần git rơi sau mốc bắt đầu git (GTMAX) và lệnh dài trên nhánh feature bị hỏi thừa (CI macOS PR #95). Lệnh
+# chỉ có push bị xé (`pu\sh`) thì đọc ở cổng push như trước.
+base_branch=""
+base_read=""
+case "$raw" in
+  *[pP][uU][sS][hH]*)
+    budget_git
+    base_branch="$(CDPATH='' cd -P -- "${cwd:-.}" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    base_read=1
+    ;;
+esac
 # Nối dòng: bash dùng \ cuối dòng, PowerShell dùng `. Ở tool kia, ký tự đó cuối dòng là thứ
 # khác (C:\ trong PowerShell, dấu đóng `...` trong bash), còn \\ là dấu \ thật. grep so từng
 # dòng, nên so trên nhiều dạng: nối theo tool (đích nằm ở dòng sau), giữ dòng nhưng bỏ dấu
@@ -967,8 +979,16 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Thư mục của phiên ở nhánh chính thì hỏi ngay, khỏi duyệt mọi cd: lệnh có rất nhiều cd có thể quá timeout (4.3), và
   # mỗi dạng thêm (nháy xé từ khoá thư mục, thân bash -c) là thêm một lượt duyệt.
   budget
-  budget_git
-  branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ -n "$base_read" ]; then
+    branch="$base_branch"
+  else
+    budget_git
+    branch="$(CDPATH='' cd -P -- "$base" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  fi
+  # Đọc được nhánh thì thư mục của phiên có mặt, nên dòng đầu của phys (đường vật lý của dirs, bắt đầu bằng base) là nó:
+  # vòng đọc nhánh khỏi gọi git lại ở đó (cùng thư mục, cùng env, cùng kết quả).
+  skip_base=""
+  [ -n "$branch" ] && skip_base=1
   text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
     reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
@@ -1248,6 +1268,10 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     if [ "$nsub" -gt "$SUB_MAX" ]; then
       reason="push sau quá nhiều thư mục cần đọc nhánh: hơn $SUB_MAX lần"
       break
+    fi
+    if [ -n "$skip_base" ]; then
+      skip_base=""
+      continue
     fi
     # Thư mục nằm trong repo đã đọc nhánh thì khỏi gọi git lại (tìm bằng builtin, không fork). Git đi lên từ thư mục, ở mỗi
     # tầng dừng khi có `.git` hay khi chính tầng đó là git dir (có HEAD: repo bare lồng, `.git/worktrees/x`,
