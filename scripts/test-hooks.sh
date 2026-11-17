@@ -1831,6 +1831,38 @@ tb_guard allow 'T-f: hai lần git 2 giây vẫn cho qua' "cd \"$tmp/axb\" && gi
 # sau ~8 giây. git giả là script có sleep con: phải giết cả nhóm tiến trình, không thì $(…) đợi sleep.
 rm -f "$tmp/tbgit46.once"
 tb_guard ask 'T-g: không bắt đầu git chậm sau mốc' "cd \"$tmp/tbslow\" && git push origin HEAD" PATH="$tmp/tbgit46:$PATH"
+# Một lần grep của vòng quét cd cũng không ngắt được: tiền tố gán biến của CDA (`x= `×66000, long-xassign) làm nó bậc hai,
+# 0,4 giây ở máy 4 CPU nhưng 5,1 giây ở một runner CI Linux (hai dạng là quá 10 giây; PR #96); máy chậm hơn thì một lần là
+# quá. grep giả ngủ 11 giây khi mẫu là mẫu quét cd: cd_scan giết nó ở giây TMAX + 2, guard hỏi trước timeout.
+mkdir -p "$tmp/tbgrep"
+printf '#!/bin/sh\ncase "$*" in *"[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*"*) sleep 11 ;; esac\nexec "%s" "$@"\n' \
+  "$(command -v grep)" > "$tmp/tbgrep/grep"
+chmod +x "$tmp/tbgrep/grep"
+# Phép gán ngăn bằng \f (hay \v, \r) cũng là [[:space:]] của CDA nhưng awk tách field mặc định không nhận (reviewer PR #97):
+# long-xassignf như long-xassign với \f thay khoảng trắng.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp"
+  for _ in $(seq 60000); do printf '%s' 'x=\f'; done
+  printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-xassignf.json"
+# Chuỗi định danh dài không có = cũng làm lần grep đó chậm như long-xassign (blob base64 trong echo; reviewer PR #97): đếm
+# phép gán không bắt, nên lần grep phải có hạn chót.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"' "$tmp"
+  for _ in $(seq 47500); do printf '%s' QUJD; done
+  printf '\\" > f && cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-blob.json"
+for f in long-xassign long-xassignf long-blob; do
+  out="$(hook_limit env PATH="$tmp/tbgrep:$PATH" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>"$tmp/tb.err")"
+  case "$out" in
+    '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'}}') ok ;;
+    *) bad "T-h: guard phải hỏi trước timeout khi grep quét cd chậm ($f) → [$out] $(cat "$tmp/tb.err")" ;;
+  esac
+done
+# Chuỗi gán dài mà grep thật xong kịp vẫn đọc như thường: 250 phép gán liền nhau rồi push ở nhánh feature cho qua.
+xs="$(printf 'x= %.0s' $(seq 250))"
+out="$(bash_input "${xs}git push origin feat/x" "$work" | KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh")"
+assert "250 phép gán liền nhau rồi push ở nhánh feature phải cho qua → $out" [ -z "$out" ]
 # Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
 # mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
 for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do

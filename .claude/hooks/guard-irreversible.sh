@@ -50,6 +50,31 @@ git_branch() {
   [ "$rc" -lt 129 ] || printf '?'
   return 0
 }
+# cd_scan <dạng> <locale> <mẫu>: in các cd của một dạng lệnh (grep quét cd rồi CDCUT), mỗi dòng một, như cách gọi thẳng;
+# chưa xong ở giây GDEAD thì cả pipeline bị giết và in thêm dòng `?` (CDCUT không bao giờ in dòng đó), người gọi hỏi với
+# lý do ngân sách. Một lần grep không ngắt được bằng mốc mà có thể bậc hai theo độ dài lệnh (tiền tố gán biến của CDA với
+# `x= `×66000, chuỗi định danh dài như blob base64 trong echo: 0,4 giây ở máy 4 CPU, 5,1 giây ở một runner CI Linux; PR #96,
+# reviewer PR #97). Cùng cách với git_branch (set -m chỉ trong $(…), giết cả nhóm); pipeline cần một subshell nên giết nhóm
+# hỏng thì kill pid chỉ giết subshell. Dạng ngắn (≤ 32 KB) chạy thẳng, không fork thêm: bậc hai ở 32 KB là ~0,15 giây
+# trên runner chậm đó, còn ba fork mỗi lần gọi làm Git Bash chậm thêm (CI Windows PR #97).
+cd_scan() {
+  local t=$((GDEAD - SECONDS)) gp wp rc
+  if [ "$t" -lt 1 ]; then printf '?\n'; return 0; fi
+  if [ "${#1}" -le 32768 ]; then
+    printf '%s' "$1" | LC_ALL="$2" grep -Eio -- "$3" | LC_ALL=C awk "$CDCUT"
+    return 0
+  fi
+  set -m
+  { printf '%s' "$1" | LC_ALL="$2" grep -Eio -- "$3" | LC_ALL=C awk "$CDCUT"; } &
+  gp=$!
+  { sleep "$t"; kill -- -"$gp" 2>/dev/null || kill "$gp"; } >/dev/null 2>&1 &
+  wp=$!
+  wait "$gp"
+  rc=$?
+  kill "$wp" 2>/dev/null
+  [ "$rc" -lt 129 ] || printf '\n?\n'
+  return 0
+}
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -1128,7 +1153,8 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       # Locale theo flc (ở trên): tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8. Dạng có khoảng trắng Unicode
       # hay ſ, ı giữ locale gốc: dạng đổi sang ASCII (un) đổi cả chữ trong tên thư mục (en dash, nháy cong), nên dạng gốc vẫn
       # phải khớp `Set-Location<U+3000>'proj–x'` hay `ſl 'proj–x'` (reviewer PR #74).
-      for m in $(printf '%s' "$f" | LC_ALL="${flc[$fx]}" grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+      for m in $(cd_scan "$f" "${flc[$fx]}" "${CDA}${CDRE}"); do
+        [ "$m" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
         budget
