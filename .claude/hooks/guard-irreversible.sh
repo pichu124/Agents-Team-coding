@@ -55,10 +55,15 @@ git_branch() {
 # lý do ngân sách. Một lần grep không ngắt được bằng mốc mà có thể bậc hai theo độ dài lệnh (tiền tố gán biến của CDA với
 # `x= `×66000, chuỗi định danh dài như blob base64 trong echo: 0,4 giây ở máy 4 CPU, 5,1 giây ở một runner CI Linux; PR #96,
 # reviewer PR #97). Cùng cách với git_branch (set -m chỉ trong $(…), giết cả nhóm); pipeline cần một subshell nên giết nhóm
-# hỏng thì kill pid chỉ giết subshell.
+# hỏng thì kill pid chỉ giết subshell. Dạng ngắn (≤ 32 KB) chạy thẳng, không fork thêm: bậc hai ở 32 KB là ~0,15 giây
+# trên runner chậm đó, còn ba fork mỗi lần gọi làm Git Bash chậm thêm (CI Windows PR #97).
 cd_scan() {
   local t=$((GDEAD - SECONDS)) gp wp rc
   if [ "$t" -lt 1 ]; then printf '?\n'; return 0; fi
+  if [ "${#1}" -le 32768 ]; then
+    printf '%s' "$1" | LC_ALL="$2" grep -Eio -- "$3" | LC_ALL=C awk "$CDCUT"
+    return 0
+  fi
   set -m
   { printf '%s' "$1" | LC_ALL="$2" grep -Eio -- "$3" | LC_ALL=C awk "$CDCUT"; } &
   gp=$!
