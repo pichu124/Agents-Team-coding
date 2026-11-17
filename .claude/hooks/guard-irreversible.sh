@@ -1349,6 +1349,15 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
     branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git_branch)"
     [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
+    # Git không tìm ra repo từ thư mục này mà tầng trên có `.git` (gom được, gr khác p): volume mount riêng (node_modules
+    # của devcontainer, git dừng ở ranh giới filesystem) hay GIT_CEILING_DIRECTORIES. Push từ đây lỗi vì git không thấy
+    # repo, nên đọc nhánh ở tầng có `.git`: ra nhánh feature thì cho qua, ra nhánh chính hay rỗng (safe.directory, repo
+    # hỏng) thì hỏi như trước. Trước đây hỏi khi thư mục này đọc trước gốc repo (hỏi thừa phụ thuộc thứ tự, 4.3).
+    if [ -z "$branch" ] && [ -n "$gr" ] && [ "$gr" != "$p" ]; then
+      budget
+      branch="$(CDPATH='' cd -P -- "$gr" 2>/dev/null && git_branch)"
+      [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
+    fi
     if text_grep "$branch" -Eqx -- "$MAIN_BR"; then
       reason="push khi đang ở nhánh $branch"
       break
