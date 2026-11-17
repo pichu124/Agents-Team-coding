@@ -967,6 +967,11 @@ EOF
   expect_guard ask "git push origin HEAD" "$tmp/tagm"
   expect_guard ask "cd \"$tmp/tagm\" && git push origin HEAD" "$work"
   expect_guard allow "git push origin HEAD" "$tmp/tagf"
+  # Thêm ref $GIT_DIR/heads/main (`git update-ref heads/main HEAD`, gõ thiếu refs/; git nhận) thì in "refs/heads/main"
+  # (reviewer PR #96).
+  if [ ! -d "$tmp/tagr/.git" ]; then new_repo "$tmp/tagr" main; gitc "$tmp/tagr" tag main; gitc "$tmp/tagr" update-ref heads/main HEAD; fi
+  expect_guard ask "git push origin HEAD" "$tmp/tagr"
+  expect_guard ask "git -C \"$tmp/tagr\" push origin HEAD" "$work"
   # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
   # lại trong vòng đọc nhánh) tốn thêm một lần git muộn, gần hạn chót của git_branch trên máy chậm (CI macOS PR #95:
   # `\"` ngoài nháy kép, ~70 KB, từng bị hỏi thừa với một mốc bắt đầu git cố định). Ghi thứ tự các lần gọi git và awk.
