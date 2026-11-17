@@ -858,7 +858,7 @@ EOF
   dd="$(printf 'cd ..; %.0s' $(seq 299))"
   out="$(bash_input "${dd}cd \"$on_main\" && git push origin HEAD" "$work" |
     PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
-  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  nrev="$(grep -cE 'rev-parse --abbrev-ref|symbolic-ref' "$tmp/gitlog.txt")"
   depth="$(cd "$work" && pwd -P | awk -F/ '{ print NF }')"
   assert "guard chỉ được đọc nhánh mỗi thư mục thật một lần [$mode]: 299 cd .. rồi cd nhánh chính → $nrev lần (sâu $depth)" \
     [ "$nrev" -ge 1 ] && [ "$nrev" -le $((depth + 2)) ]
@@ -879,7 +879,7 @@ EOF
   : > "$tmp/gitlog.txt"
   out="$(bash_input "$mc && git push origin HEAD" "$mono" |
     PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
-  nrev="$(grep -c 'rev-parse --abbrev-ref' "$tmp/gitlog.txt")"
+  nrev="$(grep -cE 'rev-parse --abbrev-ref|symbolic-ref' "$tmp/gitlog.txt")"
   assert "guard chỉ được đọc nhánh mỗi repo một lần (cộng lần đọc thư mục của phiên) [$mode]: 40 cd trong monorepo → $nrev lần" [ "$nrev" -le 2 ]
   assert "monorepo 40 cd rồi push lên nhánh feature phải cho qua [$mode] → $out" [ -z "$out" ]
   # Repo chỉ được nhớ khi đọc được nhánh: GIT_CEILING_DIRECTORIES chặn git tìm repo từ thư mục con, gốc repo ở main đọc sau.
@@ -937,6 +937,29 @@ EOF
   out="$(bash_input "cd \"$tmp/nogit\" && make && cd \"$work\" && git push origin HEAD" "$work" |
     PATH="$tmp/gitref:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
   assert "thư mục ngoài repo (git không đọc được nhánh, không có .git) không làm push hỏi thừa [$mode] → $out" [ -z "$out" ]
+  # Mỗi thư mục một lần gọi git, cả ở thư mục ngoài repo hay HEAD detached: symbolic-ref lỗi rồi gọi thêm rev-parse là hai
+  # lần, quá luật "tối đa một lần gọi git sau mốc cuối" (git chậm 2,6 giây: main hỏi sau 7,9 giây, bản hai lần quá 10 giây).
+  : > "$tmp/gitlog.txt"
+  out="$(bash_input "cd \"$work\" && git push origin HEAD" "$tmp/nogit" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  ngit="$(grep -c . "$tmp/gitlog.txt")"
+  # 3 lần: thư mục của phiên (ngoài repo, nhánh rỗng nên không nhớ) được đọc lại trong vòng đọc nhánh, như main.
+  assert "cwd ngoài repo rồi cd vào repo nhánh feature: một lần gọi git mỗi lần đọc nhánh [$mode] → $ngit lần" [ "$ngit" -le 3 ]
+  # HEAD detached: symbolic-ref mã 1, coi là HEAD, không gọi thêm rev-parse (bản gọi thêm: 4 lần).
+  if [ ! -d "$tmp/detr/.git" ]; then new_repo "$tmp/detr" feat/x; git -C "$tmp/detr" checkout -q --detach 2>/dev/null; fi
+  : > "$tmp/gitlog.txt"
+  out="$(bash_input "git push origin HEAD" "$tmp/detr" |
+    PATH="$tmp/gitlog:$PATH" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  ngit="$(grep -c . "$tmp/gitlog.txt")"
+  assert "HEAD detached: một lần gọi git mỗi lần đọc nhánh [$mode] → $ngit lần" [ "$ngit" -le 2 ]
+  assert "HEAD detached ở repo nhánh feature rồi push cho qua như main [$mode] → $out" [ -z "$out" ]
+  # Repo ở nhánh chính chưa có commit: `rev-parse --abbrev-ref HEAD` in "HEAD", nên lệnh tạo commit đầu rồi push lên main
+  # lọt (main cũng lọt; reviewer PR #93). Chưa có commit ở nhánh feature thì vẫn cho qua.
+  [ -d "$tmp/unbm/.git" ] || git init -q -b main "$tmp/unbm"
+  [ -d "$tmp/unbf/.git" ] || git init -q -b feat/x "$tmp/unbf"
+  expect_guard ask "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbm"
+  expect_guard ask "cd \"$tmp/unbm\" && git add -A && git commit -m init && git push -u origin HEAD" "$work"
+  expect_guard allow "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbf"
   # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
   # lại trong vòng đọc nhánh) tốn thêm một lần git muộn, gần hạn chót của git_branch trên máy chậm (CI macOS PR #95:
   # `\"` ngoài nháy kép, ~70 KB, từng bị hỏi thừa với một mốc bắt đầu git cố định). Ghi thứ tự các lần gọi git và awk.

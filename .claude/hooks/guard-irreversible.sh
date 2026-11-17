@@ -25,8 +25,12 @@ ask_exit() {
 }
 # Giữ lý do cụ thể đã có (luật đã khớp, thư mục ở main): vẫn hỏi, chỉ thôi đọc tiếp.
 budget() { [ "$SECONDS" -lt "$TMAX" ] || ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"; }
-# git_branch: in nhánh ở thư mục hiện tại (chạy trong $(…) sau cd), như git rev-parse --abbrev-ref HEAD; git chưa xong ở
-# giây GDEAD thì bị giết và in `?` (không là tên nhánh hợp lệ), người gọi hỏi với lý do ngân sách. Không dùng lệnh timeout
+# git_branch: in nhánh ở thư mục hiện tại (chạy trong $(…) sau cd); git chưa xong ở giây GDEAD thì bị giết và in `?` (không
+# là tên nhánh hợp lệ), người gọi hỏi với lý do ngân sách. symbolic-ref, không rev-parse --abbrev-ref: repo chưa có commit
+# thì rev-parse in "HEAD", không ra tên nhánh (reviewer PR #93). Mã 1 chỉ khi HEAD detached (rev-parse vốn in "HEAD"): in
+# HEAD. Mã khác (ngoài repo, git từ chối, repo hỏng) không in gì, như rev-parse, để git_unread/gm xét. Job nền là chính git
+# (không bọc subshell: thêm một fork, và giết nhóm hỏng thì kill pid chỉ giết subshell, git mồ côi giữ pipe của $(…);
+# reviewer), nên git bị giết (mã ≥ 129) ra `?`. Mỗi thư mục đúng một lần gọi git. Không dùng lệnh timeout
 # (macOS không có, Windows có thể gặp timeout.exe khác cú pháp) hay file tạm: git chạy nền, một subshell ngủ rồi giết nó;
 # subshell đó ghi ra /dev/null nên $(…) không đợi nó, bị giết khi git xong (sleep con của nó tự hết sau ≤ GDEAD giây).
 git_branch() {
@@ -35,13 +39,14 @@ git_branch() {
   # set -m (chỉ trong $(…) này): job nền có nhóm tiến trình riêng, giết cả nhóm để tiến trình con của git (hay của wrapper)
   # không giữ pipe của $(…). Giết nhóm không được thì giết git.
   set -m
-  git rev-parse --abbrev-ref HEAD 2>/dev/null &
+  git symbolic-ref --short -q HEAD 2>/dev/null &
   gp=$!
   { sleep "$t"; kill -- -"$gp" 2>/dev/null || kill "$gp"; } >/dev/null 2>&1 &
   wp=$!
   wait "$gp"
   rc=$?
   kill "$wp" 2>/dev/null
+  [ "$rc" -ne 1 ] || printf 'HEAD\n'
   [ "$rc" -lt 129 ] || printf '?'
   return 0
 }
