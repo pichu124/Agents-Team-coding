@@ -891,6 +891,21 @@ EOF
     *'nhánh main'* | *'git không đọc được nhánh'*) ok ;;
     *) bad "thư mục con bị GIT_CEILING_DIRECTORIES chặn rồi gốc repo ở main phải hỏi [$mode] → $out" ;;
   esac
+  # Hỏi thừa phụ thuộc thứ tự (4.3): thư mục con mà git không tìm ra repo (volume mount riêng như node_modules của
+  # devcontainer, ở đây giả lập bằng GIT_CEILING_DIRECTORIES) đọc trước gốc repo ở nhánh feature thì hỏi. Git ở thư mục đó
+  # không thấy repo nên push từ đó lỗi; gốc repo (tầng có .git) đọc ra nhánh feature thì phải cho qua.
+  mkdir -p "$work/nm"
+  out="$(bash_input "cd \"$work/nm\" && npm ci && cd \"$work\" && git push origin HEAD" "$work" |
+    GIT_CEILING_DIRECTORIES="$work" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  assert "thư mục con git không đọc được rồi gốc repo ở nhánh feature phải cho qua [$mode] → $out" [ -z "$out" ]
+  # Lệnh tự đặt GIT_DIR theo cách GDRE không đọc (printf -v, read) thì git ở thư mục con thấy repo khác: không đọc lại ở
+  # tầng có .git, hỏi như trước (reviewer PR #98; không ceiling thì main vẫn lọt, lỗ cũ).
+  out="$(bash_input "printf -v GIT_DIR %s \"$on_main/.git\"; export GIT_DIR; cd \"$work/nm\" && git push origin HEAD" "$work" |
+    GIT_CEILING_DIRECTORIES="$work" KIT_JSON_TOOL="$mode" "$hooks/guard-irreversible.sh")"
+  case "$out" in
+    *'"permissionDecision":"ask"'*) ok ;;
+    *) bad "GIT_DIR đặt bằng printf -v rồi push ở thư mục con git không đọc được phải hỏi [$mode] → $out" ;;
+  esac
   # Git còn dừng ở thư mục là git dir (có HEAD), không chỉ ở `.git`: repo bare lồng trong repo nhánh feature, và
   # `.git/worktrees/x` của worktree ở main, có cùng `.git` gần nhất với repo ngoài mà đọc ra main (reviewer).
   if [ ! -d "$tmp/nestb/bare.git" ]; then
