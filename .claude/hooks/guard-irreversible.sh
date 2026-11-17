@@ -954,6 +954,11 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
   CD_MAX=300 # số cd tối đa được đọc trong một cách đọc của lệnh push (4.3)
+  # Số phép gán biến liền nhau tối đa trước khi quét cd: tiền tố gán biến của CDA làm một lần grep của vòng quét cd bậc hai
+  # theo độ dài chuỗi gán (`x= `×66000: 0,4 giây ở máy 4 CPU, 5,1 giây ở một runner CI Linux, PR #96), mà một lần grep thì
+  # mốc budget không ngắt được. Đếm bằng awk (tuyến tính) trước grep; quá thì hỏi. asg[fx]: 1 nếu dạng fx quá, 0 nếu không.
+  ASSIGN_MAX=256
+  asg=()
   # Số lần ghép (git -C × thư mục cd đã gom) tối đa của cả lệnh, và số subshell đọc nhánh tối đa: 299 cd và 250 git -C từng
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
@@ -1118,6 +1123,14 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       if [ "$q" = e ]; then
         case "$f" in *'\"'*) ;; *) continue ;; esac
       fi
+      if [ -z "${asg[$fx]-}" ]; then
+        asg[$fx]=0
+        if [ "${#f}" -gt $((ASSIGN_MAX * 3)) ] && [ -n "$(printf '%s' "$f" | LC_ALL=C awk -v m="$ASSIGN_MAX" '
+            { for (i = 1; i <= NF; i++) if ($i ~ /^[A-Za-z_][A-Za-z0-9_]*=[^;&|]*$/) { if (++r > m) { print 1; exit } } else r = 0 }')" ]; then
+          asg[$fx]=1
+        fi
+      fi
+      [ "${asg[$fx]}" = 1 ] && ask_exit "${reason:-push sau hơn $ASSIGN_MAX phép gán biến liền nhau: không đọc hết các thư mục}"
       cur="$base"
       cl=("$base")
       ncd=0

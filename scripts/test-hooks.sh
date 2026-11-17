@@ -1831,6 +1831,10 @@ case "$out" in
   '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'}}') ok ;;
   *) bad "T-h: guard phải hỏi trước timeout khi grep quét cd chậm (long-xassign) → [$out] $(cat "$tmp/tb.err")" ;;
 esac
+# Trần không quá chặt: 250 phép gán liền nhau rồi push ở nhánh feature vẫn cho qua (không qua mode loop: một ca, grep thật).
+xs="$(printf 'x= %.0s' $(seq 250))"
+out="$(bash_input "${xs}git push origin feat/x" "$work" | KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh")"
+assert "250 phép gán liền nhau rồi push ở nhánh feature phải cho qua → $out" [ -z "$out" ]
 # Mốc đủ dày: ngưỡng 1 giây thì các ca nặng nhất (đo với bash 3.2 + awk BWK) hỏi trong 5 giây, tức không bước nào giữa hai
 # mốc chạy quá ~4 giây. Chỉ các ca này, không phải mọi ca long-*, để giữ thời gian CI Windows.
 for f in long-umix long-gitcq long-uquoteq long-ghm long-ansi long-assign long-xassignq long-uquote long-xassign long-xassignu long-colon long-uni long-gitcexp long-ansiesc long-shcp long-gitcuq; do
