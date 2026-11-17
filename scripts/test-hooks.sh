@@ -1845,7 +1845,14 @@ chmod +x "$tmp/tbgrep/grep"
   for _ in $(seq 60000); do printf '%s' 'x=\f'; done
   printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
 } > "$tmp/long-xassignf.json"
-for f in long-xassign long-xassignf; do
+# Chuỗi định danh dài không có = cũng làm lần grep đó chậm như long-xassign (blob base64 trong echo; reviewer PR #97): đếm
+# phép gán không bắt, nên lần grep phải có hạn chót.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"echo \\"' "$tmp"
+  for _ in $(seq 47500); do printf '%s' QUJD; done
+  printf '\\" > f && cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-blob.json"
+for f in long-xassign long-xassignf long-blob; do
   out="$(hook_limit env PATH="$tmp/tbgrep:$PATH" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>"$tmp/tb.err")"
   case "$out" in
     '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'}}') ok ;;
