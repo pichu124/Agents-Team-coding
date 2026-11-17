@@ -1310,6 +1310,12 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   budget
   nsub=0
   seen_git=""
+  # rr: được đọc lại nhánh ở tầng có `.git` (bên dưới). Lệnh có chữ GIT_ (mọi hoa thường: biến env của Windows không phân
+  # biệt) thì không: có thể tự đặt GIT_DIR theo cách GDRE không đọc (`printf -v GIT_DIR …; export GIT_DIR`), git ở thư mục
+  # con thấy repo khác (reviewer PR #98). GIT_DIR đặt qua file được source hay tên ghép thì vẫn lọt ở mọi thư mục như trước
+  # (lỗ cũ, 4.10).
+  rr=1
+  case "$raw" in *[Gg][Ii][Tt]_*) rr="" ;; esac
   for p in $phys; do
     budget
     [ -n "$reason" ] && break
@@ -1353,7 +1359,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # của devcontainer, git dừng ở ranh giới filesystem) hay GIT_CEILING_DIRECTORIES. Push từ đây lỗi vì git không thấy
     # repo, nên đọc nhánh ở tầng có `.git`: ra nhánh feature thì cho qua, ra nhánh chính hay rỗng (safe.directory, repo
     # hỏng) thì hỏi như trước. Trước đây hỏi khi thư mục này đọc trước gốc repo (hỏi thừa phụ thuộc thứ tự, 4.3).
-    if [ -z "$branch" ] && [ -n "$gr" ] && [ "$gr" != "$p" ]; then
+    if [ -n "$rr" ] && [ -z "$branch" ] && [ -n "$gr" ] && [ "$gr" != "$p" ]; then
       budget
       branch="$(CDPATH='' cd -P -- "$gr" 2>/dev/null && git_branch)"
       [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
