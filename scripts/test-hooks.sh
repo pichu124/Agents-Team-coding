@@ -960,6 +960,18 @@ EOF
   expect_guard ask "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbm"
   expect_guard ask "cd \"$tmp/unbm\" && git add -A && git commit -m init && git push -u origin HEAD" "$work"
   expect_guard allow "git add -A && git commit -m init && git push -u origin HEAD" "$tmp/unbf"
+  # Repo có cả tag lẫn nhánh tên main: symbolic-ref --short (như rev-parse --abbrev-ref) in "heads/main" cho khỏi nhập
+  # nhằng, regex nhánh chính so -x không khớp nên push lọt (main cũng lọt). Tag trùng tên nhánh feature vẫn cho qua.
+  if [ ! -d "$tmp/tagm/.git" ]; then new_repo "$tmp/tagm" main; gitc "$tmp/tagm" tag main; fi
+  if [ ! -d "$tmp/tagf/.git" ]; then new_repo "$tmp/tagf" feat/x; gitc "$tmp/tagf" tag feat/x; fi
+  expect_guard ask "git push origin HEAD" "$tmp/tagm"
+  expect_guard ask "cd \"$tmp/tagm\" && git push origin HEAD" "$work"
+  expect_guard allow "git push origin HEAD" "$tmp/tagf"
+  # Thêm ref $GIT_DIR/heads/main (`git update-ref heads/main HEAD`, gõ thiếu refs/; git nhận) thì in "refs/heads/main"
+  # (reviewer PR #96).
+  if [ ! -d "$tmp/tagr/.git" ]; then new_repo "$tmp/tagr" main; gitc "$tmp/tagr" tag main; gitc "$tmp/tagr" update-ref heads/main HEAD; fi
+  expect_guard ask "git push origin HEAD" "$tmp/tagr"
+  expect_guard ask "git -C \"$tmp/tagr\" push origin HEAD" "$work"
   # Lệnh push không cd: đọc nhánh của thư mục của phiên một lần, trước các bước nặng (awk). Đọc muộn (sau các dạng, rồi đọc
   # lại trong vòng đọc nhánh) tốn thêm một lần git muộn, gần hạn chót của git_branch trên máy chậm (CI macOS PR #95:
   # `\"` ngoài nháy kép, ~70 KB, từng bị hỏi thừa với một mốc bắt đầu git cố định). Ghi thứ tự các lần gọi git và awk.
