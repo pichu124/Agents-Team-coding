@@ -708,6 +708,10 @@ O='([[:space:]]+-([^[:space:]"'"'"']|"[^"]*"|'"'"'[^'"'"']*'"'"'|["'"'"'])+([[:s
 B='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|time|xargs|exec|nohup|env)[[:space:]])[[:space:]]*((sudo|doas|wsl)[[:space:]]+)?'
 G="git${O}${S}+"
 MAIN='(main|master|trunk|production|release)'
+# Nhánh hiện tại là nhánh chính: repo có cả tag lẫn nhánh tên main thì symbolic-ref --short in "heads/main" (khỏi nhập
+# nhằng), thêm ref $GIT_DIR/heads/main thì in "refs/heads/main" (reviewer PR #96); so -x với MAIN không khớp và push lọt.
+# MAIN còn dùng cho luật push thẳng nên không đổi nó.
+MAIN_BR="((refs/)?heads/)?$MAIN"
 # shellcheck disable=SC2016  # $HOME ở đây là ký tự cần khớp, không phải biến
 RMT='"?(/|/\*|~/?|~/\*|\$HOME/?|\$\{HOME\}/?|\.|\./|\.\.|\.\./|\*|\./\*)"?'
 
@@ -1012,7 +1016,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   skip_base=""
   # base có xuống dòng thì vòng phys (đọc dirs theo dòng) cắt nó, dòng đầu có thể là thư mục khác: không bỏ (reviewer).
   case "$base" in *"$nl"*) ;; *) [ -n "$branch" ] && skip_base=1 ;; esac
-  text_grep "$branch" -Eqx -- "$MAIN" && reason="push khi đang ở nhánh $branch"
+  text_grep "$branch" -Eqx -- "$MAIN_BR" && reason="push khi đang ở nhánh $branch"
   if [ -z "$reason" ] && [ -z "$branch" ] && git_unread "$base"; then
     reason="push trong repo mà git không đọc được nhánh (safe.directory, repo hỏng): có thể là nhánh chính"
   fi
@@ -1319,7 +1323,7 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
     # đường Windows cho git.exe, git -C báo lỗi, không đọc được nhánh và push lọt qua.
     branch="$(CDPATH='' cd -P -- "$p" 2>/dev/null && git_branch)"
     [ "$branch" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
-    if text_grep "$branch" -Eqx -- "$MAIN"; then
+    if text_grep "$branch" -Eqx -- "$MAIN_BR"; then
       reason="push khi đang ở nhánh $branch"
       break
     fi
