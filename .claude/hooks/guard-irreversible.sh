@@ -709,8 +709,9 @@ B='(^|[;&|(`"'"'"'{]|\$\(|(^|[[:space:]])(then|do|else|time|xargs|exec|nohup|env
 G="git${O}${S}+"
 MAIN='(main|master|trunk|production|release)'
 # Nhánh hiện tại là nhánh chính: repo có cả tag lẫn nhánh tên main thì symbolic-ref --short in "heads/main" (khỏi nhập
-# nhằng), so -x với MAIN không khớp và push lọt. MAIN còn dùng cho luật push thẳng nên không đổi nó.
-MAIN_BR="(heads/)?$MAIN"
+# nhằng), thêm ref $GIT_DIR/heads/main thì in "refs/heads/main" (reviewer PR #96); so -x với MAIN không khớp và push lọt.
+# MAIN còn dùng cho luật push thẳng nên không đổi nó.
+MAIN_BR="((refs/)?heads/)?$MAIN"
 # shellcheck disable=SC2016  # $HOME ở đây là ký tự cần khớp, không phải biến
 RMT='"?(/|/\*|~/?|~/\*|\$HOME/?|\$\{HOME\}/?|\.|\./|\.\.|\.\./|\*|\./\*)"?'
 
