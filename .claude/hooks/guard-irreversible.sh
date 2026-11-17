@@ -50,6 +50,26 @@ git_branch() {
   [ "$rc" -lt 129 ] || printf '?'
   return 0
 }
+# cd_scan <dạng> <locale> <mẫu>: in các cd của một dạng lệnh (grep quét cd rồi CDCUT), mỗi dòng một, như cách gọi thẳng;
+# chưa xong ở giây GDEAD thì cả pipeline bị giết và in thêm dòng `?` (CDCUT không bao giờ in dòng đó), người gọi hỏi với
+# lý do ngân sách. Một lần grep không ngắt được bằng mốc mà có thể bậc hai theo độ dài lệnh (tiền tố gán biến của CDA với
+# `x= `×66000, chuỗi định danh dài như blob base64 trong echo: 0,4 giây ở máy 4 CPU, 5,1 giây ở một runner CI Linux; PR #96,
+# reviewer PR #97). Cùng cách với git_branch (set -m chỉ trong $(…), giết cả nhóm); pipeline cần một subshell nên giết nhóm
+# hỏng thì kill pid chỉ giết subshell.
+cd_scan() {
+  local t=$((GDEAD - SECONDS)) gp wp rc
+  if [ "$t" -lt 1 ]; then printf '?\n'; return 0; fi
+  set -m
+  { printf '%s' "$1" | LC_ALL="$2" grep -Eio -- "$3" | LC_ALL=C awk "$CDCUT"; } &
+  gp=$!
+  { sleep "$t"; kill -- -"$gp" 2>/dev/null || kill "$gp"; } >/dev/null 2>&1 &
+  wp=$!
+  wait "$gp"
+  rc=$?
+  kill "$wp" 2>/dev/null
+  [ "$rc" -lt 129 ] || printf '\n?\n'
+  return 0
+}
 
 input="$(cat)"
 # Trần RAW_MAX trên input thô, trước mọi bước đọc: đọc JSON, các dạng nối dòng và rule grep chạy trên cả lệnh, lệnh ~2 MB
@@ -958,13 +978,6 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
   # Push-Location của PowerShell (kể cả -Path x, -Path:x, -PassThru).
   CDS='(cd|chdir|pushd|sl|set-location|push-location)'
   CD_MAX=300 # số cd tối đa được đọc trong một cách đọc của lệnh push (4.3)
-  # Số phép gán biến liền nhau tối đa trước khi quét cd: tiền tố gán biến của CDA làm một lần grep của vòng quét cd bậc hai
-  # theo độ dài chuỗi gán (`x= `×66000: 0,4 giây ở máy 4 CPU, 5,1 giây ở một runner CI Linux, PR #96), mà một lần grep thì
-  # mốc budget không ngắt được. Đếm bằng awk (tuyến tính) trước grep; quá thì hỏi. asg[fx]: 1 nếu dạng fx quá, 0 nếu không.
-  # Field tách theo [[:space:]]+ như CDA (FS mặc định không nhận \f, \v, \r: `x=\f`×60000 lọt; reviewer PR #97), bỏ field
-  # rỗng (khoảng trắng đầu dòng) để chuỗi gán qua nhiều dòng thụt lề vẫn đếm liền.
-  ASSIGN_MAX=256
-  asg=()
   # Số lần ghép (git -C × thư mục cd đã gom) tối đa của cả lệnh, và số subshell đọc nhánh tối đa: 299 cd và 250 git -C từng
   # mất 15 giây (bash 3.2 quá 60), mỗi thư mục có `..` tốn tới hai subshell chạy git (reviewer PR #55). Quá thì hỏi.
   GC_MAX=10000
@@ -1129,21 +1142,14 @@ if [ -z "$reason" ] && { LC_ALL=C text_grep "$cmd" -Eiq -- "${G}push" ||
       if [ "$q" = e ]; then
         case "$f" in *'\"'*) ;; *) continue ;; esac
       fi
-      if [ -z "${asg[$fx]-}" ]; then
-        asg[$fx]=0
-        if [ "${#f}" -gt $((ASSIGN_MAX * 3)) ] && [ -n "$(printf '%s' "$f" | LC_ALL=C awk -F '[[:space:]]+' -v m="$ASSIGN_MAX" '
-            { for (i = 1; i <= NF; i++) if ($i == "") continue; else if ($i ~ /^[A-Za-z_][A-Za-z0-9_]*=[^;&|]*$/) { if (++r > m) { print 1; exit } } else r = 0 }')" ]; then
-          asg[$fx]=1
-        fi
-      fi
-      [ "${asg[$fx]}" = 1 ] && ask_exit "${reason:-push sau hơn $ASSIGN_MAX phép gán biến liền nhau: không đọc hết các thư mục}"
       cur="$base"
       cl=("$base")
       ncd=0
       # Locale theo flc (ở trên): tiền tố gán biến của CDA (`x= `×66000) bậc hai ở locale UTF-8. Dạng có khoảng trắng Unicode
       # hay ſ, ı giữ locale gốc: dạng đổi sang ASCII (un) đổi cả chữ trong tên thư mục (en dash, nháy cong), nên dạng gốc vẫn
       # phải khớp `Set-Location<U+3000>'proj–x'` hay `ſl 'proj–x'` (reviewer PR #74).
-      for m in $(printf '%s' "$f" | LC_ALL="${flc[$fx]}" grep -Eio -- "${CDA}${CDRE}" | LC_ALL=C awk "$CDCUT"); do
+      for m in $(cd_scan "$f" "${flc[$fx]}" "${CDA}${CDRE}"); do
+        [ "$m" = '?' ] && ask_exit "${reason:-không kiểm kịp trong $TMAX giây (máy chậm hay lệnh dài)}"
         # Mỗi cd tốn một lượt thông dịch bash (không fork), Git Bash chậm gấp đôi Linux: 1500 cd từng mất ~7 giây trên runner
         # Windows, 6000 quá timeout trên Linux (4.3). Quá CD_MAX cd thì thôi đọc và hỏi: lệnh thật ít khi cd nhiều như vậy.
         budget

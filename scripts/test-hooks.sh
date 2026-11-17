@@ -1833,7 +1833,7 @@ rm -f "$tmp/tbgit46.once"
 tb_guard ask 'T-g: không bắt đầu git chậm sau mốc' "cd \"$tmp/tbslow\" && git push origin HEAD" PATH="$tmp/tbgit46:$PATH"
 # Một lần grep của vòng quét cd cũng không ngắt được: tiền tố gán biến của CDA (`x= `×66000, long-xassign) làm nó bậc hai,
 # 0,4 giây ở máy 4 CPU nhưng 5,1 giây ở một runner CI Linux (hai dạng là quá 10 giây; PR #96); máy chậm hơn thì một lần là
-# quá. grep giả ngủ 11 giây khi mẫu là mẫu quét cd: guard phải hỏi trước timeout mà không chạy lần grep đó.
+# quá. grep giả ngủ 11 giây khi mẫu là mẫu quét cd: cd_scan giết nó ở giây TMAX + 2, guard hỏi trước timeout.
 mkdir -p "$tmp/tbgrep"
 printf '#!/bin/sh\ncase "$*" in *"[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*"*) sleep 11 ;; esac\nexec "%s" "$@"\n' \
   "$(command -v grep)" > "$tmp/tbgrep/grep"
@@ -1859,7 +1859,7 @@ for f in long-xassign long-xassignf long-blob; do
     *) bad "T-h: guard phải hỏi trước timeout khi grep quét cd chậm ($f) → [$out] $(cat "$tmp/tb.err")" ;;
   esac
 done
-# Trần không quá chặt: 250 phép gán liền nhau rồi push ở nhánh feature vẫn cho qua (không qua mode loop: một ca, grep thật).
+# Chuỗi gán dài mà grep thật xong kịp vẫn đọc như thường: 250 phép gán liền nhau rồi push ở nhánh feature cho qua.
 xs="$(printf 'x= %.0s' $(seq 250))"
 out="$(bash_input "${xs}git push origin feat/x" "$work" | KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh")"
 assert "250 phép gán liền nhau rồi push ở nhánh feature phải cho qua → $out" [ -z "$out" ]
