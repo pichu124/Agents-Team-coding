@@ -1826,11 +1826,20 @@ mkdir -p "$tmp/tbgrep"
 printf '#!/bin/sh\ncase "$*" in *"[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*"*) sleep 11 ;; esac\nexec "%s" "$@"\n' \
   "$(command -v grep)" > "$tmp/tbgrep/grep"
 chmod +x "$tmp/tbgrep/grep"
-out="$(hook_limit env PATH="$tmp/tbgrep:$PATH" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" < "$tmp/long-xassign.json" 2>"$tmp/tb.err")"
-case "$out" in
-  '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'}}') ok ;;
-  *) bad "T-h: guard phải hỏi trước timeout khi grep quét cd chậm (long-xassign) → [$out] $(cat "$tmp/tb.err")" ;;
-esac
+# Phép gán ngăn bằng \f (hay \v, \r) cũng là [[:space:]] của CDA nhưng awk tách field mặc định không nhận (reviewer PR #97):
+# long-xassignf như long-xassign với \f thay khoảng trắng.
+{
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"' "$tmp"
+  for _ in $(seq 60000); do printf '%s' 'x=\f'; done
+  printf '&& cd \\"main repo\\" && git push origin HEAD","description":"test"}}\n'
+} > "$tmp/long-xassignf.json"
+for f in long-xassign long-xassignf; do
+  out="$(hook_limit env PATH="$tmp/tbgrep:$PATH" KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh" < "$tmp/$f.json" 2>"$tmp/tb.err")"
+  case "$out" in
+    '{"hookSpecificOutput":{'*'"permissionDecision":"ask"'*'}}') ok ;;
+    *) bad "T-h: guard phải hỏi trước timeout khi grep quét cd chậm ($f) → [$out] $(cat "$tmp/tb.err")" ;;
+  esac
+done
 # Trần không quá chặt: 250 phép gán liền nhau rồi push ở nhánh feature vẫn cho qua (không qua mode loop: một ca, grep thật).
 xs="$(printf 'x= %.0s' $(seq 250))"
 out="$(bash_input "${xs}git push origin feat/x" "$work" | KIT_JSON_TOOL=auto "$hooks/guard-irreversible.sh")"
