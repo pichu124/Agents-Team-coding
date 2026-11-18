@@ -2022,6 +2022,11 @@ MISSED_28 = [
     ("rm -rf {/tmp/x\\},/home}", "xoá đệ quy", "`\\}` là chữ: brace thành /tmp/x} và /home"),
     ("rm -rf {/home,\"/tmp/x /tmp/y\"}", "xoá đệ quy", "khoảng trắng trong nháy không tách từ: brace thành /home và một đích"),
     ("rm -rf -- {-src,/tmp/a}", "xoá đệ quy", "sau `--`, -src là đích: xoá ./-src của dự án"),
+    # Oracle 2.8 (var_trap3) tìm ra: `\\|` làm SPLIT tách, `#b` sau nó bị coi là đầu comment nên cách đọc pure bỏ cả dòng.
+    ("echo a\\|#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\|#b` là một từ, `#` không mở comment: nhóm sau || không chạy, xoá src của dự án"),
+    ("echo a\\;#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\;#b` là một từ, `#` không mở comment: xoá src của dự án"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
