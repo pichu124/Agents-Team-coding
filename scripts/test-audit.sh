@@ -2027,6 +2027,11 @@ MISSED_28 = [
      "`a\\|#b` là một từ, `#` không mở comment: nhóm sau || không chạy, xoá src của dự án"),
     ("echo a\\;#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
      "`a\\;#b` là một từ, `#` không mở comment: xoá src của dự án"),
+    # Reviewer PR #102: số `\\` lẻ từ 3 trở lên, khoảng trắng thoát trước `#`.
+    ("echo a\\\\\\|#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\\\\\|#b`: `\\\\` rồi `\\|`, `#` giữa từ: xoá src của dự án"),
+    ("echo a\\\\\\ #b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\\\\\ #b`: khoảng trắng thoát, `#` giữa từ: xoá src của dự án"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
