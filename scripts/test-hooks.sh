@@ -644,6 +644,13 @@ EOF
   expect_guard ask "# x\\${nl}c\$()d '$on_main' && git push origin HEAD"
   expect_guard ask "echo a # x\\${nl}\$X '$on_main' && git push origin HEAD"
   expect_guard allow "echo a \\${nl}\$X && git push origin HEAD"
+  # Reviewer PR #101: `{` là vị trí lệnh; `"` trong thân here-doc của `"$(cat <<'EOF' …)"`, mảng, số học thì không hỏi.
+  expect_guard ask "X=cd; { \$X '$on_main' && git push origin HEAD; }"
+  expect_guard ask "f() { \$X '$on_main'; }; f; git push origin HEAD"
+  expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}fix: 5\" display${nl}\`make test\` passes${nl}EOF${nl})\" && git push origin HEAD"
+  expect_guard allow "git commit -m \"\$(printf '%s\\n' \"line; \$USER\" b)\" && git push origin HEAD"
+  expect_guard allow "files=(\$(git diff --name-only)); git push origin HEAD"
+  expect_guard allow "n=\$(( \$n + 1 )); echo \$(( \$(date +%s) - n ))s && git push origin HEAD"
   expect_guard allow "V=\$(cat VERSION) && git push origin HEAD"
   expect_guard allow "echo \"a; \$(date)\" && git push origin HEAD"
   expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}\$ npm test${nl}\`make test\` ok${nl}EOF${nl})\" && git push origin HEAD"
