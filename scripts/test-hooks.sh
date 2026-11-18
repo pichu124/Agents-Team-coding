@@ -631,6 +631,20 @@ EOF
   expect_guard ask "echo \"\$(case x in x) echo '\"' ;; esac)\"${nl}echo '\`'; cd\` \` '$on_main' && git push"
   expect_guard ask "echo \$(date)#x; echo '\`'; c\`:\`d '$on_main' && git push"
   expect_guard ask "echo \$(date)#x; echo '\`'; cd\`:\` '$on_main' && git push"
+  # Tên lệnh do mở rộng sinh ra ở vị trí lệnh (4.10, cùng lớp với eval): `$(echo cd) M`, `` `echo${IFS}cd` M ``, `X=cd; $X M`,
+  # `c$( (:) )d M` (ngoặc trong $(…)), `c$(:` ⏎ `)d M` ($(…) trải nhiều dòng), comment kết thúc bằng `\` (bash không nối dòng
+  # trong comment): thư mục của push chưa biết, phải hỏi (main lọt cả sáu). Phép gán `V=$(cat V)`, chuỗi trong nháy kép hay
+  # thân here-doc có `$`, backtick ở đầu dòng thì không.
+  expect_guard ask "\$(echo cd) '$on_main' && git push origin HEAD"
+  expect_guard ask "\`echo\${IFS}cd\` '$on_main' && git push origin HEAD"
+  expect_guard ask "X=cd; \$X '$on_main' && git push origin HEAD"
+  expect_guard ask "X=cd; \${X} '$on_main' && git push origin HEAD"
+  expect_guard ask "c\$( (:) )d '$on_main' && git push origin HEAD"
+  expect_guard ask "c\$(:${nl})d '$on_main' && git push origin HEAD"
+  expect_guard ask "# x\\${nl}c\$()d '$on_main' && git push origin HEAD"
+  expect_guard allow "V=\$(cat VERSION) && git push origin HEAD"
+  expect_guard allow "echo \"a; \$(date)\" && git push origin HEAD"
+  expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}\$ npm test${nl}\`make test\` ok${nl}EOF${nl})\" && git push origin HEAD"
   expect_guard ask "((true); true)${nl}cat <<EOF${nl}don't${nl}EOF${nl}echo '\`'; c\`:\`d '$on_main' && git push"
   # Reviewer PR #62 lần 6: cờ số học theo độ sâu ngoặc (không theo dòng), $[ tắt ở ]; cờ shell do lệnh con sinh ra.
   expect_guard ask "((1${nl}<<2))${nl}echo '\`'; c\`:\`d '$on_main' && git push"
