@@ -2953,7 +2953,9 @@ if [ -z "$base_why" ]; then
     base_why="không có scripts/test-audit.sh ở $ref"
   fi
 fi
-"$py" -I -B - "$tmp/oracle" "$base_test" "$base_why" "$grid" <<'PYEOF' || status=1
+# Cùng khối chạy lại với zsh làm shell ngoài cùng khi máy có zsh (2.5; shell mặc định của macOS): ngữ pháp và mô hình là
+# của bash, mục A phải báo mọi lệnh zsh thật xoá ngoài thư mục tạm.
+cat > "$tmp/oracle.py" <<'PYEOF'
 import ast, glob, importlib.util, json, os, queue, random, re, shutil, signal, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 for s in (sys.stdout, sys.stderr):
@@ -2990,6 +2992,13 @@ KNOWN_GAPS = [
 "biến môi trường kế thừa (bash chạy với env chỉ có HOME, PATH, LC_ALL và hàm chặn rm, git)",
 "delimiter heredoc không phải `[A-Za-z_]\\w*` (`EOF.x`, `EOF-1`), dòng kết thúc CRLF",
 ]
+# Shell ngoài cùng: bash, hay zsh (KIT_ORACLE_SHELL=zsh). Lệnh lồng (`bash -c`, `sh <<EOF`) vẫn chạy bằng chính shell đó.
+SH = os.environ.get("KIT_ORACLE_SHELL", "bash")
+TAG = "oracle " + SH
+if SH == "zsh":
+    # Đo trên zsh 5.9 (cùng ngữ pháp): lô chung 3918/7090 lệnh nguy (847 từ hàm lst thứ hai, 352 từ var_trap2), lô PR8 1739,
+    # lưới 1435; zsh không tách từ $D không nháy nên ít lệnh nguy hơn bash. Sàn riêng, chỉ được nâng như sàn của bash.
+    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2 = 3800, 800, 340
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
@@ -3032,19 +3041,24 @@ for c in known:
 
 def finish(note):
     for f in fails:
-        print("✘ audit: oracle bash:", f, file=sys.stderr)
+        print(f"✘ audit: {TAG}:", f, file=sys.stderr)
     if note:
         print(note)
     sys.exit(1 if fails else 0)
 
 # Cổng chung (mọi lô).
 if os.name == "nt" or not re.fullmatch(r"[A-Za-z0-9_./-]+", sbx):
-    finish(f"• audit: bỏ qua oracle bash (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
-bash = shutil.which("bash")
+    finish(f"• audit: bỏ qua {TAG} (cần đường tạm POSIX không phải đặt trong nháy, có {sbx!r})")
+bash = shutil.which(SH)  # tên cũ: shell ngoài cùng của oracle
 if not bash or not shutil.which("cat"):
-    finish("• audit: bỏ qua oracle bash (thiếu bash hoặc cat)")
-ver = subprocess.run([bash, "-c", "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    finish(f"• audit: bỏ qua {TAG} (thiếu {SH} hoặc cat)")
+ver = subprocess.run([bash, "-c", "echo $ZSH_VERSION" if SH == "zsh" else "echo ${BASH_VERSION%%(*}"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                      universal_newlines=True, timeout=30).stdout.strip()
+# Lô PR8 và lưới gọi bash, sh lồng bên trong (KNOWN_MISSES lập trên bash 5.2, 5.3 và dash): cổng theo bash của máy, cả khi
+# shell ngoài cùng là zsh (macOS có zsh 5.9 nhưng bash 3.2, sh là bash 3.2).
+bver = ver if SH == "bash" else (subprocess.run([shutil.which("bash") or "bash", "-c", "echo ${BASH_VERSION%%(*}"],
+                                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, universal_newlines=True,
+                                                timeout=30).stdout.strip() if shutil.which("bash") else "")
 os.makedirs(sbx)
 root = os.path.realpath(sbx)
 # Cổng riêng của lô PR8 và lưới: không đạt thì chỉ hai lô đó bị bỏ qua.
@@ -3055,8 +3069,8 @@ elif sys.platform.startswith(("cygwin", "msys")):
     skip8 = "không chạy trên Windows"
 elif not shutil.which("sh"):
     skip8 = "thiếu sh"
-elif not ver.split(".")[0].isdigit() or int(ver.split(".")[0]) < 5:
-    skip8 = f"cần bash 5+, máy có bash {ver or '?'}"
+elif not bver.split(".")[0].isdigit() or int(bver.split(".")[0]) < 5:
+    skip8 = f"cần bash 5+, máy có bash {bver or '?'}"
 elif not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
     skip8 = f"đường thư mục tạm có ký tự lạ: {root!r}"
 else:
@@ -3068,7 +3082,7 @@ else:
             break
         d = os.path.dirname(d)
 if skip8:
-    print(f"• audit: oracle bash: bỏ qua lô PR8, lưới thân <<EOF và lưới phép gán ({skip8})")
+    print(f"• audit: {TAG}: bỏ qua lô PR8, lưới thân <<EOF và lưới phép gán ({skip8})")
 
 # Bộ sinh cố định: 1–4 dòng, mỗi dòng 1–3 lệnh nối bằng && ; || |, lệnh cuối là lõi `rm -rf <đích>` hay một thân -c. Cấu
 # trúc từng làm phân tích đọc sai: nối dòng, comment có `'` lẻ, heredoc đưa vào shell hay làm dữ liệu, bash -c có biến và lồng
@@ -3405,6 +3419,8 @@ wait() {
 }
 export -f cd pushd popd echo wait
 """
+if SH != "bash":
+    PRELUDE = PRELUDE.replace("export -f cd pushd popd echo wait\n", "")  # chỉ bash có export -f
 
 # Chỗ chạy: p là thư mục dự án giả của lô PR8 (cwd, có src để `cd src && rm …` chạy thật), tmp thay cho /tmp (mục A đọc
 # `/tmp/w`, bash chạy ở <chỗ>/tmp/w), stub ghi mỗi lần gọi ra một file riêng (các khâu của ống chạy song song). Lô chung chạy
@@ -3426,8 +3442,11 @@ for tool in ("bash", "sh", "cat"):
 BLOCK = "() { echo 'oracle: gọi rm hay git thật' >&2; return 127; }"
 with open(os.path.join(root, "chan.sh"), "w") as fh:
     fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")))
+# zsh bỏ qua BASH_FUNC_* và BASH_ENV: hàm chặn cho zsh nằm trong $ZDOTDIR/.zshenv (zsh đọc ở mọi lần chạy, kể cả -c). Thiếu
+# nó thì `PATH=/usr/bin:/bin; ${X}m …` gọi rm thật (bước tự kiểm dưới bắt được, PR thêm oracle zsh).
+shutil.copy(os.path.join(root, "chan.sh"), os.path.join(root, ".zshenv"))
 env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
-       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh")}
+       "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh"), "ZDOTDIR": root}
 env_chung = dict(env, HOME=HOME)  # lô chung có `cd ~`, `~/x`: HOME phải có thật
 def setup(k):
     base = os.path.join(root, str(k))
@@ -3637,7 +3656,7 @@ shutil.rmtree(root, ignore_errors=True)
 el = time.monotonic() - t0
 
 # Lô PR8 và lưới.
-model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d]
+model = [(why, c, bad) for c, d, why, _err, _calls, bad in gres if bool(bad) != d and (SH == "bash" or bad)]
 if model:
     fails.append(f"lưới thân <<EOF và lưới phép gán: bash thật khác mô hình ở {len(model)}/{len(grid)} lệnh (sửa lưới):\n"
                  + "\n".join(f"  {why}: {c!r}: bash xoá đệ quy {bad or 'không gì'}" for why, c, bad in model[:5]))
@@ -3670,7 +3689,7 @@ if misses:
 if not skip8:
     for c in known:  # mục A vẫn không báo, mà bash ở máy này không xoá gì ngoài thư mục tạm (sh khác dash?): chỉ ghi chú
         if c not in hit and not labels(c):
-            print(f"• audit: oracle bash: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
+            print(f"• audit: {TAG}: ca trong KNOWN_MISSES không tái hiện trên máy này: {c!r}")
 
 # Lô chung.
 danger, miss, timeouts, refused = 0, [], [], []
@@ -3697,14 +3716,14 @@ a.CANDIDATES = False
 fp_base = sum("xoá đệ quy" in a.suspicious_labels(c, a.SUSPICIOUS) for c in safe)
 a.CANDIDATES = True
 fp_head = sum("xoá đệ quy" in labels(c) for c in safe)
-print(f"• audit: oracle bash: báo thừa lô chung: {fp_base} → {fp_head} trên {len(safe)} lệnh an toàn có gọi rm "
+print(f"• audit: {TAG}: báo thừa lô chung: {fp_base} → {fp_head} trên {len(safe)} lệnh an toàn có gọi rm "
       "(tập ứng viên tắt → bật)")
 short = lambda s: s.replace(sbx, "$SBX")
 out = []  # dòng ✘ của lô chung, in sau dòng ✘ của lô PR8
 for c in timeouts[:5]:
-    out.append(f"✘ audit: oracle bash: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}")
+    out.append(f"✘ audit: {TAG}: lệnh chạy quá 10 giây (log có thể thiếu): {short(c)!r}")
 for c in refused[:5]:
-    out.append(f"✘ audit: oracle bash: văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp, không chạy: "
+    out.append(f"✘ audit: {TAG}: văn bản chạy còn rm, git, lệnh bị cấm hay cách gọi lệnh gián tiếp, không chạy: "
                f"{short(c)!r}")
 if miss:
     out.append(f"✘ audit: mục A bỏ sót {len(miss)}/{danger} lệnh mà bash thật xoá ngoài thư mục tạm/build ($SBX={sbx}, cwd "
@@ -3719,11 +3738,11 @@ if miss:
                "thêm ca ngắn nhất vào fixture. Đừng bỏ cấu trúc khỏi ngữ pháp và đừng ghi thêm vào KNOWN_GAPS hay "
                "KNOWN_MISSES: hai danh sách chỉ được giảm. AUDIT_LOST_ALL=1 in đủ.")
 if danger < ORACLE_FLOOR:
-    out.append(f"✘ audit: oracle bash chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa "
+    out.append(f"✘ audit: {TAG} chỉ sinh {danger} lệnh nguy hiểm, dưới sàn ORACLE_FLOOR={ORACLE_FLOOR}. Ngữ pháp vừa "
                "bị thu nhỏ hay bash chạy khác đi. Thêm cấu trúc vào ngữ pháp (hay trả lại cấu trúc đã bỏ) cho đủ sàn; đừng hạ "
                "sàn.")
 if danger_extra < ORACLE_FLOOR_EXTRA:
-    out.append(f"✘ audit: lệnh thêm của oracle bash (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
+    out.append(f"✘ audit: lệnh thêm của {TAG} (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
                f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác "
                "đi. Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
 if danger_trap2 < ORACLE_FLOOR_TRAP2:
@@ -3731,7 +3750,7 @@ if danger_trap2 < ORACLE_FLOOR_TRAP2:
                f"ORACLE_FLOOR_TRAP2={ORACLE_FLOOR_TRAP2}. Lô hay hàm var_trap2 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
                "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
 for f in fails:
-    print("✘ audit: oracle bash:", f, file=sys.stderr)
+    print(f"✘ audit: {TAG}:", f, file=sys.stderr)
 for line in out:
     print(line, file=sys.stderr)
 if fails or out:
@@ -3739,12 +3758,19 @@ if fails or out:
 pr8 = "" if skip8 else (
     f"; lô PR8: {len(fcmds)} lệnh fuzz, {fdanger} lệnh xoá đích ngoài thư mục tạm, mục A báo cả, trừ {len(hit)} ca trong "
     f"KNOWN_MISSES; lưới thân <<EOF và lưới phép gán: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
-print(f"✔ audit: oracle bash: {len(tasks)} lệnh chạy bằng bash {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
+print(f"✔ audit: {TAG}: {len(tasks)} lệnh chạy bằng {SH} {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
       f"{danger} lệnh xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ "
       f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
       f"KNOWN_GAPS chỉ được giảm: {ratchet} ({el:.0f} giây)")
 PYEOF
+"$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
 rm -rf "$tmp/oracle"
+if command -v zsh >/dev/null 2>&1; then
+  KIT_ORACLE_SHELL=zsh "$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
+  rm -rf "$tmp/oracle"
+else
+  echo "• audit: bỏ qua oracle zsh (thiếu zsh)"
+fi
 
 # Bất biến khi có bản chép: worker khởi động lại hay resume chép phiên sang file khác, các dòng giữ uuid. Bộ đếm cộng dồn
 # đếm chúng hai lần; đã vá từng bộ một (3e86d90 mục I/J, PR #1 mục E/F, rồi old_entries_skipped) vì không test nào canh
