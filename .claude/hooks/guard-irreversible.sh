@@ -432,6 +432,7 @@ lex_awk='BEGIN { hh = 1 }
   if (hh <= nh) {
     l = $0; if (ht[hh]) sub(/^\t+/, "", l)
     if (l == hq[hh]) { hh++; print; next }
+    if (dqm && hs[hh] && index(l, hq[hh]) == 1 && substr(l, length(hq[hh]) + 1) ~ /^[ \t]*\)/) { hh++; print "$_"; next }
     gsub(/[`$(){}\\]/, "_"); print; next
   }
   nh = 0; hh = 1; pd = 0; bd = 0; pp = 0
@@ -446,11 +447,12 @@ lex_awk='BEGIN { hh = 1 }
       else if (index("`$(){}", c)) c = "_"
     }
     else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; else if (dm && st == 2 && d == "\"") d = "\002"; c = c d }
+    else if (dqm && st == 2 && c == "$" && ch[i + 1] == "$") { i++; c = "__" }
     else if (dqm && st == 2 && !(c == "$" && ch[i + 1] == "(")) { if (c == "\"") st = 0; else if (index("$`;&|(", c)) c = "_" }
     else if (st == 5) { if (c == "`") st = bq }
     else if (c == "$" && ch[i + 1] == "(") {
       sp++; sk[sp] = st; pc[sp] = 0; if (!ov) { sv[sp] = sb; bv[sp] = bd; sb = 0; bd = 0 }; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
-      printf "%s", "$("; i++; continue
+      printf "%s", (dqm && sk[sp] == 2) ? "\"$(" : "$("; i++; continue
     }
     else if (c == "`") { bq = st; st = 5 }
     else if (st == 2) { if (c == "\"") st = 0 }
@@ -465,29 +467,38 @@ lex_awk='BEGIN { hh = 1 }
     else if (c == "\"") st = 2
     else if (c == "}" && bd) bd--
     else if (c == "(") { if (ch[i + 1] == "(" && !ar && !bd) { ar = 1; ad = gd }; gd++; if (sp) pc[sp]++ }
-    else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { st = sk[sp]; if (!ov) { sb = sv[sp]; bd = bv[sp] }; sp--; pp = i } }
+    else if (c == ")") { if (gd > 0) gd--; if (ar && gd <= ad) ar = 0; if (sp && pc[sp]) pc[sp]--; else if (sp) { if (dqm && nh && hs[nh] >= sp) hz = 1; st = sk[sp]; if (!ov) { sb = sv[sp]; bd = bv[sp] }; sp--; pp = i } }
     else if (c == "#" && !bd && (pp != i - 1 || (dqm && i == 1)) && (i == 1 || index(" \t;&|()", ch[i - 1]))) { st = 4; break }
     else if (c == "<" && !ar && !sb && i + 1 < n && ch[i + 1] == "<" && ch[i + 2] != "<" && (i == 1 || ch[i - 1] != "<")) {
       j = i + 2; t = 0; w = ""
       if (ch[j] == "-") { t = 1; j++ }
       while (j <= n && (ch[j] == " " || ch[j] == "\t")) j++
       for (; j <= n && !index(" \t;&|\074\076()", ch[j]); j++) if (!index("\047\"\\", ch[j]) && length(w) <= 256) w = w ch[j]
-      if (w != "" && length(w) <= 256) { nh++; hq[nh] = w; ht[nh] = t }
+      if (w != "" && length(w) <= 256) { nh++; hq[nh] = w; ht[nh] = t; hs[nh] = sp }
       for (; i < j; i++) printf "%s", ch[i]
       i--; continue
     }
     printf "%s", c
   }
   print ""
+  if (hz) { print "$_"; hz = 0 }
 }'
-# Cờ dqm = 1: trong "…" cũng che $ (trừ `$(`, vẫn mở tầng như ngoài nháy), backtick và `;&|(` thành _, `#` ở cột 1 cũng mở
-# comment; cho đường tìm tên lệnh do mở rộng sinh ra (cw, cổng push): chỉ từ ở vị trí lệnh ngoài mọi nháy mới tính.
+# Cờ dqm = 1: trong "…" cũng che $ (trừ `$(`, vẫn mở tầng như ngoài nháy và in thành `"$(`; `$$` che cả hai), backtick
+# và `;&|(` thành _, `#` ở cột 1 cũng mở comment; here-doc mở trong $(…) mà đóng ở `EOF)` hay $(…) đóng cùng dòng mở
+# here-doc (bash 3.2, zsh, bash 5 đọc khác nhau) thì in dòng `$_` để đường cw hỏi; cho đường tìm tên lệnh do mở rộng sinh ra (cw, cổng push): chỉ từ ở vị trí lệnh ngoài mọi nháy mới tính.
 # cj_awk: sau lex_awk (comment đã bỏ, `\` trong nháy đơn và thân here-doc đã che), nối dòng kết thúc bằng số lẻ `\` như bash
 # (`git \` ⏎ ``pu``sh`` là một lệnh); `# x\` ⏎ `c$()d M` thì không nối (bash không nối dòng trong comment).
 cj_awk='{ k = length($0); while (k > 0 && substr($0, k, 1) == "\\") k--
   if ((length($0) - k) % 2) { b = b substr($0, 1, length($0) - 1); next }
   print b $0; b = "" }
 END { if (b != "") print b }'
+# ar_awk: che `((` (cả trong `$((`) thành __ khi nó mở số học thật (hai `)` khớp nằm liền nhau trên cùng dòng). In từng
+# đoạn, không nối chuỗi dài.
+ar_awk='{ n = length($0); q = 0; split("", cl)
+  for (i = 1; i <= n; i++) { c = substr($0, i, 1); if (c == "(") ps[++q] = i; else if (c == ")" && q) cl[ps[q--]] = i }
+  k = 1
+  for (i = 1; i < n; i++) if ((i in cl) && ((i + 1) in cl) && cl[i] == cl[i + 1] + 1) { printf "%s__", substr($0, k, i - k); k = i + 2; i++ }
+  print substr($0, k) }'
 # CWA: vị trí lệnh (đầu dòng, sau ; & | (, sau từ khoá hay lệnh đứng trước lệnh khác); CWW: từ có $ hay backtick ở đó.
 CWK='(then|do|else|elif|if|while|until|time|!|exec|eval|command|builtin|nohup|sudo|xargs|[{])'
 CWA="(^|[;&|(]|(^|[[:space:]])${CWK}[[:space:]])[[:space:]]*"
@@ -703,7 +714,7 @@ case "$raw" in
     # (`V=$(cat V)`) không tính. Còn lọt: tên lệnh trong nháy kép (`"$X" M`), sau phép gán tạm (`A=1 $X M`).
     budget
     cw="$(printf '%s\n' "$raw" | LC_ALL=C awk "BEGIN { dqm = 1 }$lex_awk" | LC_ALL=C awk "$cj_awk" |
-      LC_ALL=C sed -e 's/[$]*[(][(]/__/g' -e 's/=[(]/=_/g' | LC_ALL=C grep -Eo -- "$CWA$CWW" | LC_ALL=C sed -E -e 's/^[;&|([:space:]]+//' -e "s/^${CWK}[[:space:]]+//" |
+      LC_ALL=C awk "$ar_awk" | LC_ALL=C sed -e 's/\([[:alnum:]_]\)=[(]/\1=_/g' | LC_ALL=C grep -Eo -- "$CWA$CWW" | LC_ALL=C sed -E -e 's/^[;&|([:space:]]+//' -e "s/^${CWK}[[:space:]]+//" |
       LC_ALL=C grep -Ev -- '^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?[+]?=')"
     [ -z "$cw" ] || shc_unknown=1
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
