@@ -651,6 +651,16 @@ EOF
   expect_guard allow "git commit -m \"\$(printf '%s\\n' \"line; \$USER\" b)\" && git push origin HEAD"
   expect_guard allow "files=(\$(git diff --name-only)); git push origin HEAD"
   expect_guard allow "n=\$(( \$n + 1 )); echo \$(( \$(date +%s) - n ))s && git push origin HEAD"
+  # Reviewer PR #101 lần hai: `((` không khớp `))` là hai subshell; here-doc đóng ở `EOF)` trong $(…) hay $(…) đóng cùng
+  # dòng mở here-doc (bash 3.2, zsh, bash 5 đọc khác nhau); `$$(` trong nháy kép không mở $(…). Đều phải hỏi.
+  expect_guard ask "X=cd; (( \$X '$on_main' && git push origin HEAD) )"
+  expect_guard ask "X=cd; true &&(( \$X '$on_main' && git push origin HEAD) )"
+  expect_guard ask "gh pr create --body \"\$(cat <<'EOF'${nl}## Summary${nl}EOF)\"${nl}X=cd; \$X '$on_main' && git push origin HEAD"
+  expect_guard ask "x=\"\$(cat <<EOF${nl}hi${nl}EOF )\"${nl}X=cd; \$X '$on_main' && git push origin HEAD"
+  expect_guard ask "echo \"\$(cat <<E)\"${nl}X=cd; \$X '$on_main' && git push origin HEAD"
+  expect_guard ask "X=cd; echo \"\$\$(\"${nl}\$X '$on_main' && git push origin HEAD"
+  expect_guard allow "git commit -m \"feat: x${nl}${nl}\$(git log --oneline -3)\" && git push origin HEAD"
+  expect_guard allow "git commit -m \"Build time \$(date +%F), do \$(echo x)\" && git push origin HEAD"
   expect_guard allow "V=\$(cat VERSION) && git push origin HEAD"
   expect_guard allow "echo \"a; \$(date)\" && git push origin HEAD"
   expect_guard allow "git commit -m \"\$(cat <<'EOF'${nl}\$ npm test${nl}\`make test\` ok${nl}EOF${nl})\" && git push origin HEAD"
