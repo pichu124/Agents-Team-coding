@@ -3069,8 +3069,6 @@ elif sys.platform.startswith(("cygwin", "msys")):
     skip8 = "không chạy trên Windows"
 elif not shutil.which("sh"):
     skip8 = "thiếu sh"
-elif not bver.split(".")[0].isdigit() or int(bver.split(".")[0]) < 5:
-    skip8 = f"cần bash 5+, máy có bash {bver or '?'}"
 elif not re.fullmatch(r"[A-Za-z0-9/_.-]+", root):
     skip8 = f"đường thư mục tạm có ký tự lạ: {root!r}"
 else:
@@ -3081,6 +3079,11 @@ else:
         if os.path.dirname(d) == d:
             break
         d = os.path.dirname(d)
+# skipk: cổng của bước tự kiểm chặn rm, git thật (dưới). Nó không cần bash 5, nên chạy cả trên macOS (bash 3.2) cho lượt
+# zsh, nơi hàm chặn đi qua $ZDOTDIR/.zshenv.
+skipk = skip8
+if not skip8 and (not bver.split(".")[0].isdigit() or int(bver.split(".")[0]) < 5):
+    skip8 = f"cần bash 5+, máy có bash {bver or '?'}"
 if skip8:
     print(f"• audit: {TAG}: bỏ qua lô PR8, lưới thân <<EOF và lưới phép gán ({skip8})")
 
@@ -3113,8 +3116,11 @@ def line():
 fuzz = ["\n".join(line() for _ in range(rnd.randint(1, 4))) for _ in range(3000)]
 FORBID = re.compile(r"git|push|reset|clean|remove-item|>", re.IGNORECASE)
 # Văn bản chạy (sau khi bỏ nháy và `\`) không được gọi rm hay git, hay gọi lệnh gián tiếp: thay lệnh, eval, env, command, exec,
-# xargs, find, đường /bin/, gỡ hàm chặn (`unset -f`, enable, hash), glob (`/usr/bi?/r[m]` né cả tên lẫn /bin/).
-DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash)\b|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
+# xargs, find, đường /bin/, gỡ hàm chặn (`unset -f`, enable, hash), glob (`/usr/bi?/r[m]` né cả tên lẫn /bin/). Riêng zsh:
+# `=cmd` (đường trong PATH), unfunction, unhash, disable, functions, zmodload (zsh/files có builtin rm), builtin với lệnh khác
+# cd/pushd/popd/echo/wait, zsh lồng (`zsh -f` bỏ qua .zshenv).
+DISGUISE = re.compile(r"\b(rm|git|eval|env|command|exec|xargs|find|enable|hash|unfunction|unhash|disable|functions|zmodload|zsh)\b"
+                      r"|\bbuiltin\s+(?!(cd|pushd|popd|echo|wait)\b)|(^|[\s;&|(])=|\bunset\s+-\w*f|\$\(|`|/bin/|[?*[]")
 fcmds = [c for c in dict.fromkeys(fuzz + list(known)) if re.search(r"\brm\b", c) and not FORBID.search(c)]
 
 # Sandbox của lô chung nằm dưới thư mục tạm của hệ thống, nên audit coi MỌI đường tuyệt đối trong đó là thư mục tạm. Vì thế
@@ -3448,6 +3454,12 @@ shutil.copy(os.path.join(root, "chan.sh"), os.path.join(root, ".zshenv"))
 env = {"PATH": BIN, "HOME": os.path.join(root, "khong-co"), "LC_ALL": "C", "BASH_FUNC_rm%%": BLOCK,
        "BASH_FUNC_git%%": BLOCK, "BASH_ENV": os.path.join(root, "chan.sh"), "ZDOTDIR": root}
 env_chung = dict(env, HOME=HOME)  # lô chung có `cd ~`, `~/x`: HOME phải có thật
+if SH != "bash":
+    # Không export -f (zsh): bash lồng của lô chung (`bash <<EOF`, `| bash`) thiếu hàm bọc wait của PRELUDE, và bash 5.3 treo
+    # ở `true $( … & … wait )` (CI của PR thêm oracle zsh: 5 lệnh quá 10 giây). BASH_ENV của lô chung thêm các hàm bọc đó.
+    with open(os.path.join(root, "chan-chung.sh"), "w") as fh:
+        fh.write("".join(f"{n} {BLOCK}\n" for n in ("rm", "git")) + PRELUDE)
+    env_chung["BASH_ENV"] = os.path.join(root, "chan-chung.sh")
 def setup(k):
     base = os.path.join(root, str(k))
     for sub in ("p/src", "tmp/w/s"):
@@ -3521,7 +3533,7 @@ def run_chung(base, i):
 
 W = min(8, 2 * (os.cpu_count() or 1))  # mỗi chỗ chạy một tiến trình Python phụ (~18 MB): cpu_count của host có thể lớn
 bases = [setup(k) for k in range(W)]
-if not skip8:
+if not skipk:
     nfail = len(fails)
     # Tự kiểm: stub phải được gọi qua `bash -l`, đích trong dự án là nguy, đích trong /tmp/w là vô hại. Hỏng thì xanh giả.
     for cmd, want in (("rm -rf src", ["<dự án>/src"]), ("cd /tmp/w && rm -rf src", []),
@@ -3538,7 +3550,12 @@ if not skip8:
                 "find /tmp/w/zz -delete", "/bin/rm -rf /tmp/w/zz", "/usr/bin/rm -rf /tmp/w/zz", "g\\it status",
                 "'g'it status", "X=r; unset -f ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz",
                 "X=g; builtin unset -f ${X}it; PATH=/usr/bin:/bin; ${X}it init -q /tmp/w/zz.d", "/usr/bi?/r[m] -f /tmp/w/zz",
-                "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x"):
+                "/usr/bi*/g[i]t init -q /tmp/w/zz.d", "enable -n echo", "hash -p /usr/bin/true x",
+                "X=r; PATH=/usr/bin:/bin; =${X}m -f /tmp/w/zz", "X=g; PATH=/usr/bin:/bin; =${X}it init -q /tmp/w/zz.d",
+                "X=r; unfunction ${X}m; PATH=/usr/bin:/bin; ${X}m -f /tmp/w/zz", "X=r; unhash -f ${X}m; ${X}m -f /tmp/w/zz",
+                "X=r; disable -f ${X}m; ${X}m -f /tmp/w/zz", "functions -c x ${X}m",
+                "zmodload zsh/files; X=r; builtin ${X}m -f /tmp/w/zz", "X=r; zmodload -F zsh/files b:${X}m; ${X}m -f /tmp/w/zz",
+                "zsh -fc 'PATH=/usr/bin:/bin; X=r; ${X}m -f /tmp/w/zz'"):
         err, calls, _bad = run(bases[0], cmd)
         if not err or calls:
             fails.append(f"oracle chạy lệnh che tên lệnh thay vì từ chối: {cmd!r} (lỗi {err or 'không'}, stub ghi {calls})")
@@ -3563,6 +3580,7 @@ if not skip8:
             os.remove(zz)
     if len(fails) > nfail:  # khung hỏng: không chạy gì thêm
         finish("")
+if not skip8:
     # Lưới của lớp "thay biến trong thân <<EOF không nháy" ($grid): assert ở bước trên đòi mục A báo mọi lệnh mà mô hình của
     # lưới gọi là nguy, ở đây bash thật kiểm mô hình đó (rm đệ quy ngoài thư mục tạm đúng ở các lệnh ấy) và mục A báo đủ.
     spec = importlib.util.spec_from_file_location("heredoc_grid", grid_file)
@@ -3763,7 +3781,7 @@ print(f"✔ audit: {TAG}: {len(tasks)} lệnh chạy bằng {SH} {ver} thật (r
       f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
       f"KNOWN_GAPS chỉ được giảm: {ratchet} ({el:.0f} giây)")
 PYEOF
-"$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
+KIT_ORACLE_SHELL=bash "$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
 rm -rf "$tmp/oracle"
 if command -v zsh >/dev/null 2>&1; then
   KIT_ORACLE_SHELL=zsh "$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
