@@ -446,7 +446,7 @@ lex_awk='BEGIN { hh = 1 }
       else if (index("`$(){}", c)) c = "_"
     }
     else if (c == "\\" && i < n) { i++; d = ch[i]; if (d == "`" || d == "$") d = "_"; else if (dm && st == 2 && d == "\"") d = "\002"; c = c d }
-    else if (dqm && st == 2) { if (c == "\"") st = 0; else if (c == "$" || c == "`") c = "_" }
+    else if (dqm && st == 2 && !(c == "$" && ch[i + 1] == "(")) { if (c == "\"") st = 0; else if (index("$`;&|(", c)) c = "_" }
     else if (st == 5) { if (c == "`") st = bq }
     else if (c == "$" && ch[i + 1] == "(") {
       sp++; sk[sp] = st; pc[sp] = 0; if (!ov) { sv[sp] = sb; bv[sp] = bd; sb = 0; bd = 0 }; st = 0; if (ch[i + 2] == "(" && !ar) { ar = 1; ad = gd }; gd++
@@ -480,7 +480,7 @@ lex_awk='BEGIN { hh = 1 }
   }
   print ""
 }'
-# Cờ dqm = 1: trong "…" cũng che $ và backtick thành _ (không mở $(…) hay backtick trong nháy kép), `#` ở cột 1 cũng mở
+# Cờ dqm = 1: trong "…" cũng che $ (trừ `$(`, vẫn mở tầng như ngoài nháy), backtick và `;&|(` thành _, `#` ở cột 1 cũng mở
 # comment; cho đường tìm tên lệnh do mở rộng sinh ra (cw, cổng push): chỉ từ ở vị trí lệnh ngoài mọi nháy mới tính.
 # cj_awk: sau lex_awk (comment đã bỏ, `\` trong nháy đơn và thân here-doc đã che), nối dòng kết thúc bằng số lẻ `\` như bash
 # (`git \` ⏎ ``pu``sh`` là một lệnh); `# x\` ⏎ `c$()d M` thì không nối (bash không nối dòng trong comment).
@@ -489,7 +489,7 @@ cj_awk='{ k = length($0); while (k > 0 && substr($0, k, 1) == "\\") k--
   print b $0; b = "" }
 END { if (b != "") print b }'
 # CWA: vị trí lệnh (đầu dòng, sau ; & | (, sau từ khoá hay lệnh đứng trước lệnh khác); CWW: từ có $ hay backtick ở đó.
-CWK='(then|do|else|elif|if|while|until|time|!|exec|eval|command|builtin|nohup|sudo|xargs)'
+CWK='(then|do|else|elif|if|while|until|time|!|exec|eval|command|builtin|nohup|sudo|xargs|[{])'
 CWA="(^|[;&|(]|(^|[[:space:]])${CWK}[[:space:]])[[:space:]]*"
 CWW='[^[:space:];&|()"<>]*[$`][^[:space:];&|()<>]*'
 # tb_awk: bỏ backtick đơn ở cuối token (`` `mkdir -p` `` trong commit message), trừ khi phần còn lại là từ khoá thư mục:
@@ -698,11 +698,12 @@ case "$raw" in
     fi
     # Tên lệnh do mở rộng sinh ra ở vị trí lệnh (`$(echo cd) M`, `` `echo${IFS}cd` M ``, `X=cd; $X M`, `c$( (:) )d M`, `c$(:` ⏎
     # `)d M`; cùng lớp với eval, 4.10): thư mục của push chưa biết. Đọc $raw qua lex_awk với dqm (nháy, thân here-doc che,
-    # comment bỏ) rồi cj_awk (nối dòng như bash) và tìm từ ở vị trí lệnh có $ hay backtick; phép gán
+    # comment bỏ) rồi cj_awk (nối dòng như bash), che `((`, `$((`, `=(` (số học, mảng) và tìm từ ở vị trí lệnh (cả sau `{`)
+    # có $ hay backtick; phép gán
     # (`V=$(cat V)`) không tính. Còn lọt: tên lệnh trong nháy kép (`"$X" M`), sau phép gán tạm (`A=1 $X M`).
     budget
     cw="$(printf '%s\n' "$raw" | LC_ALL=C awk "BEGIN { dqm = 1 }$lex_awk" | LC_ALL=C awk "$cj_awk" |
-      LC_ALL=C grep -Eo -- "$CWA$CWW" | LC_ALL=C sed -E -e 's/^[;&|([:space:]]+//' -e "s/^${CWK}[[:space:]]+//" |
+      LC_ALL=C sed -e 's/[$]*[(][(]/__/g' -e 's/=[(]/=_/g' | LC_ALL=C grep -Eo -- "$CWA$CWW" | LC_ALL=C sed -E -e 's/^[;&|([:space:]]+//' -e "s/^${CWK}[[:space:]]+//" |
       LC_ALL=C grep -Ev -- '^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?[+]?=')"
     [ -z "$cw" ] || shc_unknown=1
     # Ngoặc nhọn ra từ khoá thư mục (`{cd,} M`, `git {-C,} M push`), hay ở đối số của chúng (`cd {M,}`, `git -C {M,} push`):
