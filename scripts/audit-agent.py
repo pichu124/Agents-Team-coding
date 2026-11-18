@@ -385,8 +385,8 @@ def expand(text, env):
         return text
     names = iter(env)
     while True:
-        # Không dùng `set & env.keys()`: Python ≤ 3.9 chép cả env thành set mỗi lần (O(số biến) mỗi bước, 3.8: 34 µs với 3000
-        # biến, 3.10: 0,2 µs), làm đường này bậc hai lại (test-audit chạy với Python 3.8, mục 2.5).
+        # Không dùng `set & env.keys()`: Python 3.8 chép cả env thành set mỗi lần (O(số biến) mỗi bước: 34 µs với 3000 biến,
+        # 3.9 trở lên 0,2 µs), làm đường này bậc hai lại (test-audit chạy với Python 3.8, mục 2.5).
         live = {m[1] for m in VAR_REF.finditer(text) if m[1] in env}
         name = next(filter(live.__contains__, names), None) if live else None
         if name is None:

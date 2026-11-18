@@ -27,9 +27,9 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
 ### 2.5 Chưa kiểm chứng
 - `git-bash.exe` của Git for Windows có chạy thân `-lc '…'` không.
 - zsh, PowerShell, git-bash.exe: chưa có oracle thật. bash 4.x thật chưa chạy.
-- **Đã kiểm (18/11):** `test-audit.sh` với Python 3.8, 3.9, 3.10 (uv) đủ 990 test: regex mới chạy đúng; Python ≤ 3.9 từng
-  chậm bậc hai ở `expand` vì `set & dict.keys()` chép cả env mỗi bước (3.8: 34 µs với 3000 biến, 3.10: 0,2 µs; hai assert
-  tỉ lệ đỏ), nay dùng set comprehension. Oracle với bash 3.2.57 thật: 7090 lệnh, mục A báo đủ 4541 lệnh xoá ngoài thư mục
+- **Đã kiểm (18/11):** `test-audit.sh` với Python 3.8, 3.9, 3.10 (uv) đủ 994 test: regex mới chạy đúng; Python 3.8 từng
+  chậm bậc hai ở `expand` vì `set & dict.keys()` chép cả env mỗi bước (3.8: 34 µs với 3000 biến, 3.9 trở lên 0,2 µs; hai
+  assert tỉ lệ đỏ, cùng ngưỡng 3 giây của 2.4 khi máy bận: 3/990), nay dùng set comprehension. Oracle với bash 3.2.57 thật: 7090 lệnh, mục A báo đủ 4541 lệnh xoá ngoài thư mục
   tạm (sàn 2600); lô PR8, lưới thân `<<EOF` và lưới phép gán tự bỏ qua (cần bash 5+). `audit-agent.sh --since 7` trên file
   phiên thật của repo này (đã cài kit; 67 file, 185 MB, 2184 lệnh): 2 phút 35 giây, exit 0; tám dòng mục A đều là báo thừa
   (xem 2.6) hay dạng guard chủ ý không hỏi (`git branch -D`, `git checkout <rev> -- file`).
