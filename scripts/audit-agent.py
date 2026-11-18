@@ -239,7 +239,10 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # segments(strict=True) của bash: `\` ngoài nháy thoát ký tự sau (`echo it\'s`), khớp trước để nháy đó không mở một chuỗi
 # ghép với nháy của lệnh sau. `\` + xuống dòng không khớp (`.` không qua `\n`): cách đọc không nối dòng vẫn tách ở đó.
 # Nháy ANSI-C `$'…'` khớp trước cả hai: `\'` bên trong là nháy thoát, không đóng chuỗi (`echo $'it\'s'; rm -rf src 'x'`).
-QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.|" + QUOTED_X.pattern, re.MULTILINE)
+# Nhánh `\.` đã ăn `\|`, `\;`… nên comment của QUOTED_XB không mở sau dấu tách đã thoát (`echo a\|#b; …`: `a|#b` là một
+# từ; oracle 2.8 tìm ra cách đọc pure bỏ cả dòng sau đó). `\\|#` (`\` thoát chính nó) thì `|` là dấu tách thật.
+COMMENT_XB = r"|(?:(?<=[\s;&|()])(?<!(?<!\\)\\[\s;&|()])|^)#[^\n]*"
+QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.|" + QUOTED_6F32D5A.pattern + COMMENT_XB, re.MULTILINE)
 # quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
 # `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
 # giây). Mọi `"` trong phần đó là `\"` của lần quét đầu, nên lần quét từ chúng cùng nhịp với nó từ ký tự sau và cũng hỏng:
