@@ -26,7 +26,15 @@ Chạy lần lượt từng session: ngày 20/10 và 21/10, nhiều session ch�
 
 ### 2.5 Chưa kiểm chứng
 - `git-bash.exe` của Git for Windows có chạy thân `-lc '…'` không.
-- zsh, PowerShell, git-bash.exe: chưa có oracle thật. bash 4.x thật chưa chạy.
+- PowerShell, git-bash.exe: chưa có oracle thật. bash 4.x thật chưa chạy. Máy cloud không lấy được: ftp.gnu.org bị chặn, và
+  lệnh tải bản PowerShell từ GitHub hay tìm mirror khác của mã nguồn bash bị bộ phân loại an toàn của phiên từ chối (18/11);
+  cần người cho phép, hay chạy trên máy có sẵn.
+- **Đã có (oracle zsh, 18/11):** test-audit chạy lại khối oracle với zsh làm shell ngoài cùng khi máy có zsh (CI Linux cài
+  zsh; macOS có sẵn). zsh 5.9: 12821 lệnh, mục A báo đủ 3918 lệnh xoá ngoài thư mục tạm của lô chung, 1739 của lô PR8, 1435
+  của lưới; lưới lệch mô hình bash ở 78 lệnh, đều theo chiều lành (mô hình nguy, zsh không xoá: zsh không tách từ $X không
+  nháy), nên với zsh chỉ chiều ngược lại là lỗi. Sàn riêng 3800/800/340. zsh bỏ qua BASH_FUNC_* và BASH_ENV: hàm chặn rm, git
+  nằm trong $ZDOTDIR/.zshenv; thiếu nó thì `PATH=/usr/bin:/bin; ${X}m …` gọi rm thật (bước tự kiểm của oracle bắt được, chỉ
+  xoá file canh trong sandbox). Lô PR8 và lưới vẫn cổng theo bash của máy (≥ 5), vì bash, sh lồng bên trong.
 - **Đã kiểm (18/11):** `test-audit.sh` với Python 3.8, 3.9, 3.10 (uv) đủ 994 test: regex mới chạy đúng; Python 3.8 từng
   chậm bậc hai ở `expand` vì `set & dict.keys()` chép cả env mỗi bước (3.8: 34 µs với 3000 biến, 3.9 trở lên 0,2 µs; hai
   assert tỉ lệ đỏ, cùng ngưỡng 3 giây của 2.4 khi máy bận: 3/990), nay dùng set comprehension. Oracle với bash 3.2.57 thật: 7090 lệnh, mục A báo đủ 4541 lệnh xoá ngoài thư mục
