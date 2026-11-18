@@ -2239,16 +2239,13 @@ check(not keep_diff, f"keep_shell_heredocs khác bản bậc hai ở {len(keep_d
                      f"exact, snap, strict), lệnh: {keep_diff[:3]}")
 many = (sum(n > 0 for n in pulled), sum(n > 2 for n in pulled))
 check(many[0] > 1000 and many[1] > 100, f"lô so keep_shell_heredocs phải đi qua vòng kéo dòng (lần kéo 1+, 3+ dòng): {many}")
-# Bản bậc hai mất 3–15 giây với các chuỗi dưới đây (dò regex trên dòng mở dài dần, nối từng dòng).
-slow = []
-for cmd in ("cat <<E\\\n" * 3000, "bash <<E\\\n" * 5000, "sh <<'E' \\\n" * 5000, "cat <<E\\\\\\\n" * 5000,
-            "cat <<E\\\n" + "x\\\\\\\n" * 10000):
-    t = time.monotonic()
-    a.suspicious_labels(cmd, a.SUSPICIOUS)
-    t = time.monotonic() - t
-    if t > 3:
-        slow.append((cmd[:16], round(t, 1)))
-check(not slow, f"suspicious_labels quá 3 giây trên dòng mở heredoc có `\\` lẻ cuối kéo nhiều dòng (đầu lệnh, giây): {slow}")
+# Bản bậc hai mất 3–15 giây với các chuỗi dưới đây ở cỡ 4 lần (dò regex trên dòng mở dài dần, nối từng dòng). Tỉ lệ, không
+# ngưỡng tuyệt đối (2.4): ngưỡng 3 giây từng đỏ oan khi máy bận (`sh <<'E' \`×5000 mất 1,7 giây lúc rảnh, 3,2 giây khi ba
+# test-audit chạy song song trên 4 CPU), dù đường này tuyến tính.
+for make in (lambda k: "cat <<E\\\n" * 750 * k, lambda k: "bash <<E\\\n" * 1250 * k, lambda k: "sh <<'E' \\\n" * 1250 * k,
+             lambda k: "cat <<E\\\\\\\n" * 1250 * k, lambda k: "cat <<E\\\n" + "x\\\\\\\n" * 2500 * k):
+    linear("suspicious_labels trên dòng mở heredoc có `\\` lẻ cuối kéo nhiều dòng", lambda c: a.suspicious_labels(c, a.SUSPICIOUS),
+           make)
 # Phần mới của cách đọc strict không làm audit chậm. Cỡ chuỗi chọn để 16e4dbd (chưa có strict) chạy dưới 1 giây: dòng mở
 # heredoc không `\n` thì HEREDOC của các cách đọc khác thử lại từ mỗi `<<` rồi quét tới cuối dòng, bậc hai sẵn từ trước
 # (~3 giây với 5000 `<<A`).
