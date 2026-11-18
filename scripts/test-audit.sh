@@ -3473,9 +3473,10 @@ def lst(depth, top):
     return out, False
 
 
-TRAP3 = set()
+TRAP3, EXTRA0, TRAP2_0 = set(), set(EXTRA), set(TRAP2)
 rnd.seed(2800)
 cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1000)]))
+EXTRA, TRAP2 = EXTRA0, TRAP2_0  # sàn của lô 1, lô 2 chỉ đếm lệnh của chính lô đó (lô 3 gọi lại lst của chúng ở mức ngoài cùng)
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
