@@ -2022,6 +2022,16 @@ MISSED_28 = [
     ("rm -rf {/tmp/x\\},/home}", "xoá đệ quy", "`\\}` là chữ: brace thành /tmp/x} và /home"),
     ("rm -rf {/home,\"/tmp/x /tmp/y\"}", "xoá đệ quy", "khoảng trắng trong nháy không tách từ: brace thành /home và một đích"),
     ("rm -rf -- {-src,/tmp/a}", "xoá đệ quy", "sau `--`, -src là đích: xoá ./-src của dự án"),
+    # Oracle 2.8 (var_trap3) tìm ra: `\\|` làm SPLIT tách, `#b` sau nó bị coi là đầu comment nên cách đọc pure bỏ cả dòng.
+    ("echo a\\|#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\|#b` là một từ, `#` không mở comment: nhóm sau || không chạy, xoá src của dự án"),
+    ("echo a\\;#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\;#b` là một từ, `#` không mở comment: xoá src của dự án"),
+    # Reviewer PR #102: số `\\` lẻ từ 3 trở lên, khoảng trắng thoát trước `#`.
+    ("echo a\\\\\\|#b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\\\\\|#b`: `\\\\` rồi `\\|`, `#` giữa từ: xoá src của dự án"),
+    ("echo a\\\\\\ #b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
+     "`a\\\\\\ #b`: khoảng trắng thoát, `#` giữa từ: xoá src của dự án"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -2977,9 +2987,12 @@ KNOWN_MISSES = [
 # Lô var_trap2 (port blissful-dirac 78e474a) đo trên bash 5.2: tổng 4612/7090 lệnh nguy hiểm (364 có cd nhiều tham số hay
 # `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
 # cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
+# ORACLE_FLOOR_28 canh riêng lệnh do var_trap3 (lô thêm thứ ba, các lỗ 2.8) sinh ở mức ngoài cùng (TRAP3): đo 426 với bash
+# 5.2, 425 với bash 3.2.57, 400 với zsh 5.9 (sàn zsh riêng dưới), làm tròn xuống.
 ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
+ORACLE_FLOOR_28 = 400
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
@@ -2998,7 +3011,7 @@ TAG = "oracle " + SH
 if SH == "zsh":
     # Đo trên zsh 5.9 (cùng ngữ pháp): lô chung 3918/7090 lệnh nguy (847 từ hàm lst thứ hai, 352 từ var_trap2), lô PR8 1739,
     # lưới 1435; zsh không tách từ $D không nháy nên ít lệnh nguy hơn bash. Sàn riêng, chỉ được nâng như sàn của bash.
-    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2 = 3800, 800, 340
+    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2, ORACLE_FLOOR_28 = 3800, 800, 340, 380
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
@@ -3407,6 +3420,63 @@ def lst(depth, top):
 TRAP2 = set()
 rnd.seed(2600)
 cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1500)]))
+# Lô thêm thứ ba, hạt riêng (lệnh của ba lô trên giữ nguyên): các lỗ 2.8 mà cách đọc pure đã bắt (MISSED_28) nhưng oracle
+# chưa sinh. D mang giá trị đưa đích ra ngoài (hay rỗng) qua một cấu trúc mà cách đọc cũ của audit giữ giá trị lành: hàm gán
+# D gọi sau một phép gán, `\;`/`\|` làm `fi` đầu thành chữ (phép gán sau nó nằm trong nhánh không chạy), `for D in`,
+# `read D </dev/null` (D rỗng), `D+=`, nhóm sau `||` (không chạy) rồi `&&`, export/cd trong subshell, `{,/}src`.
+lst_trap2 = lst
+
+
+def var_trap3(depth, top):
+    items = [item(depth, top) for _ in range(rnd.randint(0, 1))]
+    o = pick(D_OUT)
+    k = rnd.randrange(8)
+    sep = pick(["; ", "\n"])
+    if k == 0:
+        p = "D=%s; %s D=%s; }; D=%s; f" % (REAL, pick(["f() {", "function f {"]), o, REAL)
+        t = pick(VAR_T)
+    elif k == 1:
+        p = "D=%s; if false; then echo a%s fi; D=%s; fi" % (o, pick(["\\;", "\\|"]), REAL)
+        t = pick(VAR_T)
+    elif k == 2:
+        p = "for D in %s; do :; done" % pick([o, REAL + " " + o])
+        t = pick(VAR_T)
+    elif k == 3:
+        p = "D=%s; read D </dev/null" % REAL
+        t = pick(["$D/src", "$D/x", "${D}/src"])
+    elif k == 4:
+        p = "D=%s; D+=%s" % (REAL, pick(["/..", "/../..", "/../proj"]))
+        t = pick(["$D", "$D/src"])
+    elif k == 5:
+        p = "true || { cd %s; D=%s/; }" % (REAL, REAL)
+        sep, t = " && ", "${D}src"
+    elif k == 6:
+        p = "(%s)" % pick(["export D=%s && cd %s/src" % (REAL, REAL), "cd %s; D=%s/" % (REAL, REAL)])
+        t = pick(["${D}src", "$D/src"])
+    else:
+        p = pick(["true", "cd " + REAL + "/src && cd -"])
+        t = "{,/}src"
+    if rnd.random() < 0.5:
+        items.append(item(depth, top))  # nhiễu đứng trước bẫy
+    out = []
+    for q, kind, _ga in items:
+        out += q + ["\n" if kind in ("heredoc", "comment") else "; "]
+    return out + [p, sep, RM, " -rf " + t]
+
+
+def lst(depth, top):
+    if rnd.random() < 0.5:
+        return lst_trap2(depth, top)
+    out = var_trap3(depth, top)
+    if depth == 0:
+        TRAP3.add(tuple(out))
+    return out, False
+
+
+TRAP3, EXTRA0, TRAP2_0 = set(), set(EXTRA), set(TRAP2)
+rnd.seed(2800)
+cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1000)]))
+EXTRA, TRAP2 = EXTRA0, TRAP2_0  # sàn của lô 1, lô 2 chỉ đếm lệnh của chính lô đó (lô 3 gọi lại lst của chúng ở mức ngoài cùng)
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
 # "pid N is not a child of this shell" mỗi vòng: `true & x=$( wait )` treo, còn bash 5.2 trả về ngay. Bọc thành wait từng
@@ -3711,7 +3781,7 @@ if not skip8:
 
 # Lô chung.
 danger, miss, timeouts, refused = 0, [], [], []
-danger_extra = danger_trap2 = 0
+danger_extra = danger_trap2 = danger_28 = 0
 for i, (calls, err, to, no) in enumerate(results):
     c = render(cmds[i], "rm")
     if to:
@@ -3724,6 +3794,7 @@ for i, (calls, err, to, no) in enumerate(results):
     danger += 1
     danger_extra += cmds[i] in EXTRA
     danger_trap2 += cmds[i] in TRAP2
+    danger_28 += cmds[i] in TRAP3
     if "xoá đệ quy" not in labels(c):
         miss.append((len(c), c, bad, err))
 # Báo thừa của tập ứng viên (người dùng chấp nhận gán lại cùng tên, 2.8): lệnh của lô chung có gọi rm mà bash không xoá gì
@@ -3763,6 +3834,10 @@ if danger_extra < ORACLE_FLOOR_EXTRA:
     out.append(f"✘ audit: lệnh thêm của {TAG} (hàm lst thứ hai) chỉ có {danger_extra} lệnh nguy hiểm, dưới sàn "
                f"ORACLE_FLOOR_EXTRA={ORACLE_FLOOR_EXTRA}. Lô thêm hay hàm lst thứ hai vừa bị bỏ, thu nhỏ, hay bash chạy khác "
                "đi. Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
+if danger_28 < ORACLE_FLOOR_28:
+    out.append(f"✘ audit: bẫy 2.8 của lô thêm thứ ba (var_trap3) chỉ có {danger_28} lệnh nguy hiểm, dưới sàn "
+               f"ORACLE_FLOOR_28={ORACLE_FLOOR_28}. Lô hay hàm var_trap3 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
+               "Trả lại cấu trúc đã bỏ cho đủ sàn; đừng hạ sàn.")
 if danger_trap2 < ORACLE_FLOOR_TRAP2:
     out.append(f"✘ audit: bẫy biến của lô thêm thứ hai (var_trap2) chỉ có {danger_trap2} lệnh nguy hiểm, dưới sàn "
                f"ORACLE_FLOOR_TRAP2={ORACLE_FLOOR_TRAP2}. Lô hay hàm var_trap2 vừa bị bỏ, thu nhỏ, hay bash chạy khác đi. "
@@ -3778,7 +3853,8 @@ pr8 = "" if skip8 else (
     f"KNOWN_MISSES; lưới thân <<EOF và lưới phép gán: {len(grid)} lệnh khớp mô hình, mục A báo đủ {sum(1 for g in gres if g[5])} lệnh nguy")
 print(f"✔ audit: {TAG}: {len(tasks)} lệnh chạy bằng {SH} {ver} thật (rm thay bằng stub); lô chung: mục A báo đủ "
       f"{danger} lệnh xoá ngoài thư mục tạm/build ({len(cmds)} lệnh sinh, sàn {ORACLE_FLOOR}; {danger_extra} từ hàm lst thứ "
-      f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}){pr8}; KNOWN_MISSES ∪ "
+      f"hai, sàn {ORACLE_FLOOR_EXTRA}; {danger_trap2} từ var_trap2, sàn {ORACLE_FLOOR_TRAP2}; {danger_28} từ var_trap3 "
+      f"(2.8), sàn {ORACLE_FLOOR_28}){pr8}; KNOWN_MISSES ∪ "
       f"KNOWN_GAPS chỉ được giảm: {ratchet} ({el:.0f} giây)")
 PYEOF
 KIT_ORACLE_SHELL=bash "$py" -I -B "$tmp/oracle.py" "$tmp/oracle" "$base_test" "$base_why" "$grid" || status=1
