@@ -381,9 +381,13 @@ def assigned(val, after=""):
     """Giá trị env ghi cho phép gán NAME=val của ASSIGN: bỏ nháy hai đầu. Giá trị không nháy kết thúc bằng số lẻ `\\` mà
     ký tự ngay sau (after) là khoảng trắng hay tab: `\\` thoát ký tự đó (ASSIGN dừng trước nó), bash gán cả nó
     (`D=/tmp/w/\\ ;` là `/tmp/w/ `), nên `${D}src` không nháy tách thành /tmp/w/ và src (reviewer PR #102). Sau `\\` là
-    xuống dòng (nối dòng), `;` của cách đọc tách ở `\\;`, CR hay FF thì không (reviewer PR #104)."""
-    if after in (" ", "\t") and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
-        return val[:-1] + after
+    xuống dòng (nối dòng), `;` của cách đọc tách ở `\\;`, CR hay FF thì không (reviewer PR #104). Giá trị trong nháy mà
+    sau nó là `\\` rồi khoảng trắng hay tab (`D='/tmp/w/'\\ ;`): bash gán cả khoảng trắng đó (reviewer PR #104 lần hai).
+    after: tới hai ký tự ngay sau giá trị."""
+    if after[:1] in (" ", "\t") and after and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
+        return val[:-1] + after[:1]
+    if val[:1] in "\"'" and after[:1] == "\\" and after[1:2] in (" ", "\t") and after[1:2]:
+        return val.strip("\"'") + after[1]
     return val.strip("\"'")
 
 
@@ -1064,7 +1068,16 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 env.pop(name, None)
                 kid.pop(name, None)
             else:
-                env[name] = kid[name] = assigned(val, full[am.end(2):am.end(2) + 1] or tail)
+                after = full[am.end(2):am.end(2) + 2]
+                if am.end(2) + len(after) == len(full):  # giá trị ở cuối đoạn: thêm ký tự trắng strip đã cắt
+                    after = (after + tail)[:2]
+                env[name] = kid[name] = assigned(val, after)
+        # `E=$D` (giá trị chỉ là một biến, không nháy): bash gán nguyên giá trị, kể cả khoảng trắng cuối, mà full đã thay biến
+        # nên ASSIGN dừng trước khoảng trắng đó (reviewer PR #104 lần hai: `D=/tmp/w/\ ; E=$D; rm -rf ${E}src`).
+        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw) if assigns and not frozen and sure and not forget else ()):
+            ref = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", am[2])
+            if ref and values.get(ref[1], "")[-1:] in (" ", "\t") and am[1] in env:
+                env[am[1]] = kid[am[1]] = values[ref[1]]
         if snapped:
             temp = {t[1]: assigned(t[2], x[t.end(2):t.end(2) + 1]) for x in (expand(op, values),) for t in ASSIGN.finditer(x)}
             snap, pre = (pre, env, {**pre, **temp} if temp else pre), None  # các dict của snap chỉ bị đọc
