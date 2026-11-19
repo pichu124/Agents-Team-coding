@@ -2071,6 +2071,17 @@ MISSED_28 = [
     ("D='/tmp/w/'\\\t; rm -rf ${D}src", "xoá đệ quy", 'phần nháy rồi `\\` + tab: xoá src của dự án'),
     ('D=/tmp/w/\\ ; E=$D; rm -rf ${E}src', "xoá đệ quy", '`E=$D` giữ khoảng trắng cuối (phép gán không tách từ): xoá src của dự án'),
     ('D=/tmp/w/\\ ; export E=$D; rm -rf ${E}src', "xoá đệ quy", '`export E=$D` giữ khoảng trắng cuối: xoá src của dự án'),
+    # Reviewer PR #106: bản đầu đổi env tại chỗ (assigned() hai ký tự, lượt `E=$D` đọc giá trị mới của cùng câu lệnh) nên
+    # mất nhãn main vẫn báo; bash xoá đích ngoài tmp/build ở mọi ca.
+    ("D='/tmp/w/'\\ ; E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D='/tmp/w/'\\ ; E=$D/\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=\"/tmp/w\"\\ ; export E=$D\\ ; rm -rf $E/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/srv; export D=/tmp/w/\\  E=$D; rm -rf \"${E}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/tmp/w/\\ ; export E=$D F=$E; rm -rf \"${F}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("readonly D=/tmp/w/\\  E=$D; rm -rf \"${E}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D='/tmp'\\ E=$D E=$D && rm -rf $E", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("declare D='/tmp'\\ x; E=$D; rm -rf ${E}dist/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/tmp\\;;E=$D F=$E; rm -rf $F", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
