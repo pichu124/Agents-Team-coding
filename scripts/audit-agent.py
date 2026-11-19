@@ -177,6 +177,10 @@ ANSI_C_X = re.compile(r"\\(?:([abeEfnrtv])|([\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]
 # `echo '))'`); `<<` nằm trong một khớp như vậy (`let 'x=1<<2'`, `# a<<b`, `\<<E`) không phải toán tử heredoc.
 ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[\s\S])*(?:\"|\Z)|'[^']*(?:'|\Z)"
                      r"|(?:^|[\s;&|()<>])#[^\n]*|(?P<dp>\$?\(\()|(?P<dc>\)\))|(?P<bo>\$\[)|(?P<b>[\[\]])", re.MULTILINE)
+# ARITH_XT (cách đọc strict=2, bash): như ARITH_X, thêm cặp backtick là một khớp: nháy lẻ trong backtick không mở chuỗi nuốt
+# `<<`, `<<<` phía sau (`` x=`echo a"` `` ⏎ `cat <<EOF` ⏎ … `$(rm -rf src)`: reviewer PR #103). Cặp backtick có `<<` bên
+# trong (`` `cat <<'EOF'` …``) không là một khớp, để heredoc trong nó vẫn mở: thân dữ liệu không thành lệnh.
+ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.pattern, re.MULTILINE)
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
@@ -673,6 +677,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         if bash == 2 and depth < 8 and "<<" in body:
             body = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1)
         return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
+    arith = ARITH_XT if strict == 2 else ARITH_X  # strict=2: cách đọc thêm biết backtick
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     if not (bash and scoped):
@@ -684,8 +689,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
             pos = m.end()
         return "".join(out) + cmd[pos:]
     if bash != 2:
-        cmd = here_strings(cmd)
-    out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, ARITH_X.finditer(cmd), HEREDOC_X.search(cmd)
+        cmd = here_strings(cmd, arith)
+    out, pos, dp, bk, last, toks, m = [], 0, 0, 0, None, arith.finditer(cmd), HEREDOC_X.search(cmd)
     tok = next(toks, None)
     while m:  # thân tới dòng đúng bằng tên đã bỏ nháy (có thể rỗng), không có thì tới hết lệnh
         # Số học mở tới `<<`: đếm tiếp từ chỗ trước (không đếm lại: bậc hai), không âm (`))` thừa), không về 0 ở xuống
@@ -716,20 +721,20 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         while tok and tok.end() <= pos:
             tok = next(toks, None)
         if tok and tok.start() < pos:
-            toks = ARITH_X.finditer(cmd, pos)
+            toks = arith.finditer(cmd, pos)
             tok = next(toks, None)
         m = HEREDOC_X.search(cmd, pos)
     out = "".join(out) + cmd[pos:]
-    return here_strings(out) if bash == 2 else out
+    return here_strings(out, arith) if bash == 2 else out
 
 
-def here_strings(cmd):
+def here_strings(cmd, arith=ARITH_X):
     """Here-string `<<<` đưa vào shell (keep_shell_heredocs(bash=True)): bỏ khỏi dòng, đặt chuỗi như thân heredoc sau
     dòng đó (OPEN_RAW nếu trong nháy đơn hay `$'…'`, không thì OPEN: shell cha thay biến, `\\$` để shell con thay).
     `<<<` trong nháy, comment hay sau `\\` (ARITH_X) không phải toán tử. Lệnh đầu đoạn (sau `|;&` hay xuống dòng gần nhất)
     và cuối dòng dò dần theo vị trí: tuyến tính trên dòng dài có nhiều `<<<`."""
     out, pos, pend, eol = [], 0, [], 0
-    toks, last = ARITH_X.finditer(cmd), None
+    toks, last = arith.finditer(cmd), None
     tok = next(toks, None)
     scan, fed_seg, line_end = 0, False, -1  # đã dò tới scan; đoạn hiện tại có tên shell chưa; cuối dòng đã tìm
     for m in HERESTR_X.finditer(cmd):
@@ -1336,7 +1341,8 @@ def reading_key(cmd, tool, combo, bodies):
     - bash đổi b (heredoc, here-string như bash): giữ nguyên trong khoá đệm b và trong lớp, không gộp."""
     join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict, pure, bash = combo
     join = join and tool != "PowerShell"
-    k = (join, scoped, parent_env, raw_marks, empty_body, exact, bool(strict), bash)  # strict=2 chỉ đổi cách che nháy
+    # strict=2 đổi cách che nháy, và với bash cả cách dò heredoc, here-string (ARITH_XT): b riêng chỉ khi bash
+    k = (join, scoped, parent_env, raw_marks, empty_body, exact, strict if bash else bool(strict), bash)
     if k not in bodies:
         b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
         if strict and scoped and not raw_marks:
