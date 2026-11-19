@@ -381,14 +381,30 @@ def assigned(val, after=""):
     """Giá trị env ghi cho phép gán NAME=val của ASSIGN: bỏ nháy hai đầu. Giá trị không nháy kết thúc bằng số lẻ `\\` mà
     ký tự ngay sau (after) là khoảng trắng hay tab: `\\` thoát ký tự đó (ASSIGN dừng trước nó), bash gán cả nó
     (`D=/tmp/w/\\ ;` là `/tmp/w/ `), nên `${D}src` không nháy tách thành /tmp/w/ và src (reviewer PR #102). Sau `\\` là
-    xuống dòng (nối dòng), `;` của cách đọc tách ở `\\;`, CR hay FF thì không (reviewer PR #104). Giá trị trong nháy mà
-    sau nó là `\\` rồi khoảng trắng hay tab (`D='/tmp/w/'\\ ;`): bash gán cả khoảng trắng đó (reviewer PR #104 lần hai).
-    after: tới hai ký tự ngay sau giá trị."""
-    if after[:1] in (" ", "\t") and after and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
+    xuống dòng (nối dòng), `;` của cách đọc tách ở `\\;`, CR hay FF thì không (reviewer PR #104)."""
+    if after in (" ", "\t") and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
+        return val[:-1] + after
+    return val.strip("\"'")
+
+
+def assigned_esc2(val, after=""):
+    """Như assigned(), cho cách đọc esc2 (reviewer PR #104 lần hai): after là tới hai ký tự ngay sau giá trị. Thêm: giá trị
+    trong nháy mà sau nó là `\\` rồi khoảng trắng hay tab (`D='/tmp/w/'\\ ;`): bash gán cả khoảng trắng đó."""
+    if after[:1] in (" ", "\t") and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
         return val[:-1] + after[:1]
-    if val[:1] in "\"'" and after[:1] == "\\" and after[1:2] in (" ", "\t") and after[1:2]:
+    if val[:1] in "\"'" and after[:1] == "\\" and after[1:2] in (" ", "\t"):
         return val.strip("\"'") + after[1]
     return val.strip("\"'")
+
+
+# Cách đọc esc2 chỉ cần khi lệnh có nháy rồi `\ ` hay `\` + tab, hoặc có `\ ` cùng một phép gán từ biến (`E=$D`).
+ESC2_QUOTED = re.compile(r"['\"]\\[ \t]")
+ESC2_SPACE = re.compile(r"\\[ \t]")
+ESC2_REF = re.compile(r"=\$\{?[A-Za-z_]")
+
+
+def wants_esc2(cmd):
+    return bool(ESC2_QUOTED.search(cmd) or (ESC2_SPACE.search(cmd) and ESC2_REF.search(cmd)))
 
 
 def expand(text, env):
@@ -805,7 +821,7 @@ def unwrap_shell_c(text, rx):
 
 def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comments=True, raw_marks=False,
              strict_assign=False, empty_body=True, blank=False, exact=False, pipe_scope=False, strict=False, pure=False,
-             bash=False, cands=None, extra=None, budget=None):
+             bash=False, cands=None, extra=None, budget=None, esc2=False):
     """Các lệnh đơn trong một lệnh shell, dạng (để so mẫu, đầy đủ, thư mục cd gần nhất, có `$` trước khi thay biến).
 
     Bản để so mẫu thay chuỗi trong nháy bằng "" (trừ bash -c '...', cmd /c "...", eval), bản đầy đủ
@@ -1068,13 +1084,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 env.pop(name, None)
                 kid.pop(name, None)
             else:
-                after = full[am.end(2):am.end(2) + 2]
-                if am.end(2) + len(after) == len(full):  # giá trị ở cuối đoạn: thêm ký tự trắng strip đã cắt
-                    after = (after + tail)[:2]
-                env[name] = kid[name] = assigned(val, after)
-        # `E=$D` (giá trị chỉ là một biến, không nháy): bash gán nguyên giá trị, kể cả khoảng trắng cuối, mà full đã thay biến
-        # nên ASSIGN dừng trước khoảng trắng đó (reviewer PR #104 lần hai: `D=/tmp/w/\ ; E=$D; rm -rf ${E}src`).
-        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw) if assigns and not frozen and sure and not forget else ()):
+                if esc2:  # cách đọc esc2: tới hai ký tự sau giá trị, giá trị ở cuối đoạn thêm ký tự trắng strip đã cắt
+                    after = full[am.end(2):am.end(2) + 2]
+                    if am.end(2) + len(after) == len(full):
+                        after = (after + tail)[:2]
+                    env[name] = kid[name] = assigned_esc2(val, after)
+                else:
+                    env[name] = kid[name] = assigned(val, full[am.end(2):am.end(2) + 1] or tail)
+        # Cách đọc esc2, `E=$D` (giá trị chỉ là một biến, không nháy): bash gán nguyên giá trị, kể cả khoảng trắng cuối, mà full
+        # đã thay biến nên ASSIGN dừng trước khoảng trắng đó (reviewer PR #104 lần hai: `D=/tmp/w/\ ; E=$D; rm -rf ${E}src`).
+        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)
+                   if esc2 and assigns and not frozen and sure and not forget else ()):
             ref = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", am[2])
             if ref and values.get(ref[1], "")[-1:] in (" ", "\t") and am[1] in env:
                 env[am[1]] = kid[am[1]] = values[ref[1]]
@@ -1462,6 +1482,16 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
                 and (combo[12] or "<<" not in cmd) and combo[12] != 2 else None
             segs += segments(cmd, tool, *combo, cands=cands, extra=extra, budget=budget)
     segs += extra
+    # Cách đọc esc2 (reviewer PR #104 lần hai, PR #106): mọi tổ hợp trên, đọc lại với khoảng trắng thoát sau phần trong nháy
+    # và `E=$D` giữ khoảng trắng cuối. Cộng thêm, không thay: bản đầu đổi env tại chỗ làm mất nhãn main vẫn báo (reviewer
+    # PR #106: `D='/tmp/w/'\ ; E=$D\ ; rm -rf ${E}src`). Không sinh ứng viên. Chỉ chạy khi lệnh có dạng đó (wants_esc2).
+    if tool != "PowerShell" and wants_esc2(cmd):
+        read2 = set()
+        for combo in reading_combos(cmd, tool):
+            key = reading_key(cmd, tool, combo, bodies)
+            if key not in read2:
+                read2.add(key)
+                segs += segments(cmd, tool, *combo, esc2=True)
     done = set()
     for seg in segs:
         if seg in done:
