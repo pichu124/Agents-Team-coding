@@ -243,6 +243,13 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # `a\ #b`, `a\\\|#b`: oracle 2.8 và reviewer PR #102 tìm ra cách đọc pure bỏ cả dòng sau đó). Quét trái sang phải nên chẵn
 # lẻ của `\` tự đúng: `a\\|#b` là `\\` rồi dấu tách thật, `#` mở comment.
 QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|" + QUOTED_X.pattern, re.MULTILINE)
+# QUOTED_XBT (cách đọc strict=2): như QUOTED_XB, thêm cặp backtick khớp trọn (nhánh ký tự thoát đứng trước nên backtick đã
+# thoát không mở cặp); keep giữ hai dấu backtick và che nháy phần trong như bên ngoài. Nháy trong backtick không ghép với nháy
+# bên ngoài, vì bash đọc backtick là một khối (`` echo `echo a'` `` ⏎ `rm -rf src` ⏎ `echo 'x'` xoá src: verifier PR #102);
+# lệnh trong nó vẫn được đọc, chuỗi trong nháy bên trong thì không (`` n=`grep -c 'rm -rf src' f` ``: reviewer PR #103 lần
+# hai). Là cách đọc thêm, không sửa QUOTED_XB tại chỗ: bước dò heredoc (ARITH_X) không biết backtick, nên đổi QUOTED_XB làm
+# mất nhãn ở backtick có nháy lẻ rồi heredoc có thay lệnh trong thân (reviewer PR #103).
+QUOTED_XBT = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|`(?:[^`\\]|\\.)*`|" + QUOTED_X.pattern, re.MULTILINE)
 # quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
 # `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
 # giây). Mọi `"` trong phần đó là `\"` của lần quét đầu, nên lần quét từ chúng cùng nhịp với nó từ ký tự sau và cũng hỏng:
@@ -843,8 +850,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     store = []
 
     def keep(m):
-        if m[0].startswith("\\"):  # ký tự thoát ngoài nháy (QUOTED_XB): giữ nguyên, không phải chuỗi
+        if m[0].startswith("\\"):  # ký tự thoát ngoài nháy (QUOTED_XB, QUOTED_XBT): giữ nguyên, không phải chuỗi
             return m[0]
+        if m[0].startswith("`"):  # cặp backtick (QUOTED_XBT): giữ dấu, che nháy bên trong như bên ngoài
+            return "`" + QUOTED_XBT.sub(keep, m[0][1:-1]) + "`"
         if m[0].startswith("#") and not exact:
             return m[0]  # comment giữ nguyên văn như trước, chỉ không để nháy trong nó mở chuỗi (exact cất như chuỗi)
         store.append(m.group(0))
@@ -860,10 +869,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     ps = tool == "PowerShell"
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     if exact:  # PowerShell không thoát bằng `\`: strict che nháy như exact
-        quoted = QUOTED_PS_X if ps else QUOTED_XB if strict else QUOTED_X
+        quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict == 2 else QUOTED_XB if strict else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
-    mask = (lambda p: quoted.sub(keep, p)) if ps or quoted is QUOTED_XB else (lambda p: quoted_sub(quoted, keep, p))
+    mask = (lambda p: quoted.sub(keep, p)) if ps or quoted in (QUOTED_XB, QUOTED_XBT) else (lambda p: quoted_sub(quoted, keep, p))
     marked = body if shell_c else "".join(p if i % 2 else mask(p) for i, p in enumerate(regions))
     out, ctx, env, sep, saved, inherit, frozen, snap = [], "", {}, None, [], False, False, None
     # Comment chạy tới xuống dòng kế: `;`, `&&`, `|` trong nó không ngắt lệnh, cd trong nó không chạy. comment: phần đang
@@ -1315,7 +1324,7 @@ def reading_key(cmd, tool, combo, bodies):
     - bash đổi b (heredoc, here-string như bash): giữ nguyên trong khoá đệm b và trong lớp, không gộp."""
     join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict, pure, bash = combo
     join = join and tool != "PowerShell"
-    k = (join, scoped, parent_env, raw_marks, empty_body, exact, strict, bash)
+    k = (join, scoped, parent_env, raw_marks, empty_body, exact, bool(strict), bash)  # strict=2 chỉ đổi cách che nháy
     if k not in bodies:
         b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
         if strict and scoped and not raw_marks:
@@ -1395,6 +1404,10 @@ def reading_combos(cmd, tool="Bash"):
         # Cách đọc lồng (bash=2, việc 5 của 2.8): như bash, thêm here-string sau heredoc và thân lồng đọc lại. Không sinh bản
         # ứng viên (không tiêu trần của cách bash, reviewer PR #59).
         combos += [(join, True, False, True, False, False, True, False, True, False, True, False, 2) for join in joins]
+    # Cách đọc strict=2 (che nháy biết backtick, QUOTED_XBT) xét sau cùng, chỉ lấy hợp: bản của các cách đọc strict ở trên
+    # (trừ bash=2), chỉ khi lệnh có backtick.
+    if "`" in cmd and tool != "PowerShell":  # PowerShell: backtick là ký tự thoát, mọi cách strict che bằng QUOTED_PS_X
+        combos += [c[:10] + (2,) + c[11:] for c in combos if c[10] is True and c[12] != 2]
     return combos
 
 
@@ -1410,7 +1423,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
         key = reading_key(cmd, tool, combo, bodies)
         if key not in read:
             read.add(key)
-            cands = candidates(key[0]) if CANDIDATES and "$" in cmd and combo[10] and not combo[11] and not combo[4] \
+            cands = candidates(key[0]) if CANDIDATES and "$" in cmd and combo[10] is True and not combo[11] and not combo[4] \
                 and (combo[12] or "<<" not in cmd) and combo[12] != 2 else None
             segs += segments(cmd, tool, *combo, cands=cands, extra=extra, budget=budget)
     segs += extra
