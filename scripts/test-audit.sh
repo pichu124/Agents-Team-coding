@@ -2052,6 +2052,14 @@ MISSED_28 = [
     ("D=/tmp/w/\\ \nrm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi xuống dòng: xoá src của dự án"),
     ("D=/tmp/w/\\  && rm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi &&: xoá src của dự án"),
     ("export D=/tmp/w/\\ ; rm -rf $D/x", "xoá đệ quy", "$D/x tách thành /tmp/w/ và /x: xoá /x"),
+    # Reviewer PR #103: bước dò heredoc, here-string (ARITH_X) không biết backtick: nháy lẻ trong backtick nuốt `<<`, `<<<`
+    # nên thay lệnh trong thân heredoc (hay chuỗi đưa vào shell) không được đọc. Bash xoá src; main cũng bỏ sót.
+    ('x=`echo a"`\ncat <<EOF\n\'\n$(rm -rf src)\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\ncat <<EOF\n\'\n`rm -rf src`\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('echo `echo it\'s`\ncat <<EOF\n"\n`rm -rf src`\n"\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\nbash <<< \'rm -rf src\'', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('cat `"` <<EOF\n\'\n`rm -rf src`\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\ncat <<-EOF\n\t\'\n\t`rm -rf src`\n\t\'\n\tEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
