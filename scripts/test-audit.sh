@@ -2046,6 +2046,12 @@ MISSED_28 = [
     ("echo `echo it's`\ncat <<EOF > f\nit's\n`rm -rf src`\nit's\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
     ("`'` <<EOF\n'\n`rm -rf src`\n'\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
     ('`\'` <<EOF\n"`"``\'``rm -rf src`\'\nEOF', "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    # Reviewer PR #102: khoảng trắng thoát cuối giá trị là một phần giá trị; `${D}src` không nháy bị tách thành hai đích.
+    ("D=/tmp/w/\\ ; rm -rf ${D}src", "xoá đệ quy", "D = `/tmp/w/ `: tách thành /tmp/w/ và src, xoá src của dự án"),
+    ("D=/tmp/w/\\\t; rm -rf ${D}src", "xoá đệ quy", "tab thoát cuối giá trị: xoá src của dự án"),
+    ("D=/tmp/w/\\ \nrm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi xuống dòng: xoá src của dự án"),
+    ("D=/tmp/w/\\  && rm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi &&: xoá src của dự án"),
+    ("export D=/tmp/w/\\ ; rm -rf $D/x", "xoá đệ quy", "$D/x tách thành /tmp/w/ và /x: xoá /x"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
