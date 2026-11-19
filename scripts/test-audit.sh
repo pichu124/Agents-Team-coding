@@ -2994,11 +2994,12 @@ KNOWN_MISSES = [
 # `|&`), nên ORACLE_FLOOR nâng 2400 lên 2600 như 78e474a. ORACLE_FLOOR_TRAP2 canh riêng lệnh do var_trap2 sinh ở mức ngoài
 # cùng (TRAP2): đo 505, trong đó 14 có cd nhiều tham số hay `|&`, sàn là 505 - 14 = 491, làm tròn xuống.
 # ORACLE_FLOOR_28 canh riêng lệnh do var_trap3 (lô thêm thứ ba, các lỗ 2.8) sinh ở mức ngoài cùng (TRAP3): đo 426 với bash
-# 5.2, 425 với bash 3.2.57, 400 với zsh 5.9 (sàn zsh riêng dưới), làm tròn xuống.
+# 5.2, 425 với bash 3.2.57, 400 với zsh 5.9 (sàn zsh riêng dưới), làm tròn xuống. Thêm lô 3b (nháy trong backtick, cũng vào
+# TRAP3): 726 với bash 5.2, 724 với bash 3.2.57, 491 với zsh 5.9 (zsh ghép nháy qua backtick nên ít lệnh xoá hơn).
 ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
-ORACLE_FLOOR_28 = 400
+ORACLE_FLOOR_28 = 700
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
@@ -3017,7 +3018,7 @@ TAG = "oracle " + SH
 if SH == "zsh":
     # Đo trên zsh 5.9 (cùng ngữ pháp): lô chung 3918/7090 lệnh nguy (847 từ hàm lst thứ hai, 352 từ var_trap2), lô PR8 1739,
     # lưới 1435; zsh không tách từ $D không nháy nên ít lệnh nguy hơn bash. Sàn riêng, chỉ được nâng như sàn của bash.
-    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2, ORACLE_FLOOR_28 = 3800, 800, 340, 380
+    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2, ORACLE_FLOOR_28 = 3800, 800, 340, 470
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
@@ -3482,6 +3483,22 @@ def lst(depth, top):
 TRAP3, EXTRA0, TRAP2_0 = set(), set(EXTRA), set(TRAP2)
 rnd.seed(2800)
 cmds = list(dict.fromkeys(cmds + [tuple(lst(0, True)[0]) for _ in range(1000)]))
+# Lô 3b, hạt riêng (lệnh của các lô trên giữ nguyên): nháy lẻ trong backtick (bash đọc backtick là một khối) mà cách che
+# nháy cũ ghép với nháy sau đó, nuốt lệnh xoá ở giữa (verifier PR #102). Nháy sau đó đóng trong bash (lệnh chạy bằng
+# `bash -c`, nên phải trọn cú pháp): chuỗi trọn cặp hay nháy trong comment. Đếm vào TRAP3 (sàn 2.8).
+rnd.seed(2810)
+BQ = {"'": ["echo `echo a'`", "echo `echo it's`", "echo `echo a\\<#'`", "true `: '`"],
+      '"': ['echo `echo "`', 'echo `printf %s a"`']}
+for _ in range(400):
+    qc = pick(sorted(BQ))
+    out = []
+    for p_, kind, _ga in [item(1, False) for _ in range(rnd.randint(0, 1))]:
+        out += p_ + ["; "]
+    out += [pick(BQ[qc]), pick(["\n", "; ", " && "]), RM, " -rf " + pick(["src", "src", "dist src", "node_modules/x", "../src"]),
+            pick(["\n", "; "]), pick(["echo %sx%s" % (qc, qc), ": # %s" % qc, "echo a # it%ss" % qc])]
+    TRAP3.add(tuple(out))
+    cmds.append(tuple(out))
+cmds = list(dict.fromkeys(cmds))
 EXTRA, TRAP2 = EXTRA0, TRAP2_0  # sàn của lô 1, lô 2 chỉ đếm lệnh của chính lô đó (lô 3 gọi lại lst của chúng ở mức ngoài cùng)
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
@@ -3596,11 +3613,12 @@ def run(base, cmd, rec=False):
     return "quá 30 giây" if to else "", calls, bad
 def run_chung(base, i):
     """(các lần gọi stub [(thư mục, đích)], stdout và stderr, quá giờ, bị từ chối) khi bash chạy lệnh thứ i của lô chung.
-    FORBID/DISGUISE soát văn bản đã bỏ đường sandbox và ba mảnh của ngữ pháp (`pushd` khớp push, `$(` là thay lệnh): phần
+    FORBID/DISGUISE soát văn bản đã bỏ đường sandbox và các mảnh cố định của ngữ pháp (`pushd` khớp push, `$(` là thay lệnh,
+    backtick của lô 3b): phần
     còn lại của lệnh không được gọi gì khác."""
     text = render(cmds[i], os.path.join(base, "stub"))
     plain = text.replace(root, "").replace(sbx, "")  # root trước: trên macOS sbx (/var/…) có thể là chuỗi con của root
-    for frag in ("pushd", "true $( ", "echo $( "):
+    for frag in ("pushd", "true $( ", "echo $( ") + tuple(f for v in BQ.values() for f in v):  # BQ: backtick cố định của lô 3b
         plain = plain.replace(frag, "")
     if FORBID.search(plain) or DISGUISE.search(re.sub(r"['\"\\\\]", "", plain)):
         return [], "", False, True
