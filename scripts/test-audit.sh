@@ -2069,6 +2069,22 @@ MISSED_28 = [
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Guard hỏi vì hết ngân sách thời gian (máy chậm: runner Windows tải nặng) không phải phán xét về lệnh: replay trả asked=None
+# (chưa biết) như guard lỗi, để lệnh không rơi từ A sang H tuỳ tốc độ máy (CI Windows rest đỏ chập chờn ở hf2 và ở
+# `export D=/srv/; cat <<'EOF' \` ⏎ `| bash`, mỗi lần một lệnh). Hỏi vì nội dung (cả lệnh quá dài) vẫn là hỏi.
+import shutil
+fg = os.path.join(sys.argv[15], "fakeguard")
+os.makedirs(fg, exist_ok=True)
+for reason, want in (("Hành động không đảo ngược được (không kiểm kịp trong 5 giây (máy chậm hay lệnh dài)). Cần người xác nhận.", None),
+                     ("không kiểm kịp trong 0 giây (máy chậm hay lệnh dài)", None),
+                     ("git reset --hard: xoá thay đổi chưa commit", True),
+                     ("lệnh quá dài để kiểm kịp: hơn 262144 byte", True)):
+    gp = os.path.join(fg, "g.sh")
+    with open(gp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("#!/bin/bash\ncat >/dev/null\nprintf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\","
+                 "\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"" + reason + "\"}}'\n")
+    got = a.replay(gp, shutil.which("bash") or "bash", {"tool": "Bash", "cwd": fg, "command": "git reset --hard"})
+    check(got["asked"] is want, f"replay: guard hỏi với lý do {reason!r} phải cho asked={want}, được {got!r}")
 # Lỗ còn lại của 2.8 mà không chính sách env đơn nào đọc đúng (bash 5.2 thật xoá đích ghi bên cạnh, rm thay bằng hàm in đối số):
 # phép gán có thể đã áp lẫn phép gán chắc không áp, hai heredoc trên một dòng, heredoc lồng, biến trong nháy kép ở vị trí cờ
 # hay tên lệnh, read <<<, ${O:-W}. Tập ứng viên (candidates/variants) che chúng. MISSED_28B_PENDING là chỉ số các ca bước đó
