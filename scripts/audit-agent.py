@@ -243,11 +243,12 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # `a\ #b`, `a\\\|#b`: oracle 2.8 và reviewer PR #102 tìm ra cách đọc pure bỏ cả dòng sau đó). Quét trái sang phải nên chẵn
 # lẻ của `\` tự đúng: `a\\|#b` là `\\` rồi dấu tách thật, `#` mở comment.
 QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|" + QUOTED_X.pattern, re.MULTILINE)
-# QUOTED_XBT (cách đọc strict=2): như QUOTED_XB, thêm cặp backtick khớp trọn và giữ nguyên văn (keep; nhánh ký tự thoát đứng
-# trước nên backtick đã thoát không mở cặp). Nháy trong backtick không ghép với nháy bên ngoài, vì bash đọc backtick là một
-# khối (`` echo `echo a'` `` ⏎ `rm -rf src` ⏎ `echo 'x'` xoá src: verifier PR #102); lệnh trong nó vẫn được đọc. Là cách đọc
-# thêm, không sửa QUOTED_XB tại chỗ: bước dò heredoc (ARITH_X) không biết backtick, nên đổi QUOTED_XB làm mất nhãn ở
-# backtick có nháy lẻ rồi heredoc có thay lệnh trong thân (reviewer PR #103).
+# QUOTED_XBT (cách đọc strict=2): như QUOTED_XB, thêm cặp backtick khớp trọn (nhánh ký tự thoát đứng trước nên backtick đã
+# thoát không mở cặp); keep giữ hai dấu backtick và che nháy phần trong như bên ngoài. Nháy trong backtick không ghép với nháy
+# bên ngoài, vì bash đọc backtick là một khối (`` echo `echo a'` `` ⏎ `rm -rf src` ⏎ `echo 'x'` xoá src: verifier PR #102);
+# lệnh trong nó vẫn được đọc, chuỗi trong nháy bên trong thì không (`` n=`grep -c 'rm -rf src' f` ``: reviewer PR #103 lần
+# hai). Là cách đọc thêm, không sửa QUOTED_XB tại chỗ: bước dò heredoc (ARITH_X) không biết backtick, nên đổi QUOTED_XB làm
+# mất nhãn ở backtick có nháy lẻ rồi heredoc có thay lệnh trong thân (reviewer PR #103).
 QUOTED_XBT = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|`(?:[^`\\]|\\.)*`|" + QUOTED_X.pattern, re.MULTILINE)
 # quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
 # `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
@@ -849,8 +850,10 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     store = []
 
     def keep(m):
-        if m[0].startswith(("\\", "`")):  # ký tự thoát, cặp backtick ngoài nháy (QUOTED_XB/XBT): giữ nguyên, không phải chuỗi
+        if m[0].startswith("\\"):  # ký tự thoát ngoài nháy (QUOTED_XB, QUOTED_XBT): giữ nguyên, không phải chuỗi
             return m[0]
+        if m[0].startswith("`"):  # cặp backtick (QUOTED_XBT): giữ dấu, che nháy bên trong như bên ngoài
+            return "`" + QUOTED_XBT.sub(keep, m[0][1:-1]) + "`"
         if m[0].startswith("#") and not exact:
             return m[0]  # comment giữ nguyên văn như trước, chỉ không để nháy trong nó mở chuỗi (exact cất như chuỗi)
         store.append(m.group(0))
@@ -1403,7 +1406,7 @@ def reading_combos(cmd, tool="Bash"):
         combos += [(join, True, False, True, False, False, True, False, True, False, True, False, 2) for join in joins]
     # Cách đọc strict=2 (che nháy biết backtick, QUOTED_XBT) xét sau cùng, chỉ lấy hợp: bản của các cách đọc strict ở trên
     # (trừ bash=2), chỉ khi lệnh có backtick.
-    if "`" in cmd:
+    if "`" in cmd and tool != "PowerShell":  # PowerShell: backtick là ký tự thoát, mọi cách strict che bằng QUOTED_PS_X
         combos += [c[:10] + (2,) + c[11:] for c in combos if c[10] is True and c[12] != 2]
     return combos
 
