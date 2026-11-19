@@ -2065,6 +2065,12 @@ MISSED_28 = [
     ("x=`echo it's`; y=`cat <<EOF`\nrm -rf src\nEOF\necho 'done'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
     ("x=`echo it's` y=`cat <<E`\nrm -rf src\nE\necho 'ok'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
     ('x=`echo a"`; y=`cat <<EOF`\nrm -rf src\nEOF\necho "ok"', "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    # Reviewer PR #104: khoảng trắng thoát sau phần trong nháy, và giá trị có khoảng trắng cuối truyền qua phép gán khác.
+    ("D='/tmp/w/'\\ ; rm -rf ${D}src", "xoá đệ quy", 'phần nháy rồi `\\ `: D = `/tmp/w/ `, xoá src của dự án'),
+    ('D="/tmp/w/"\\ ; rm -rf ${D}src', "xoá đệ quy", 'nháy kép rồi `\\ `: xoá src của dự án'),
+    ("D='/tmp/w/'\\\t; rm -rf ${D}src", "xoá đệ quy", 'phần nháy rồi `\\` + tab: xoá src của dự án'),
+    ('D=/tmp/w/\\ ; E=$D; rm -rf ${E}src', "xoá đệ quy", '`E=$D` giữ khoảng trắng cuối (phép gán không tách từ): xoá src của dự án'),
+    ('D=/tmp/w/\\ ; export E=$D; rm -rf ${E}src', "xoá đệ quy", '`export E=$D` giữ khoảng trắng cuối: xoá src của dự án'),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
