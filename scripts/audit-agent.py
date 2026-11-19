@@ -242,7 +242,10 @@ QUOTED_PS_X = re.compile(QUOTED_PS_6F32D5A.pattern + COMMENT, re.MULTILINE)
 # Ký tự thoát ngoài nháy ăn luôn các `#` dính sau nó: `#` sau một ký tự đã thoát nằm giữa từ, không mở comment (`echo a\|#b`,
 # `a\ #b`, `a\\\|#b`: oracle 2.8 và reviewer PR #102 tìm ra cách đọc pure bỏ cả dòng sau đó). Quét trái sang phải nên chẵn
 # lẻ của `\` tự đúng: `a\\|#b` là `\\` rồi dấu tách thật, `#` mở comment.
-QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|" + QUOTED_X.pattern, re.MULTILINE)
+# Cặp backtick khớp trọn và giữ nguyên văn (keep; nhánh ký tự thoát đứng trước nên backtick đã thoát không mở cặp): nháy
+# trong nó không ghép với nháy bên ngoài, vì bash đọc backtick là một khối (`` echo `echo a'` `` ⏎ `rm -rf src` ⏎ `echo '` xoá src: verifier PR #102); lệnh trong nó vẫn
+# được đọc như trước.
+QUOTED_XB = re.compile(r"\$'(?:[^'\\]|\\.)*'|\\.#*|`(?:[^`\\]|\\.)*`|" + QUOTED_X.pattern, re.MULTILINE)
 # quoted_sub(rx, f, text) là rx.sub(f, text) với rx là QUOTED, QUOTED_6F32D5A hay QUOTED_X. Nháy kép chưa đóng: nhánh
 # `"(?:[^"\\]|\\.)*"` quét hết DQ_RUN rồi hỏng, và rx.sub thử lại từ mỗi `"` trong phần đó: bậc hai (`'\\"'*20000` 6,7
 # giây). Mọi `"` trong phần đó là `\"` của lần quét đầu, nên lần quét từ chúng cùng nhịp với nó từ ký tự sau và cũng hỏng:
@@ -843,7 +846,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     store = []
 
     def keep(m):
-        if m[0].startswith("\\"):  # ký tự thoát ngoài nháy (QUOTED_XB): giữ nguyên, không phải chuỗi
+        if m[0].startswith(("\\", "`")):  # ký tự thoát, cặp backtick ngoài nháy (QUOTED_XB): giữ nguyên, không phải chuỗi
             return m[0]
         if m[0].startswith("#") and not exact:
             return m[0]  # comment giữ nguyên văn như trước, chỉ không để nháy trong nó mở chuỗi (exact cất như chuỗi)
