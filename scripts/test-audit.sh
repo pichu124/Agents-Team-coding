@@ -2046,6 +2046,12 @@ MISSED_28 = [
     ("echo `echo it's`\ncat <<EOF > f\nit's\n`rm -rf src`\nit's\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
     ("`'` <<EOF\n'\n`rm -rf src`\n'\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
     ('`\'` <<EOF\n"`"``\'``rm -rf src`\'\nEOF', "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    # Reviewer PR #102: khoảng trắng thoát cuối giá trị là một phần giá trị; `${D}src` không nháy bị tách thành hai đích.
+    ("D=/tmp/w/\\ ; rm -rf ${D}src", "xoá đệ quy", "D = `/tmp/w/ `: tách thành /tmp/w/ và src, xoá src của dự án"),
+    ("D=/tmp/w/\\\t; rm -rf ${D}src", "xoá đệ quy", "tab thoát cuối giá trị: xoá src của dự án"),
+    ("D=/tmp/w/\\ \nrm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi xuống dòng: xoá src của dự án"),
+    ("D=/tmp/w/\\  && rm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi &&: xoá src của dự án"),
+    ("export D=/tmp/w/\\ ; rm -rf $D/x", "xoá đệ quy", "$D/x tách thành /tmp/w/ và /x: xoá /x"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -2141,6 +2147,11 @@ BENIGN_BT = [
 for cmd in BENIGN_BT:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"BENIGN_BT: chuỗi trong nháy bên trong backtick không là lệnh: {cmd!r}: {got!r}")
+# Reviewer PR #104: `\` cuối giá trị mà ký tự sau không phải khoảng trắng hay tab (nối dòng, `\;`, CR, FF) không thêm
+# khoảng trắng vào giá trị: bash xoá trong /tmp (hay không chạy rm), không được báo.
+for cmd in ('D=/tmp/w/\\\nrelease\nrm -rf ${D}cache', 'export D=/tmp/w/\\; rm -rf ${D}src', 'D=/tmp/w/\\\r\nrm -rf ${D}src', 'D=/tmp/w/\\\x0c; rm -rf ${D}src'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"`\\\\` cuối giá trị không trước khoảng trắng hay tab: {cmd!r}: {got!r}")
 for cmd in ("rm $F", "rm -f $F", "O=$(cat f); rm $O /tmp/x", "C=$(cat f); $C -rf /tmp/x"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"biến không biết ở vị trí cờ mà đích vô hại hay không có đích: {cmd!r}: {got!r}")
@@ -3044,10 +3055,11 @@ KNOWN_MISSES = [
 # ORACLE_FLOOR_28 canh riêng lệnh do var_trap3 (lô thêm thứ ba, các lỗ 2.8) sinh ở mức ngoài cùng (TRAP3): đo 426 với bash
 # 5.2, 425 với bash 3.2.57, 400 với zsh 5.9 (sàn zsh riêng dưới), làm tròn xuống. Thêm lô 3b (nháy trong backtick, cũng vào
 # TRAP3): 726 với bash 5.2, 724 với bash 3.2.57, 491 với zsh 5.9 (zsh ghép nháy qua backtick nên ít lệnh xoá hơn).
+# Thêm lô 3c (khoảng trắng thoát cuối giá trị, cũng vào TRAP3): 890 với bash 5.2, 887 với bash 3.2.57, 555 với zsh 5.9.
 ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
-ORACLE_FLOOR_28 = 700
+ORACLE_FLOOR_28 = 860
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
@@ -3066,7 +3078,7 @@ TAG = "oracle " + SH
 if SH == "zsh":
     # Đo trên zsh 5.9 (cùng ngữ pháp): lô chung 3918/7090 lệnh nguy (847 từ hàm lst thứ hai, 352 từ var_trap2), lô PR8 1739,
     # lưới 1435; zsh không tách từ $D không nháy nên ít lệnh nguy hơn bash. Sàn riêng, chỉ được nâng như sàn của bash.
-    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2, ORACLE_FLOOR_28 = 3800, 800, 340, 470
+    ORACLE_FLOOR, ORACLE_FLOOR_EXTRA, ORACLE_FLOOR_TRAP2, ORACLE_FLOOR_28 = 3800, 800, 340, 530
 t0 = time.monotonic()
 spec = importlib.util.spec_from_file_location("audit", "scripts/audit-agent.py")
 a = importlib.util.module_from_spec(spec)
@@ -3544,6 +3556,18 @@ for _ in range(400):
         out += p_ + ["; "]
     out += [pick(BQ[qc]), pick(["\n", "; ", " && "]), RM, " -rf " + pick(["src", "src", "dist src", "node_modules/x", "../src"]),
             pick(["\n", "; "]), pick(["echo %sx%s" % (qc, qc), ": # %s" % qc, "echo a # it%ss" % qc])]
+    TRAP3.add(tuple(out))
+    cmds.append(tuple(out))
+cmds = list(dict.fromkeys(cmds))
+# Lô 3c, hạt riêng (lệnh của các lô trên giữ nguyên): khoảng trắng hay tab thoát cuối giá trị (reviewer PR #102): D có
+# khoảng trắng cuối nên `${D}src`, `$D/x` không nháy tách thành hai đích. Đếm vào TRAP3 (sàn 2.8).
+rnd.seed(2820)
+for _ in range(300):
+    out = []
+    for p_, _kind, _ga in [item(1, False) for _ in range(rnd.randint(0, 1))]:
+        out += p_ + ["; "]
+    out += [pick(["D=", "export D="]) + REAL + "/" + pick(["\\ ", "\\\t"]) + pick(["; ", "\n", " && "]), RM, " -rf " +
+            pick(["${D}src", "${D}src", "${D}dist", "$D/x", "${D}../src"])]
     TRAP3.add(tuple(out))
     cmds.append(tuple(out))
 cmds = list(dict.fromkeys(cmds))
