@@ -2101,6 +2101,46 @@ for cmd in ("read O < f; rm $O /x", "O=$(cat f); rm \"$O\" /x", "rm $O /x", "for
             "U=/tmp/a; U=$(cat f); " + "".join(f"rm $U /tmp/lit{i}; " for i in range(2000)) + "O=$(cat f); rm $O /srv/x"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"biến không biết ở vị trí cờ của rm (2.8 việc 4): {cmd!r}: {got!r}")
+# Reviewer PR #103: lệnh lành có backtick (bash -c không xoá gì, main không báo); cách đọc biết backtick không được
+# đọc chuỗi trong nháy bên trong backtick thành lệnh.
+BENIGN_BT = [
+    "echo `echo 'a; rm -rf src'`",
+    "echo `echo 'rm -rf src'`",
+    "x=`printf '%s' 'rm -rf src'`",
+    'echo `echo "; rm -rf src"`',
+    'echo `echo "rm -rf src"`',
+    "n=`grep -c 'rm -rf src' notes.txt`",
+    'n=`grep -c "rm -rf src" notes.txt`; echo $n',
+    "git log --grep=`echo 'rm -rf node_modules'`",
+    "echo `echo '| rm -rf src'`",
+    "echo `echo '&& rm -rf src'`",
+    "echo `echo '\nrm -rf src\n'`",
+    'echo `echo "\nrm -rf src\n"`',
+    'msg=`echo \'run: rm -rf build src\'`; echo "$msg"',
+    "echo `cat <<'EOF'\nrm -rf src\nEOF\n`",
+    "echo `echo $'rm -rf src'`",
+    "echo `echo '#'; echo 'x; rm -rf src'`",
+    "D=`echo '/tmp/w'`; echo 'rm -rf src'",
+    'echo `echo it\'s` "rm -rf src"',
+    'echo "`echo \'rm -rf src\'`"',
+    "echo '`' 'rm -rf src' '`'",
+    "echo `echo \\`echo 'rm -rf src'\\``",
+    "awk '{print}' `echo 'f; rm -rf src'`",
+    "sed -n `echo '1p; rm -rf src'` f",
+    "echo `echo 'a'` 'b; rm -rf src'",
+    'echo `echo "a\'"`; echo \'rm -rf src\'',
+    'echo `echo "a\'"`\necho \' ; rm -rf src \'',
+    'test -n "`echo \'rm -rf src\'`" && echo ok',
+    "for f in `ls 'rm -rf src'`; do echo $f; done",
+    "case `echo 'rm -rf src'` in *) echo x;; esac",
+    "echo `echo '{ rm -rf src; }'`",
+    "echo `echo '$(rm -rf src)'`",
+    'echo `printf "%s\\n" \'rm -rf src\'`',
+    'echo `echo "rm -rf" src`',
+]
+for cmd in BENIGN_BT:
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"BENIGN_BT: chuỗi trong nháy bên trong backtick không là lệnh: {cmd!r}: {got!r}")
 for cmd in ("rm $F", "rm -f $F", "O=$(cat f); rm $O /tmp/x", "C=$(cat f); $C -rf /tmp/x"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"biến không biết ở vị trí cờ mà đích vô hại hay không có đích: {cmd!r}: {got!r}")
