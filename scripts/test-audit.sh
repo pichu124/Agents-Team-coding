@@ -2060,6 +2060,11 @@ MISSED_28 = [
     ('x=`echo a"`\nbash <<< \'rm -rf src\'', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
     ('cat `"` <<EOF\n\'\n`rm -rf src`\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
     ('x=`echo a"`\ncat <<-EOF\n\t\'\n\t`rm -rf src`\n\t\'\n\tEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    # Reviewer PR #105: `<<` trong backtick là heredoc mở trong lệnh thay thế; khi bash đọc theo cách strict=2 cũ (ARITH_X) thì
+    # main bắt `rm -rf src` dưới dòng đó, còn ARITH_XT bỏ qua backtick có `<<` nên không còn thấy. Bash xoá src.
+    ("x=`echo it's`; y=`cat <<EOF`\nrm -rf src\nEOF\necho 'done'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    ("x=`echo it's` y=`cat <<E`\nrm -rf src\nE\necho 'ok'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    ('x=`echo a"`; y=`cat <<EOF`\nrm -rf src\nEOF\necho "ok"', "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
