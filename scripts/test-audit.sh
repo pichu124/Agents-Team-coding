@@ -2052,6 +2052,19 @@ MISSED_28 = [
     ("D=/tmp/w/\\ \nrm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi xuống dòng: xoá src của dự án"),
     ("D=/tmp/w/\\  && rm -rf ${D}src", "xoá đệ quy", "khoảng trắng thoát rồi &&: xoá src của dự án"),
     ("export D=/tmp/w/\\ ; rm -rf $D/x", "xoá đệ quy", "$D/x tách thành /tmp/w/ và /x: xoá /x"),
+    # Reviewer PR #103: bước dò heredoc, here-string (ARITH_X) không biết backtick: nháy lẻ trong backtick nuốt `<<`, `<<<`
+    # nên thay lệnh trong thân heredoc (hay chuỗi đưa vào shell) không được đọc. Bash xoá src; main cũng bỏ sót.
+    ('x=`echo a"`\ncat <<EOF\n\'\n$(rm -rf src)\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\ncat <<EOF\n\'\n`rm -rf src`\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('echo `echo it\'s`\ncat <<EOF\n"\n`rm -rf src`\n"\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\nbash <<< \'rm -rf src\'', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('cat `"` <<EOF\n\'\n`rm -rf src`\n\'\nEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    ('x=`echo a"`\ncat <<-EOF\n\t\'\n\t`rm -rf src`\n\t\'\n\tEOF', "xoá đệ quy", "nháy lẻ trong backtick trước heredoc, here-string: xoá src"),
+    # Reviewer PR #105: `<<` trong backtick là heredoc mở trong lệnh thay thế; khi bash đọc theo cách strict=2 cũ (ARITH_X) thì
+    # main bắt `rm -rf src` dưới dòng đó, còn ARITH_XT bỏ qua backtick có `<<` nên không còn thấy. Bash xoá src.
+    ("x=`echo it's`; y=`cat <<EOF`\nrm -rf src\nEOF\necho 'done'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    ("x=`echo it's` y=`cat <<E`\nrm -rf src\nE\necho 'ok'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    ('x=`echo a"`; y=`cat <<EOF`\nrm -rf src\nEOF\necho "ok"', "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -3056,10 +3069,12 @@ KNOWN_MISSES = [
 # 5.2, 425 với bash 3.2.57, 400 với zsh 5.9 (sàn zsh riêng dưới), làm tròn xuống. Thêm lô 3b (nháy trong backtick, cũng vào
 # TRAP3): 726 với bash 5.2, 724 với bash 3.2.57, 491 với zsh 5.9 (zsh ghép nháy qua backtick nên ít lệnh xoá hơn).
 # Thêm lô 3c (khoảng trắng thoát cuối giá trị, cũng vào TRAP3): 890 với bash 5.2, 887 với bash 3.2.57, 555 với zsh 5.9.
+# Thêm lô 3d (nháy lẻ trong backtick trước heredoc dữ liệu, cũng vào TRAP3): 989 với bash 5.2, 986 với bash 3.2.57, zsh
+# vẫn 555 (zsh ghép nháy qua backtick nên thay lệnh trong thân không chạy).
 ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
-ORACLE_FLOOR_28 = 860
+ORACLE_FLOOR_28 = 960
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
@@ -3571,6 +3586,18 @@ for _ in range(300):
     TRAP3.add(tuple(out))
     cmds.append(tuple(out))
 cmds = list(dict.fromkeys(cmds))
+# Lô 3d, hạt riêng (lệnh của các lô trên giữ nguyên): nháy lẻ trong backtick trước một heredoc dữ liệu không nháy mà thân
+# có nháy quanh thay lệnh xoá (reviewer PR #103: bước dò heredoc ARITH_X không biết backtick). Thay lệnh viết `echo $( … )`
+# (mảnh đã cho phép ở DISGUISE); backtick mở đầu là mảnh cố định BQD. Đếm vào TRAP3 (sàn 2.8).
+rnd.seed(2830)
+BQD = ["x=`echo a\"`", "echo `echo it's`", "true `: '`", "x=`printf %s a\"`"]
+for _ in range(300):
+    q = pick(["'", '"', "it's"])
+    out = [pick(BQD), pick(["\n", "; "]), pick(["cat <<EOF", "cat <<EOF", "cat <<-EOF", ": <<EOF"]), "\n", q, "\n",
+           "echo $( ", RM, " -rf " + pick(["src", "src", "dist src", "node_modules/x"]) + " )", "\n", q, "\nEOF"]
+    TRAP3.add(tuple(out))
+    cmds.append(tuple(out))
+cmds = list(dict.fromkeys(cmds))
 EXTRA, TRAP2 = EXTRA0, TRAP2_0  # sàn của lô 1, lô 2 chỉ đếm lệnh của chính lô đó (lô 3 gọi lại lst của chúng ở mức ngoài cùng)
 # Builtin in ra stdout ở vế trái một pipe bị SIGPIPE tuỳ lúc (kết quả không tất định): bọc chúng cho im, giữ mã thoát.
 # `wait` không đối số trong $( ) của bash 5.3 (Ubuntu 26.04, runner CI) lặp mãi với việc nền mà shell cha chưa thu, in
@@ -3690,7 +3717,7 @@ def run_chung(base, i):
     còn lại của lệnh không được gọi gì khác."""
     text = render(cmds[i], os.path.join(base, "stub"))
     plain = text.replace(root, "").replace(sbx, "")  # root trước: trên macOS sbx (/var/…) có thể là chuỗi con của root
-    for frag in ("pushd", "true $( ", "echo $( ") + tuple(f for v in BQ.values() for f in v):  # BQ: backtick cố định của lô 3b
+    for frag in ("pushd", "true $( ", "echo $( ") + tuple(f for v in BQ.values() for f in v) + tuple(BQD):  # backtick cố định: lô 3b, 3d
         plain = plain.replace(frag, "")
     if FORBID.search(plain) or DISGUISE.search(re.sub(r"['\"\\\\]", "", plain)):
         return [], "", False, True
