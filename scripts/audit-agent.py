@@ -371,12 +371,13 @@ TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >
 VAR_REF = re.compile(r"\$\{?(\w+)\}?")
 
 
-def assigned(val):
-    """Giá trị env ghi cho phép gán NAME=val của ASSIGN: bỏ nháy hai đầu. Giá trị không nháy kết thúc bằng số lẻ `\\` là
-    `\\` thoát khoảng trắng hay tab ngay sau (ASSIGN dừng trước nó): bash gán cả khoảng trắng đó (`D=/tmp/w/\\ ;` là
-    `/tmp/w/ `), nên `${D}src` không nháy tách thành /tmp/w/ và src (reviewer PR #102)."""
-    if val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
-        return val[:-1] + " "
+def assigned(val, after=""):
+    """Giá trị env ghi cho phép gán NAME=val của ASSIGN: bỏ nháy hai đầu. Giá trị không nháy kết thúc bằng số lẻ `\\` mà
+    ký tự ngay sau (after) là khoảng trắng hay tab: `\\` thoát ký tự đó (ASSIGN dừng trước nó), bash gán cả nó
+    (`D=/tmp/w/\\ ;` là `/tmp/w/ `), nên `${D}src` không nháy tách thành /tmp/w/ và src (reviewer PR #102). Sau `\\` là
+    xuống dòng (nối dòng), `;` của cách đọc tách ở `\\;`, CR hay FF thì không (reviewer PR #104)."""
+    if after in (" ", "\t") and val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
+        return val[:-1] + after
     return val.strip("\"'")
 
 
@@ -1048,15 +1049,17 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                         own(env)
                         env.pop(name)
                     kid.pop(name, None)
-        for name, val in ((ASSIGN_EMPTY if pure else ASSIGN).findall(full) if assigns and not frozen and sure else ()):
+        tail = parts[i][len(parts[i].rstrip()):][:1]  # ký tự trắng đầu tiên mà strip đã cắt ở cuối đoạn (assigned)
+        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(full) if assigns and not frozen and sure else ()):
+            name, val = am.groups()
             own(env)
             if forget:
                 env.pop(name, None)
                 kid.pop(name, None)
             else:
-                env[name] = kid[name] = assigned(val)
+                env[name] = kid[name] = assigned(val, full[am.end(2):am.end(2) + 1] or tail)
         if snapped:
-            temp = {n: assigned(v) for n, v in ASSIGN.findall(expand(op, values))}
+            temp = {t[1]: assigned(t[2], x[t.end(2):t.end(2) + 1]) for x in (expand(op, values),) for t in ASSIGN.finditer(x)}
             snap, pre = (pre, env, {**pre, **temp} if temp else pre), None  # các dict của snap chỉ bị đọc
         if before:  # khâu của ống: phép gán trong đoạn không ra ngoài. Trả env trước khi `)` đóng nhóm lấy env lúc mở nhóm
             env = before[0]

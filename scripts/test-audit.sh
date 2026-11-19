@@ -2147,7 +2147,7 @@ BENIGN_BT = [
 for cmd in BENIGN_BT:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"BENIGN_BT: chuỗi trong nháy bên trong backtick không là lệnh: {cmd!r}: {got!r}")
-# Reviewer PR #104: `\\` cuối giá trị mà ký tự sau không phải khoảng trắng hay tab (nối dòng, `\\;`, CR, FF) không thêm
+# Reviewer PR #104: `\` cuối giá trị mà ký tự sau không phải khoảng trắng hay tab (nối dòng, `\;`, CR, FF) không thêm
 # khoảng trắng vào giá trị: bash xoá trong /tmp (hay không chạy rm), không được báo.
 for cmd in ('D=/tmp/w/\\\nrelease\nrm -rf ${D}cache', 'export D=/tmp/w/\\; rm -rf ${D}src', 'D=/tmp/w/\\\r\nrm -rf ${D}src', 'D=/tmp/w/\\\x0c; rm -rf ${D}src'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
