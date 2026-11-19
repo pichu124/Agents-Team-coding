@@ -2038,6 +2038,14 @@ MISSED_28 = [
     ("echo `echo a\\<#'`\nrm -rf src\necho '", "xoá đệ quy", "`\\<#'` trong backtick: xoá src của dự án"),
     ("echo `echo \"`\nrm -rf src\necho \"", "xoá đệ quy", "nháy kép trong backtick: xoá src của dự án"),
     ("echo `echo it's`; rm -rf src # '", "xoá đệ quy", "nháy lẻ trong backtick, nháy trong comment: xoá src"),
+    # Reviewer PR #103 (chặn bản đầu): che nháy biết backtick tại chỗ làm lệch với bước dò heredoc (ARITH_X), mất nhãn
+    # main có: backtick có nháy lẻ rồi heredoc không nháy có thay lệnh xoá trong thân. Bash xoá src của dự án.
+    ("echo `echo it's`\ncat <<EOF\n'\n$(rm -rf src)\n'\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    ("echo `echo it's`\ncat <<EOF\n'\n`rm -rf src`\n'\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    ("echo `echo it's`\ncat <<-EOF\n\t'\n\t`rm -rf src`\n\t'\n\tEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    ("echo `echo it's`\ncat <<EOF > f\nit's\n`rm -rf src`\nit's\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    ("`'` <<EOF\n'\n`rm -rf src`\n'\nEOF", "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
+    ('`\'` <<EOF\n"`"``\'``rm -rf src`\'\nEOF', "xoá đệ quy", "thay lệnh trong thân heredoc sau backtick có nháy lẻ: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
