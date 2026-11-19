@@ -2032,6 +2032,12 @@ MISSED_28 = [
      "`a\\\\\\|#b`: `\\\\` rồi `\\|`, `#` giữa từ: xoá src của dự án"),
     ("echo a\\\\\\ #b; true || { cd /tmp/w; D=/tmp/w/; } && rm -rf ${D}src", "xoá đệ quy",
      "`a\\\\\\ #b`: khoảng trắng thoát, `#` giữa từ: xoá src của dự án"),
+    # Verifier PR #102: nháy lẻ trong backtick không ghép với nháy ngoài (bash đọc backtick là một khối), nên lệnh giữa hai
+    # nháy chạy.
+    ("echo `echo a'`\nrm -rf src\necho '", "xoá đệ quy", "nháy trong backtick, rồi rm: xoá src của dự án"),
+    ("echo `echo a\\<#'`\nrm -rf src\necho '", "xoá đệ quy", "`\\<#'` trong backtick: xoá src của dự án"),
+    ("echo `echo \"`\nrm -rf src\necho \"", "xoá đệ quy", "nháy kép trong backtick: xoá src của dự án"),
+    ("echo `echo it's`; rm -rf src # '", "xoá đệ quy", "nháy lẻ trong backtick, nháy trong comment: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
