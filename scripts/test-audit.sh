@@ -2065,6 +2065,23 @@ MISSED_28 = [
     ("x=`echo it's`; y=`cat <<EOF`\nrm -rf src\nEOF\necho 'done'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
     ("x=`echo it's` y=`cat <<E`\nrm -rf src\nE\necho 'ok'", "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
     ('x=`echo a"`; y=`cat <<EOF`\nrm -rf src\nEOF\necho "ok"', "xoá đệ quy", "heredoc mở trong backtick sau nháy lẻ: xoá src"),
+    # Reviewer PR #104: khoảng trắng thoát sau phần trong nháy, và giá trị có khoảng trắng cuối truyền qua phép gán khác.
+    ("D='/tmp/w/'\\ ; rm -rf ${D}src", "xoá đệ quy", 'phần nháy rồi `\\ `: D = `/tmp/w/ `, xoá src của dự án'),
+    ('D="/tmp/w/"\\ ; rm -rf ${D}src', "xoá đệ quy", 'nháy kép rồi `\\ `: xoá src của dự án'),
+    ("D='/tmp/w/'\\\t; rm -rf ${D}src", "xoá đệ quy", 'phần nháy rồi `\\` + tab: xoá src của dự án'),
+    ('D=/tmp/w/\\ ; E=$D; rm -rf ${E}src', "xoá đệ quy", '`E=$D` giữ khoảng trắng cuối (phép gán không tách từ): xoá src của dự án'),
+    ('D=/tmp/w/\\ ; export E=$D; rm -rf ${E}src', "xoá đệ quy", '`export E=$D` giữ khoảng trắng cuối: xoá src của dự án'),
+    # Reviewer PR #106: bản đầu đổi env tại chỗ (assigned() hai ký tự, lượt `E=$D` đọc giá trị mới của cùng câu lệnh) nên
+    # mất nhãn main vẫn báo; bash xoá đích ngoài tmp/build ở mọi ca.
+    ("D='/tmp/w/'\\ ; E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D='/tmp/w/'\\ ; E=$D/\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=\"/tmp/w\"\\ ; export E=$D\\ ; rm -rf $E/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/srv; export D=/tmp/w/\\  E=$D; rm -rf \"${E}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/tmp/w/\\ ; export E=$D F=$E; rm -rf \"${F}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("readonly D=/tmp/w/\\  E=$D; rm -rf \"${E}src\"", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D='/tmp'\\ E=$D E=$D && rm -rf $E", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("declare D='/tmp'\\ x; E=$D; rm -rf ${E}dist/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    ("D=/tmp\\;;E=$D F=$E; rm -rf $F", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -3071,10 +3088,12 @@ KNOWN_MISSES = [
 # Thêm lô 3c (khoảng trắng thoát cuối giá trị, cũng vào TRAP3): 890 với bash 5.2, 887 với bash 3.2.57, 555 với zsh 5.9.
 # Thêm lô 3d (nháy lẻ trong backtick trước heredoc dữ liệu, cũng vào TRAP3): 989 với bash 5.2, 986 với bash 3.2.57, zsh
 # vẫn 555 (zsh ghép nháy qua backtick nên thay lệnh trong thân không chạy).
+# Thêm lô 3e (nháy rồi `\ `, `E=$D` giữ khoảng trắng cuối, cũng vào TRAP3): 1050 với bash 5.2, 1047 với bash 3.2.57,
+# 555 với zsh 5.9 (zsh không tách `$D` nên lô này không thêm lệnh xoá với zsh).
 ORACLE_FLOOR = 2600
 ORACLE_FLOOR_EXTRA = 500
 ORACLE_FLOOR_TRAP2 = 450
-ORACLE_FLOOR_28 = 960
+ORACLE_FLOOR_28 = 1020
 N = 4500  # khoảng 12 giây trên 4 CPU
 # KNOWN_GAPS: lỗ đã biết, có việc riêng, nên ngữ pháp KHÔNG sinh. Bỏ một dòng khỏi đây chỉ khi audit đã sửa lỗ đó, và thêm
 # cấu trúc tương ứng vào ngữ pháp cùng lúc. Chỉ được giảm, cùng KNOWN_MISSES: hợp hai danh sách thêm dòng so với bản trước là
@@ -3595,6 +3614,21 @@ for _ in range(300):
     q = pick(["'", '"', "it's"])
     out = [pick(BQD), pick(["\n", "; "]), pick(["cat <<EOF", "cat <<EOF", "cat <<-EOF", ": <<EOF"]), "\n", q, "\n",
            "echo $( ", RM, " -rf " + pick(["src", "src", "dist src", "node_modules/x"]) + " )", "\n", q, "\nEOF"]
+    TRAP3.add(tuple(out))
+    cmds.append(tuple(out))
+# Lô 3e, hạt riêng (lệnh của các lô trên giữ nguyên): khoảng trắng thoát sau phần trong nháy (`D='…/'\\ `), và giá trị có
+# khoảng trắng cuối truyền qua phép gán khác (`E=$D`, `export E=$D`) (reviewer PR #104 lần hai). Đếm vào TRAP3 (sàn 2.8).
+rnd.seed(2840)
+for _ in range(300):
+    q = pick(["'", '"'])
+    sp = pick(["\\ ", "\\\t"])
+    if rnd.random() < 0.5:
+        a3 = [pick(["D=", "export D="]) + q + REAL + "/" + q + sp + pick(["; ", "\n", " && "])]
+        v = "D"
+    else:
+        a3 = ["D=" + REAL + "/" + sp + "; ", pick(["E=$D", "export E=$D", "E=$D; F=$E"]) + pick(["; ", "\n"])]
+        v = "F" if "F=" in a3[1] else "E"
+    out = a3 + [RM, " -rf " + pick(["${%s}src", "${%s}dist", "$%s/x", "${%s}src"]) % v]
     TRAP3.add(tuple(out))
     cmds.append(tuple(out))
 cmds = list(dict.fromkeys(cmds))
