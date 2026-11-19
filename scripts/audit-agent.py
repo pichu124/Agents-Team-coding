@@ -1836,8 +1836,14 @@ def replay(guard, bash, call):
     err = p.stderr.decode("utf-8", "replace").strip()
     m = re.search(r'"permissionDecisionReason"\s*:\s*"([^"]*)"', out)
     bad = p.returncode != 0 or (err and not out)
-    return {"asked": None if bad else '"ask"' in out, "reason": m.group(1) if m else "",
-            "error": (err or f"exit {p.returncode}") if bad else ""}
+    # Guard hỏi vì hết ngân sách thời gian (máy chậm, nhiều luồng chạy lại cùng lúc) không phải phán xét về lệnh: chưa biết,
+    # như guard lỗi. Không thì lệnh rơi từ A sang H tuỳ tốc độ máy (CI Windows). Hỏi vì độ dài lệnh vẫn là hỏi.
+    slow = bool(m and GUARD_SLOW.search(m.group(1)))
+    return {"asked": None if bad or slow else '"ask"' in out, "reason": m.group(1) if m else "",
+            "error": (err or f"exit {p.returncode}") if bad else "guard hết giờ: " + m.group(1) if slow else ""}
+
+
+GUARD_SLOW = re.compile(r"không kiểm kịp trong \d+ giây")
 
 
 def who_approved(pd):
