@@ -371,6 +371,15 @@ TAIL_REDIRECT = re.compile(r"(?:\s+[\d&]?>>?\s*(?:&\d|/dev/null))+$")  # 2>&1, >
 VAR_REF = re.compile(r"\$\{?(\w+)\}?")
 
 
+def assigned(val):
+    """Giá trị env ghi cho phép gán NAME=val của ASSIGN: bỏ nháy hai đầu. Giá trị không nháy kết thúc bằng số lẻ `\\` là
+    `\\` thoát khoảng trắng hay tab ngay sau (ASSIGN dừng trước nó): bash gán cả khoảng trắng đó (`D=/tmp/w/\\ ;` là
+    `/tmp/w/ `), nên `${D}src` không nháy tách thành /tmp/w/ và src (reviewer PR #102)."""
+    if val[:1] not in "\"'" and (len(val) - len(val.rstrip("\\"))) % 2:
+        return val[:-1] + " "
+    return val.strip("\"'")
+
+
 def expand(text, env):
     if "$" not in text:  # không có chỗ nào để thay: khỏi duyệt env (vài nghìn biến, mỗi đoạn một lượt)
         return text
@@ -1045,9 +1054,9 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 env.pop(name, None)
                 kid.pop(name, None)
             else:
-                env[name] = kid[name] = val.strip("\"'")
+                env[name] = kid[name] = assigned(val)
         if snapped:
-            temp = {n: v.strip("\"'") for n, v in ASSIGN.findall(expand(op, values))}
+            temp = {n: assigned(v) for n, v in ASSIGN.findall(expand(op, values))}
             snap, pre = (pre, env, {**pre, **temp} if temp else pre), None  # các dict của snap chỉ bị đọc
         if before:  # khâu của ống: phép gán trong đoạn không ra ngoài. Trả env trước khi `)` đóng nhóm lấy env lúc mở nhóm
             env = before[0]
