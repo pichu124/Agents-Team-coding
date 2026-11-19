@@ -177,9 +177,11 @@ ANSI_C_X = re.compile(r"\\(?:([abeEfnrtv])|([\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]
 # `echo '))'`); `<<` nằm trong một khớp như vậy (`let 'x=1<<2'`, `# a<<b`, `\<<E`) không phải toán tử heredoc.
 ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[\s\S])*(?:\"|\Z)|'[^']*(?:'|\Z)"
                      r"|(?:^|[\s;&|()<>])#[^\n]*|(?P<dp>\$?\(\()|(?P<dc>\)\))|(?P<bo>\$\[)|(?P<b>[\[\]])", re.MULTILINE)
-# ARITH_XT (cách đọc strict=2, bash): như ARITH_X, thêm cặp backtick là một khớp: nháy lẻ trong backtick không mở chuỗi nuốt
+# ARITH_XT (cách đọc strict=3, chỉ bash): như ARITH_X, thêm cặp backtick là một khớp: nháy lẻ trong backtick không mở chuỗi nuốt
 # `<<`, `<<<` phía sau (`` x=`echo a"` `` ⏎ `cat <<EOF` ⏎ … `$(rm -rf src)`: reviewer PR #103). Cặp backtick có `<<` bên
-# trong (`` `cat <<'EOF'` …``) không là một khớp, để heredoc trong nó vẫn mở: thân dữ liệu không thành lệnh.
+# trong (`` `cat <<'EOF'` …``) không là một khớp, để heredoc trong nó vẫn mở: thân dữ liệu không thành lệnh. Là cách đọc
+# cộng thêm, không thay ARITH_X ở strict=2: nháy lẻ trước backtick có `<<` (`` x=`echo it's`; y=`cat <<EOF` `` ⏎ `rm -rf src`)
+# thì ARITH_X mới thấy lệnh dưới đó (reviewer PR #105).
 ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.pattern, re.MULTILINE)
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
@@ -677,7 +679,7 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         if bash == 2 and depth < 8 and "<<" in body:
             body = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1)
         return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    arith = ARITH_XT if strict == 2 else ARITH_X  # strict=2: cách đọc thêm biết backtick
+    arith = ARITH_XT if strict == 3 else ARITH_X  # strict=3: cách đọc thêm biết backtick khi dò heredoc, here-string
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     if not (bash and scoped):
@@ -884,7 +886,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     ps = tool == "PowerShell"
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     if exact:  # PowerShell không thoát bằng `\`: strict che nháy như exact
-        quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict == 2 else QUOTED_XB if strict else QUOTED_X
+        quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict in (2, 3) else QUOTED_XB if strict else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     mask = (lambda p: quoted.sub(keep, p)) if ps or quoted in (QUOTED_XB, QUOTED_XBT) else (lambda p: quoted_sub(quoted, keep, p))
@@ -1341,7 +1343,7 @@ def reading_key(cmd, tool, combo, bodies):
     - bash đổi b (heredoc, here-string như bash): giữ nguyên trong khoá đệm b và trong lớp, không gộp."""
     join, scoped, parent_env, comments, raw_marks, strict_assign, empty_body, blank, exact, pipe_scope, strict, pure, bash = combo
     join = join and tool != "PowerShell"
-    # strict=2 đổi cách che nháy, và với bash cả cách dò heredoc, here-string (ARITH_XT): b riêng chỉ khi bash
+    # strict=2 đổi cách che nháy, strict=3 (chỉ bash) thêm cách dò heredoc, here-string (ARITH_XT): b riêng chỉ khi bash
     k = (join, scoped, parent_env, raw_marks, empty_body, exact, strict if bash else bool(strict), bash)
     if k not in bodies:
         b = keep_shell_heredocs(cmd, join, scoped, raw_marks, empty_body, exact, parent_env or strict, strict, bash)
@@ -1426,6 +1428,8 @@ def reading_combos(cmd, tool="Bash"):
     # (trừ bash=2), chỉ khi lệnh có backtick.
     if "`" in cmd and tool != "PowerShell":  # PowerShell: backtick là ký tự thoát, mọi cách strict che bằng QUOTED_PS_X
         combos += [c[:10] + (2,) + c[11:] for c in combos if c[10] is True and c[12] != 2]
+        # strict=3: như strict=2 với bash, dò heredoc, here-string bằng ARITH_XT. Cộng thêm, không thay (reviewer PR #105).
+        combos += [c[:10] + (3,) + c[11:] for c in combos if c[10] == 2 and c[12] is True]
     return combos
 
 
