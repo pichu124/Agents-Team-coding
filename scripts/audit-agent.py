@@ -1879,8 +1879,25 @@ def replay(guard, bash, call):
     err = p.stderr.decode("utf-8", "replace").strip()
     m = re.search(r'"permissionDecisionReason"\s*:\s*"([^"]*)"', out)
     bad = p.returncode != 0 or (err and not out)
-    return {"asked": None if bad else '"ask"' in out, "reason": m.group(1) if m else "",
-            "error": (err or f"exit {p.returncode}") if bad else ""}
+    # Guard hỏi vì hết ngân sách thời gian (máy chậm, nhiều luồng chạy lại cùng lúc) không phải phán xét về lệnh: chưa biết,
+    # như guard lỗi. Không thì lệnh rơi từ A sang H tuỳ tốc độ máy (CI Windows). Hỏi vì độ dài lệnh vẫn là hỏi.
+    slow = bool(m and GUARD_SLOW.search(m.group(1)))
+    return {"asked": None if bad or slow else '"ask"' in out, "reason": m.group(1) if m else "",
+            "error": (err or f"exit {p.returncode}") if bad else "guard hết giờ: " + m.group(1) if slow else ""}
+
+
+GUARD_SLOW = re.compile(r"không kiểm kịp trong \d+ giây")
+
+
+def replay_all(jobs, bash, workers=4):
+    """replay() cho từng (guard, call), song song; lần nào guard hết giờ thì chạy lại tuần tự (không tranh CPU với các luồng
+    khác), chỉ còn hết giờ mới để chưa biết. Không thì lệnh guard hỏi thật thành chưa biết tuỳ tốc độ máy (reviewer PR #107)."""
+    with ThreadPoolExecutor(workers) as ex:
+        out = list(ex.map(lambda j: replay(j[0], bash, j[1]), jobs))
+    for i, (guard, call) in enumerate(jobs):
+        if out[i]["error"].startswith("guard hết giờ: "):
+            out[i] = replay(guard, bash, call)
+    return out
 
 
 def who_approved(pd):
@@ -1968,9 +1985,8 @@ def main():
         uniq = {}
         for cid, c in s.calls.items():
             uniq.setdefault((c["tool"], c["cwd"], c["command"]), c)
-        with ThreadPoolExecutor(4) as ex:
-            for key, r in zip(uniq, ex.map(lambda c: replay(ctx.of(c["cwd"])[0], bash, c), uniq.values())):
-                replayed[key] = r
+        for key, r in zip(uniq, replay_all([(ctx.of(c["cwd"])[0], c) for c in uniq.values()], bash)):
+            replayed[key] = r
 
     rows = collections.defaultdict(list)
     for cid, c in s.calls.items():
@@ -2051,7 +2067,8 @@ def render(r):
         L += ["ℹ File phiên không có bản ghi kết quả của guard (bản Claude Code này không ghi). Mục B cần bản ghi đó nên luôn rỗng; "
               "C, D, H được suy từ việc bạn có thấy hộp hỏi hay không.", ""]
     if r["replay_errors"]:
-        L += ["⚠ Chạy lại guard bị lỗi (các lệnh đó coi như chưa biết guard có hỏi không): "
+        L += ["⚠ Chạy lại guard bị lỗi hay hết giờ cả khi chạy lại tuần tự (máy chậm: chạy lại audit; các lệnh đó coi như "
+              "chưa biết guard có hỏi không): "
               + "; ".join(f"`{x[:200]}`" for x in r["replay_errors"]), ""]
 
     def cmd_lines(items, extra):
