@@ -2082,10 +2082,22 @@ MISSED_28 = [
     ("D='/tmp'\\ E=$D E=$D && rm -rf $E", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
     ("declare D='/tmp'\\ x; E=$D; rm -rf ${E}dist/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
     ("D=/tmp\\;;E=$D F=$E; rm -rf $F", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    # Reviewer PR #106 (lỗ còn lại của esc2, mọi bản bỏ sót): khoảng trắng cuối nằm trong nháy, và giá trị ghép thêm chữ hay
+    # biến (`E=x$D`, `E=$D$D`, `E=$D'x'`): phép gán không tách từ nên E giữ khoảng trắng, `${E}src` không nháy tách ra.
+    ("D='/tmp/w/ '; E=$D; rm -rf ${E}src", "xoá đệ quy", "khoảng trắng cuối trong nháy qua E=$D: xoá src"),
+    ('D="/tmp/w/ "; E=$D; rm -rf ${E}src', "xoá đệ quy", "khoảng trắng cuối trong nháy kép qua E=$D: xoá src"),
+    ("D='/tmp/w/ '; export E=$D; rm -rf ${E}src", "xoá đệ quy", "khoảng trắng cuối trong nháy qua export E=$D: xoá src"),
+    ("D=/tmp/w/\\ ; E=x$D; rm -rf ${E}src", "xoá đệ quy", "E=x$D giữ khoảng trắng cuối: xoá src"),
+    ("D=/tmp/w/\\ ; E=$D$D; rm -rf ${E}src", "xoá đệ quy", "E=$D$D giữ khoảng trắng: xoá src"),
+    ("D='/tmp/w/'\\ ; E=$D'x'; rm -rf ${E}src", "xoá đệ quy", "E=$D'x' giữ khoảng trắng: xoá xsrc của dự án"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Báo thừa của esc2 (reviewer PR #106): `E=$D E=x` thì E là x (phép gán sau cùng thắng), bash xoá x/tmp/q (trong dự án).
+for cmd in ("declare -x D='./'\\ ;E=$D E=x\nrm -fr ${E}/tmp/q", 'D="/tmp/w/s/"\\ x; E=$D E=x; rm -rf ${E}/tmp/q'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"esc2: phép gán sau cùng cùng tên thắng, không báo thừa: {cmd!r}: {got!r}")
 # Guard hỏi vì hết ngân sách thời gian (máy chậm: runner Windows tải nặng) không phải phán xét về lệnh: replay trả asked=None
 # (chưa biết) như guard lỗi, để lệnh không rơi từ A sang H tuỳ tốc độ máy (CI Windows rest đỏ chập chờn ở hf2 và ở
 # `export D=/srv/; cat <<'EOF' \` ⏎ `| bash`, mỗi lần một lệnh). Hỏi vì nội dung (cả lệnh quá dài) vẫn là hỏi.
