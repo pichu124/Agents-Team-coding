@@ -1139,11 +1139,14 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                 env[am[1]] = kid[am[1]] = values[ref[1]]
         # Cách đọc esc2=2 (cộng thêm sau esc2, reviewer PR #106, #108): giá trị ghép biến với chữ, nháy (`E=x$D`, `E=$D$D`,
         # `E=$D'x'`, D trong nháy kết thúc bằng khoảng trắng) tính bằng esc2_word, khi kết quả có khoảng trắng. Chỉ khi ASSIGN
-        # phủ trọn từ (`E="$D"\ ` thì không: ASSIGN dừng ở nháy đóng).
-        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)
-                   if esc2 == 2 and assigns and not frozen and sure and not forget else ()):
-            val = esc2_word(am[2], values) if am[1] in env and raw[am.end(2):am.end(2) + 1] in ("", " ", "\t", "\n", ";",
-                                                                                              "&", "|", ")") else None
+        # phủ trọn từ (`E="$D"\ ` thì không: ASSIGN dừng ở nháy đóng), và chỉ phép gán sau cùng của mỗi tên trong đoạn
+        # (`E=x$D E=/tmp/q`: E là /tmp/q như lượt trên full đã ghi; reviewer PR #108 lần hai).
+        ams = list((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)) if esc2 == 2 and assigns and not frozen and sure \
+            and not forget else []
+        last = {am[1]: i for i, am in enumerate(ams)}
+        for i, am in enumerate(ams):
+            val = esc2_word(am[2], values) if last[am[1]] == i and am[1] in env and \
+                raw[am.end(2):am.end(2) + 1] in ("", " ", "\t", "\n", ";", "&", "|", ")") else None
             if val is not None and (" " in val or "\t" in val):
                 env[am[1]] = kid[am[1]] = val
         if snapped:
