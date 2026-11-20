@@ -2107,6 +2107,11 @@ def esc2_time(n):
     t0 = time.perf_counter()
     a.suspicious_labels(c, a.SUSPICIOUS)
     return time.perf_counter() - t0
+# Reviewer PR #108 lần hai: esc2=2 chỉ tính lại phép gán sau cùng của mỗi tên trong đoạn (`E=x$D E=/tmp/q`: E là /tmp/q,
+# bash chỉ xoá /tmp/q). Các cách đọc khác (cả esc2 của main) không đổi nên không mất nhãn.
+for cmd in ("D='/tmp/w/ '; E=x$D E=/tmp/q; rm -rf $E", "D='/srv/a '; E=$D/x E=/tmp/q; rm -rf $E"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"esc2=2: phép gán sau cùng cùng tên thắng, không báo thừa: {cmd!r}: {got!r}")
 t6, t12 = min(esc2_time(6) for _ in range(3)), esc2_time(12)
 check(t12 < 10 * t6 + 0.2, f"esc2: nháy kép nhiều biến rồi $(…) phải tuyến tính: 12 biến {t12:.3f} s, 6 biến {t6:.3f} s")
 # Guard hỏi vì hết ngân sách thời gian (máy chậm: runner Windows tải nặng) không phải phán xét về lệnh: replay trả asked=None
