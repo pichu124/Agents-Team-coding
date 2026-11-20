@@ -400,10 +400,13 @@ def assigned_esc2(val, after=""):
 # Cách đọc esc2 chỉ cần khi lệnh có nháy rồi `\ ` hay `\` + tab, hoặc có `\ ` cùng một phép gán từ biến (`E=$D`).
 ESC2_QUOTED = re.compile(r"['\"]\\[ \t]")
 ESC2_SPACE = re.compile(r"\\[ \t]")
-ESC2_REF = re.compile(r"=[^\s;&|$=]*\$\{?[A-Za-z_]")  # phép gán có biến: `E=$D`, `E=x$D` (không `=` trong lớp: tuyến tính)
+ESC2_REF = re.compile(r"=\$\{?[A-Za-z_]")
+ESC2_REF2 = re.compile(r"=[^\s;&|$=]*\$\{?[A-Za-z_]")  # esc2=2: biến giữa giá trị (`E=x$D`); không `=` trong lớp: tuyến tính
 ESC2_QTRAIL = re.compile(r"=(['\"])[^'\"\n]*[ \t]\1")  # giá trị trong nháy kết thúc bằng khoảng trắng: `D='/tmp/w/ '`
-ESC2_WORD = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|'([^']*)'|\"((?:[^\"\\$`]|\\.|\$\{?[A-Za-z_]\w*\}?)*)\"|\\(.)|([^$`'\"\\]+)",
-                       re.S)
+# Nháy kép: `$` chỉ đi với `{NAME}` hay NAME trọn (lookahead), nên mỗi ký tự chỉ khớp một cách: không backtrack hàm mũ
+# (reviewer PR #108: `"$aaa…$aaa$(date)"` từng mất vài giây).
+ESC2_WORD = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|'([^']*)'"
+                       r"|\"((?:[^\"\\$`]|\\.|\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*(?!\w)))*)\"|\\(.)|([^$`'\"\\]+)", re.S)
 ESC2_DQREF = re.compile(r"\\(.)|\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)", re.S)
 
 
@@ -435,7 +438,12 @@ def esc2_word(word, values):
 
 
 def wants_esc2(cmd):
-    return bool(ESC2_QUOTED.search(cmd) or ((ESC2_SPACE.search(cmd) or ESC2_QTRAIL.search(cmd)) and ESC2_REF.search(cmd)))
+    return bool(ESC2_QUOTED.search(cmd) or (ESC2_SPACE.search(cmd) and ESC2_REF.search(cmd)))
+
+
+def wants_esc2b(cmd):
+    """Cổng của cách đọc esc2=2: có khoảng trắng thoát hay giá trị trong nháy kết thúc bằng khoảng trắng, cùng phép gán có biến."""
+    return bool((ESC2_SPACE.search(cmd) or ESC2_QTRAIL.search(cmd)) and ESC2_REF2.search(cmd))
 
 
 def expand(text, env):
@@ -1124,13 +1132,18 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
                     env[name] = kid[name] = assigned(val, full[am.end(2):am.end(2) + 1] or tail)
         # Cách đọc esc2, `E=$D` (giá trị chỉ là một biến, không nháy): bash gán nguyên giá trị, kể cả khoảng trắng cuối, mà full
         # đã thay biến nên ASSIGN dừng trước khoảng trắng đó (reviewer PR #104 lần hai: `D=/tmp/w/\ ; E=$D; rm -rf ${E}src`).
-        # Giá trị ghép biến với chữ (`E=x$D`, `E=$D$D`, `E=$D'x'`) cũng vậy. Chỉ phép gán sau cùng của mỗi tên trong đoạn
-        # (`E=$D E=x`: E là x), và chỉ khi giá trị có khoảng trắng (không thì ASSIGN trên full đã đúng) (reviewer PR #106).
-        ams = list((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)) if esc2 and assigns and not frozen and sure and not forget \
-            else []
-        last = {am[1]: i for i, am in enumerate(ams)}
-        for i, am in enumerate(ams):
-            val = esc2_word(am[2], values) if last[am[1]] == i and am[1] in env else None
+        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)
+                   if esc2 is True and assigns and not frozen and sure and not forget else ()):
+            ref = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", am[2])
+            if ref and values.get(ref[1], "")[-1:] in (" ", "\t") and am[1] in env:
+                env[am[1]] = kid[am[1]] = values[ref[1]]
+        # Cách đọc esc2=2 (cộng thêm sau esc2, reviewer PR #106, #108): giá trị ghép biến với chữ, nháy (`E=x$D`, `E=$D$D`,
+        # `E=$D'x'`, D trong nháy kết thúc bằng khoảng trắng) tính bằng esc2_word, khi kết quả có khoảng trắng. Chỉ khi ASSIGN
+        # phủ trọn từ (`E="$D"\ ` thì không: ASSIGN dừng ở nháy đóng).
+        for am in ((ASSIGN_EMPTY if pure else ASSIGN).finditer(raw)
+                   if esc2 == 2 and assigns and not frozen and sure and not forget else ()):
+            val = esc2_word(am[2], values) if am[1] in env and raw[am.end(2):am.end(2) + 1] in ("", " ", "\t", "\n", ";",
+                                                                                              "&", "|", ")") else None
             if val is not None and (" " in val or "\t" in val):
                 env[am[1]] = kid[am[1]] = val
         if snapped:
@@ -1527,6 +1540,15 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if key not in read2:
                 read2.add(key)
                 segs += segments(cmd, tool, *combo, esc2=True)
+    # Cách đọc esc2=2 (reviewer PR #106, #108): như esc2, lượt `E=$D` thay bằng esc2_word. Cộng thêm sau esc2: bản đầu đổi
+    # lượt của esc2 tại chỗ làm mất nhãn main vẫn báo (`D=/tmp/w/\ ; E=$D E=$D$1; rm -rf ${E}src`). Cổng wants_esc2b.
+    if tool != "PowerShell" and wants_esc2b(cmd):
+        read3 = set()
+        for combo in reading_combos(cmd, tool):
+            key = reading_key(cmd, tool, combo, bodies)
+            if key not in read3:
+                read3.add(key)
+                segs += segments(cmd, tool, *combo, esc2=2)
     done = set()
     for seg in segs:
         if seg in done:
