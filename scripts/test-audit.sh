@@ -2915,6 +2915,18 @@ base_file, tmp, ref, vp_file = sys.argv[1:5]
 # Chỉ thêm khi CHỦ Ý thu hẹp mục A (người dùng than báo thừa): (tool, lệnh, "lý do"). Ghi đúng từng lệnh, không dùng
 # mẫu, để người review đọc được hết những lệnh vừa thành vô hại.
 NARROWING_OK = [
+    ("Bash", 'D=/tmp/w/\nrm -rf /tmp/w/a; D=/tmp/w\n(rm -rf "$D")\nEOF',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", 'D=/tmp/w true && D=/tmp/w/; D=/tmp/w/\necho it\\\'s\n(false | rm -rf "$D")',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "cd /tmp/x && rm -rf y # don't\nbash <<'EOF'\nEOF\nD=/tmp/x/\nbash <<'A' <<'EOF'\nA",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "cd /tmp/x && rm -rf y # don't\nbash <<EOF\nD=/tmp/x/\nexport D=/tmp/x/; echo '\x01'\n\x01",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", 'D=/tmp/x/ & "cd" /home/p\ncd /tmp/x; cd /tmp/x \\\\\ncd /tmp/x && rm -rf y # don\'t\nD=/tmp/x/ && echo D=/tmp/x/ \\\\\necho \'a b\'',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "bash <<'EOF'\nD=/srv/\nEOF\nbash <<'A' <<'EOF'\nA\ncd /tmp/x && rm -rf y # don't\ntrue && cd /tmp/x\nD=/tmp/x/\nbash <<'EOF'\nEOF",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
 ]
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
