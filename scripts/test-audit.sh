@@ -2152,6 +2152,14 @@ for cmd in ("rm -rf /tmp/a\\' src /tmp/b\\'", "rm -rf -- /tmp/a\\' src /tmp/b\\'
 for cmd in ("rm -rf /tmp/it\\'s", "rm -rf /tmp/x/dir\\'s", 'rm -rf /tmp/a\\"b', "rm -rf dist/\\'x"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"nháy đã thoát là chữ của đích trong tmp/build: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần ba: PowerShell thoát bằng backtick, `\\` là chữ nên `"build\\"` là chuỗi đã đóng; luật thoát của bash
+# ghép hai đích thành một từ chứa build/temp (main báo, bản đầu sửa thoát bỏ sót). PowerShell giữ cách tách từ của main.
+for cmd in ('ri -r "build\\" , "src"', 'Remove-Item "dist\\" , "src" -Recurse',
+            'Remove-Item -Recurse -Force "C:\\temp\\x\\", "C:\\proj\\src"',
+            'Remove-Item -Recurse -Force -LiteralPath "C:\\Users\\me\\AppData\\Local\\Temp\\b\\", "C:\\Users\\me\\proj"',
+            'Remove-Item -Recurse "C:\\temp\\x","C:\\src"'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: \\ là chữ, nháy kép đóng ở \\\": xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
