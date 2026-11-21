@@ -2142,6 +2142,16 @@ for cmd in ('T="x y"; U=$T; rm -rf /tmp/w/"$U"', 'T="x src"; U=$T; rm -rf /tmp/w
 for cmd in ('rm -rf /tmp/w/"x" src', 'T="x y"; U=$T; rm -rf /tmp/w/"$U" src', 'rm -rf "/tmp/a"/../src'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"đích thứ hai ngoài tmp vẫn phải báo: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần hai: `\'`, `\"` thoát không mở hay đóng nháy (bash, zsh); TOKEN không biết thoát thì ghép qua khoảng
+# trắng thành một đích chứa /tmp/ (bỏ sót src mà main báo) hay cắt `'s` thành đích tương đối (báo thừa main không có).
+for cmd in ("rm -rf /tmp/a\\' src /tmp/b\\'", "rm -rf -- /tmp/a\\' src /tmp/b\\'", 'rm -rf /tmp/a\\" src /tmp/b\\"',
+            'rm -rf "/tmp/a\\"" src "/tmp/b"', "rm -rf /tmp/it\\'s src /tmp/'x'", "rm -rf /tmp/a\\' src \\'",
+            'rm -rf /tmp/x/\\"a src b\\"', "rm -rf /tmp/x/\\'a b\\'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"nháy đã thoát không ghép từ: bash xoá đích trong dự án: {cmd!r}: {got!r}")
+for cmd in ("rm -rf /tmp/it\\'s", "rm -rf /tmp/x/dir\\'s", 'rm -rf /tmp/a\\"b', "rm -rf dist/\\'x"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"nháy đã thoát là chữ của đích trong tmp/build: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
