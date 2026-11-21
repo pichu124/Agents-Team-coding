@@ -2109,9 +2109,23 @@ for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
-for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)"):
+# Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
+for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
+            "x=$(cat <<'EOF' ')'\nrm -rf src\nEOF\n)", 'x=$(cat <<\'EOF\' ")"\nrm -rf src\nEOF\n)',
+            "x=$(cat <<EOF # )\nrm -rf src\nEOF\n)",
+            "x=$(printf '%s)' a); y=`cat <<E`; cat <<'EOF' >notes.txt\nrm -rf src\nEOF",
+            'y=`: <<E`\nx=$(echo ")"); cat <<\'EOF\'\nrm -rf src\nEOF'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"thân heredoc trong lệnh thay thế nhiều dòng là dữ liệu: {cmd!r}: {got!r}")
+# Reviewer PR #109: cổng của strict=4 không được bậc hai theo độ dài dòng (backtick hay `$(` mở rồi nhiều `<<`).
+for opener in ("echo `x ", "echo $(x "):
+    def gate_time(n):
+        c = opener + "<<" * n
+        t0 = time.perf_counter()
+        a.suspicious_labels(c, a.SUSPICIOUS)
+        return time.perf_counter() - t0
+    g1, g4 = min(gate_time(2000) for _ in range(3)), gate_time(8000)
+    check(g4 < 6 * g1 + 0.1, f"strict=4: cổng tuyến tính với {opener!r}: 8000 `<<` {g4:.3f} s, 2000 `<<` {g1:.3f} s")
 # Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
 # thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
 def esc2_time(n):
