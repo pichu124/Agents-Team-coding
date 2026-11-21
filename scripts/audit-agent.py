@@ -403,6 +403,8 @@ ESC2_SPACE = re.compile(r"\\[ \t]")
 ESC2_REF = re.compile(r"=\$\{?[A-Za-z_]")
 ESC2_REF2 = re.compile(r"=[^\s;&|$=]*\$\{?[A-Za-z_]")  # esc2=2: biến giữa giá trị (`E=x$D`); không `=` trong lớp: tuyến tính
 ESC2_QTRAIL = re.compile(r"=(['\"])[^'\"\n]*[ \t]\1")  # giá trị trong nháy kết thúc bằng khoảng trắng: `D='/tmp/w/ '`
+# giá trị trong nháy có khoảng trắng ở bất kỳ đâu (`D='/tmp/a b'`): lớp loại cả khoảng trắng nên tất định, tuyến tính
+ESC2_QSPACE = re.compile(r"=['\"][^'\"\n \t]*[ \t]")
 # Nháy kép: `$` chỉ đi với `{NAME}` hay NAME trọn (lookahead), nên mỗi ký tự chỉ khớp một cách: không backtrack hàm mũ
 # (reviewer PR #108: `"$aaa…$aaa$(date)"` từng mất vài giây).
 ESC2_WORD = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|'([^']*)'"
@@ -443,7 +445,7 @@ def wants_esc2(cmd):
 
 def wants_esc2b(cmd):
     """Cổng của cách đọc esc2=2: có khoảng trắng thoát hay giá trị trong nháy kết thúc bằng khoảng trắng, cùng phép gán có biến."""
-    return bool((ESC2_SPACE.search(cmd) or ESC2_QTRAIL.search(cmd)) and ESC2_REF2.search(cmd))
+    return bool((ESC2_SPACE.search(cmd) or ESC2_QSPACE.search(cmd)) and ESC2_REF2.search(cmd))
 
 
 def expand(text, env):
