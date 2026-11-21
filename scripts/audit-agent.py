@@ -375,6 +375,8 @@ BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
 # trắng còn lại thuộc từ như `\S+` cũ (`/tmp/w/it's`); `\ ` tách như cũ. Nháy mở đầu từ mà không đóng (`"a /tmp/\"`: bash báo
 # lỗi cú pháp, không chạy) thì đọc như TOKEN cũ.
 TOKEN = re.compile(r"(?:\"(?:\\[\s\S]|[^\"\\])*\"|'[^']*'|\\\S|[^\s\"'])+(?:[\"']\S*)?|\"[^\"]*\"|'[^']*'|\S+")
+# PowerShell thoát bằng backtick, `\` là chữ (`"build\" , "src"` là hai chuỗi, reviewer PR #110 lần ba): giữ cách tách của main.
+PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -1371,7 +1373,7 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
     # token trông như cờ: `-$X`), dù đứng sau thư mục tạm hay tên lành.
     if re.search(r"[$`]", full):
         return False
-    toks = [t.strip("\"'") for t in TOKEN.findall(full)]
+    toks = [t.strip("\"'") for t in (PS_TOKEN if tool == "PowerShell" else TOKEN).findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
     wsl = False
