@@ -2110,6 +2110,13 @@ MISSED_28 = [
     ("echo \\`; y=`cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "backtick thoát trước heredoc một dòng: bash xoá src"),
     ("a='`' y=`: <<E`\nrm -rf src\nE", "xoá đệ quy", "backtick trong nháy trước heredoc một dòng: bash xoá src"),
     ("x=$(cat <<E a#b)\nrm -rf src\nE", "xoá đệ quy", "`#` giữa từ trong $(…) một dòng: zsh xoá src"),
+    # Reviewer PR #109 lần ba: nháy lẻ trong thân một heredoc đứng trước (commit message "Don't…") không được tắt cổng strict=4.
+    ("cat <<E\nit's\nE\ny=`cat <<'F'`\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trong thân heredoc trước: bash xoá src"),
+    ("git commit -F - <<EOF\nDon't break it\nEOF\necho `cat <<'X'` ok\nrm -rf src\nX", "xoá đệ quy",
+     "nháy lẻ trong thân heredoc trước: bash xoá src"),
+    ("cat <<E\nit's\nE\nx=$(cat <<'F')\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trong thân heredoc trước: zsh xoá src"),
+    ('cat <<E\nsay "hi\nE\ny=`cat <<\'F\'`\nrm -rf src\nF', "xoá đệ quy", "nháy kép lẻ trong thân heredoc trước: bash xoá src"),
+    ("cat <<E\nit's\nE\necho '`'; y=`cat <<'F'`\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trước, backtick chữ: bash xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
