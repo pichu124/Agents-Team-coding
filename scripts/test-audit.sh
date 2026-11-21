@@ -2096,10 +2096,22 @@ MISSED_28 = [
     ("D=/tmp/w/\\ ; E=$D E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá src"),
     ("D='/tmp/w/ 'x; readonly E=$D E=/srv/ F=$D'\\ '; rm -rf ${E}dist/x", "xoá đệ quy",
      "main báo, bản đầu PR #108 bỏ sót: readonly E giữ giá trị của D, xoá xdist/x"),
+    # Lỗ chung với main (reviewer PR #105): heredoc mở trong lệnh thay thế đóng cùng dòng có thân rỗng (bash và zsh đóng nó ở
+    # backtick đóng; zsh cả ở `)` của `$(…)`), nên các dòng sau là lệnh.
+    ("echo `cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo `cat <<EOF`\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("x=`cat <<-E`\nrm -rf src\nE", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo `cat <<'EOF'` ok\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("y=`: <<E`; echo hi\nrm -rf src\nE", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo $(cat <<'EOF')\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một $(…) một dòng: zsh xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
+for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"thân heredoc trong lệnh thay thế nhiều dòng là dữ liệu: {cmd!r}: {got!r}")
 # Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
 # thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
 def esc2_time(n):
