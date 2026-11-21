@@ -189,8 +189,9 @@ ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.patt
 # khớp: heredoc trong nó vẫn mở, thân là dữ liệu.
 # Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có comment (`#` đầu từ: comment có thể chứa `)`);
 # `#` giữa từ (`a#b`) là chữ (reviewer PR #109). Backtick kéo qua nhiều dòng không có `<<` cũng là một khớp (như ARITH_XT), để
-# backtick đóng của nó không ghép với backtick của dòng sau (reviewer PR #109 lần bốn).
-ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`"
+# backtick đóng của nó không ghép với backtick của dòng sau (reviewer PR #109 lần bốn); không mở ở đầu dòng: đó thường là
+# backtick đóng mồ côi sau thân heredoc của một backtick nhiều dòng (reviewer PR #109 lần năm).
+ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`|(?<=[^\n])`(?:[^`\\<]|\\[\s\S]|<(?!<))*`"
                       r"|\$\((?:[^()'\"#\\\n]|(?<=[^\s;&|()<>])#|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|"
                       + ARITH_X.pattern, re.MULTILINE)
 
