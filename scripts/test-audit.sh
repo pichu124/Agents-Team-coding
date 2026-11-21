@@ -2104,6 +2104,12 @@ MISSED_28 = [
     ("echo `cat <<'EOF'` ok\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
     ("y=`: <<E`; echo hi\nrm -rf src\nE", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
     ("echo $(cat <<'EOF')\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một $(…) một dòng: zsh xoá src"),
+    # Reviewer PR #109 lần hai: backtick chữ (trong nháy, sau `\`) đứng trước không được làm lệch cổng của strict=4; `#` giữa
+    # từ không phải comment.
+    ("echo '`'; y=`cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "backtick trong nháy trước heredoc một dòng: bash xoá src"),
+    ("echo \\`; y=`cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "backtick thoát trước heredoc một dòng: bash xoá src"),
+    ("a='`' y=`: <<E`\nrm -rf src\nE", "xoá đệ quy", "backtick trong nháy trước heredoc một dòng: bash xoá src"),
+    ("x=$(cat <<E a#b)\nrm -rf src\nE", "xoá đệ quy", "`#` giữa từ trong $(…) một dòng: zsh xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -2124,7 +2130,7 @@ for opener in ("echo `x ", "echo $(x "):
         t0 = time.perf_counter()
         a.suspicious_labels(c, a.SUSPICIOUS)
         return time.perf_counter() - t0
-    g1, g4 = min(gate_time(2000) for _ in range(3)), gate_time(8000)
+    g1, g4 = min(gate_time(2000) for _ in range(3)), min(gate_time(8000) for _ in range(2))
     check(g4 < 6 * g1 + 0.1, f"strict=4: cổng tuyến tính với {opener!r}: 8000 `<<` {g4:.3f} s, 2000 `<<` {g1:.3f} s")
 # Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
 # thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
