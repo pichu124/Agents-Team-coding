@@ -370,7 +370,13 @@ CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:" + CHDIR_NAMES + r")"
 # `&` chạy nền còn lệnh theo sau trong cùng đoạn (dò trên bản đã che nháy). Không phải `>&`, `<&`, `&>`; `&&` đã tách,
 # `&` đầu đoạn là của `|&`.
 BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
-TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
+# Một từ shell: chữ không trắng ghép với chuỗi nháy (`/tmp/w/"x y"` là một đích, reviewer PR #110). `\'`, `\"` ngoài nháy và
+# `\x` trong nháy kép là chữ, không mở hay đóng nháy (reviewer PR #110 lần hai). Nhóm chỉ dừng ở nháy không đóng: phần không
+# trắng còn lại thuộc từ như `\S+` cũ (`/tmp/w/it's`); `\ ` tách như cũ. Nháy mở đầu từ mà không đóng (`"a /tmp/\"`: bash báo
+# lỗi cú pháp, không chạy) thì đọc như TOKEN cũ.
+TOKEN = re.compile(r"(?:\"(?:\\[\s\S]|[^\"\\])*\"|'[^']*'|\\\S|[^\s\"'])+(?:[\"']\S*)?|\"[^\"]*\"|'[^']*'|\S+")
+# PowerShell thoát bằng backtick, `\` là chữ (`"build\" , "src"` là hai chuỗi, reviewer PR #110 lần ba): giữ cách tách của main.
+PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -421,6 +427,8 @@ ESC2_SPACE = re.compile(r"\\[ \t]")
 ESC2_REF = re.compile(r"=\$\{?[A-Za-z_]")
 ESC2_REF2 = re.compile(r"=[^\s;&|$=]*\$\{?[A-Za-z_]")  # esc2=2: biến giữa giá trị (`E=x$D`); không `=` trong lớp: tuyến tính
 ESC2_QTRAIL = re.compile(r"=(['\"])[^'\"\n]*[ \t]\1")  # giá trị trong nháy kết thúc bằng khoảng trắng: `D='/tmp/w/ '`
+# giá trị trong nháy có khoảng trắng ở bất kỳ đâu (`D='/tmp/a b'`): lớp loại cả khoảng trắng nên tất định, tuyến tính
+ESC2_QSPACE = re.compile(r"=['\"][^'\"\n \t]*[ \t]")
 # Nháy kép: `$` chỉ đi với `{NAME}` hay NAME trọn (lookahead), nên mỗi ký tự chỉ khớp một cách: không backtrack hàm mũ
 # (reviewer PR #108: `"$aaa…$aaa$(date)"` từng mất vài giây).
 ESC2_WORD = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|'([^']*)'"
@@ -461,7 +469,7 @@ def wants_esc2(cmd):
 
 def wants_esc2b(cmd):
     """Cổng của cách đọc esc2=2: có khoảng trắng thoát hay giá trị trong nháy kết thúc bằng khoảng trắng, cùng phép gán có biến."""
-    return bool((ESC2_SPACE.search(cmd) or ESC2_QTRAIL.search(cmd)) and ESC2_REF2.search(cmd))
+    return bool((ESC2_SPACE.search(cmd) or ESC2_QSPACE.search(cmd)) and ESC2_REF2.search(cmd))
 
 
 def expand(text, env):
@@ -1365,7 +1373,7 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
     # token trông như cờ: `-$X`), dù đứng sau thư mục tạm hay tên lành.
     if re.search(r"[$`]", full):
         return False
-    toks = [t.strip("\"'") for t in TOKEN.findall(full)]
+    toks = [t.strip("\"'") for t in (PS_TOKEN if tool == "PowerShell" else TOKEN).findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
     wsl = False

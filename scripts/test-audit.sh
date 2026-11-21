@@ -2096,6 +2096,15 @@ MISSED_28 = [
     ("D=/tmp/w/\\ ; E=$D E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá src"),
     ("D='/tmp/w/ 'x; readonly E=$D E=/srv/ F=$D'\\ '; rm -rf ${E}dist/x", "xoá đệ quy",
      "main báo, bản đầu PR #108 bỏ sót: readonly E giữ giá trị của D, xoá xdist/x"),
+    # Khoảng trắng giữa giá trị trong nháy truyền qua phép gán (reviewer PR #108; mọi bản bỏ sót): E giữ khoảng trắng, `$E`
+    # không nháy tách thành hai đích; bash xoá b hay src của dự án.
+    ("D='/tmp/a b'; E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị trong nháy qua E=$D: xoá b"),
+    ('D="/tmp/a b"; E=$D; rm -rf $E', "xoá đệ quy", "khoảng trắng giữa giá trị trong nháy kép qua E=$D: xoá b"),
+    ("D='/tmp/a b'; export E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua export E=$D: xoá b"),
+    ("D='/tmp/w src'; E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua E=$D: xoá src"),
+    ("D='/tmp/a b'; E=x$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua E=x$D: xoá b"),
+    # Reviewer PR #108 lần hai: phép gán ghép đứng sau cùng thắng (E=x$D): bash xoá src của dự án.
+    ("D='/tmp/w/ '; E=/tmp/q E=x$D; rm -rf ${E}src", "xoá đệ quy", "phép gán sau cùng E=x$D thắng: xoá src"),
     # Lỗ chung với main (reviewer PR #105): heredoc mở trong lệnh thay thế đóng cùng dòng có thân rỗng (bash và zsh đóng nó ở
     # backtick đóng; zsh cả ở `)` của `$(…)`), nên các dòng sau là lệnh.
     ("echo `cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
@@ -2121,6 +2130,36 @@ MISSED_28 = [
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Reviewer PR #110: từ có nháy dính tiền tố (`/tmp/w/"x y"`) là MỘT đích với bash, zsh; TOKEN của benign_delete từng cắt nó ở
+# khoảng trắng trong nháy nên `y"` thành đích tương đối (báo thừa, cả ở main: `NAME='my dir'; rm -rf /tmp/"$NAME"`).
+for cmd in ('T="x y"; U=$T; rm -rf /tmp/w/"$U"', 'T="x src"; U=$T; rm -rf /tmp/w/"$U"', 'NAME="a b"; P=$NAME; rm -rf /tmp/q/"${P}"',
+            'NAME="a b"; P=$NAME; rm -rf /tmp/q/"$P"x', "NAME=\"a b\"; P=$NAME; rm -rf /tmp/q/'x'\"$P\"",
+            'T="x y"; U=$T; rm -rf ./dist/"$U"', 'T="x y"; U=$T; rm -rf node_modules/"$U"',
+            "D='a b'; export E=$D; rm -rf /tmp/w/\"$E\"", "NAME='my dir'; rm -rf /tmp/\"$NAME\"",
+            'rm -rf /tmp/w/"x y"', "rm -rf /tmp/w/'x src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"từ có nháy dính tiền tố là một đích trong tmp/build: {cmd!r}: {got!r}")
+for cmd in ('rm -rf /tmp/w/"x" src', 'T="x y"; U=$T; rm -rf /tmp/w/"$U" src', 'rm -rf "/tmp/a"/../src'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"đích thứ hai ngoài tmp vẫn phải báo: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần hai: `\'`, `\"` thoát không mở hay đóng nháy (bash, zsh); TOKEN không biết thoát thì ghép qua khoảng
+# trắng thành một đích chứa /tmp/ (bỏ sót src mà main báo) hay cắt `'s` thành đích tương đối (báo thừa main không có).
+for cmd in ("rm -rf /tmp/a\\' src /tmp/b\\'", "rm -rf -- /tmp/a\\' src /tmp/b\\'", 'rm -rf /tmp/a\\" src /tmp/b\\"',
+            'rm -rf "/tmp/a\\"" src "/tmp/b"', "rm -rf /tmp/it\\'s src /tmp/'x'", "rm -rf /tmp/a\\' src \\'",
+            'rm -rf /tmp/x/\\"a src b\\"', "rm -rf /tmp/x/\\'a b\\'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"nháy đã thoát không ghép từ: bash xoá đích trong dự án: {cmd!r}: {got!r}")
+for cmd in ("rm -rf /tmp/it\\'s", "rm -rf /tmp/x/dir\\'s", 'rm -rf /tmp/a\\"b', "rm -rf dist/\\'x"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"nháy đã thoát là chữ của đích trong tmp/build: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần ba: PowerShell thoát bằng backtick, `\\` là chữ nên `"build\\"` là chuỗi đã đóng; luật thoát của bash
+# ghép hai đích thành một từ chứa build/temp (main báo, bản đầu sửa thoát bỏ sót). PowerShell giữ cách tách từ của main.
+for cmd in ('ri -r "build\\" , "src"', 'Remove-Item "dist\\" , "src" -Recurse',
+            'Remove-Item -Recurse -Force "C:\\temp\\x\\", "C:\\proj\\src"',
+            'Remove-Item -Recurse -Force -LiteralPath "C:\\Users\\me\\AppData\\Local\\Temp\\b\\", "C:\\Users\\me\\proj"',
+            'Remove-Item -Recurse "C:\\temp\\x","C:\\src"'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: \\ là chữ, nháy kép đóng ở \\\": xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
@@ -2937,6 +2976,18 @@ base_file, tmp, ref, vp_file = sys.argv[1:5]
 # Chỉ thêm khi CHỦ Ý thu hẹp mục A (người dùng than báo thừa): (tool, lệnh, "lý do"). Ghi đúng từng lệnh, không dùng
 # mẫu, để người review đọc được hết những lệnh vừa thành vô hại.
 NARROWING_OK = [
+    ("Bash", 'D=/tmp/w/\nrm -rf /tmp/w/a; D=/tmp/w\n(rm -rf "$D")\nEOF',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", 'D=/tmp/w true && D=/tmp/w/; D=/tmp/w/\necho it\\\'s\n(false | rm -rf "$D")',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "cd /tmp/x && rm -rf y # don't\nbash <<'EOF'\nEOF\nD=/tmp/x/\nbash <<'A' <<'EOF'\nA",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "cd /tmp/x && rm -rf y # don't\nbash <<EOF\nD=/tmp/x/\nexport D=/tmp/x/; echo '\x01'\n\x01",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", 'D=/tmp/x/ & "cd" /home/p\ncd /tmp/x; cd /tmp/x \\\\\ncd /tmp/x && rm -rf y # don\'t\nD=/tmp/x/ && echo D=/tmp/x/ \\\\\necho \'a b\'',
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
+    ("Bash", "bash <<'EOF'\nD=/srv/\nEOF\nbash <<'A' <<'EOF'\nA\ncd /tmp/x && rm -rf y # don't\ntrue && cd /tmp/x\nD=/tmp/x/\nbash <<'EOF'\nEOF",
+     'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
 ]
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
