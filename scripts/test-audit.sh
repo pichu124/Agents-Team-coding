@@ -2109,6 +2109,18 @@ MISSED_28 = [
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Reviewer PR #110: từ có nháy dính tiền tố (`/tmp/w/"x y"`) là MỘT đích với bash, zsh; TOKEN của benign_delete từng cắt nó ở
+# khoảng trắng trong nháy nên `y"` thành đích tương đối (báo thừa, cả ở main: `NAME='my dir'; rm -rf /tmp/"$NAME"`).
+for cmd in ('T="x y"; U=$T; rm -rf /tmp/w/"$U"', 'T="x src"; U=$T; rm -rf /tmp/w/"$U"', 'NAME="a b"; P=$NAME; rm -rf /tmp/q/"${P}"',
+            'NAME="a b"; P=$NAME; rm -rf /tmp/q/"$P"x', "NAME=\"a b\"; P=$NAME; rm -rf /tmp/q/'x'\"$P\"",
+            'T="x y"; U=$T; rm -rf ./dist/"$U"', 'T="x y"; U=$T; rm -rf node_modules/"$U"',
+            "D='a b'; export E=$D; rm -rf /tmp/w/\"$E\"", "NAME='my dir'; rm -rf /tmp/\"$NAME\"",
+            'rm -rf /tmp/w/"x y"', "rm -rf /tmp/w/'x src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"từ có nháy dính tiền tố là một đích trong tmp/build: {cmd!r}: {got!r}")
+for cmd in ('rm -rf /tmp/w/"x" src', 'T="x y"; U=$T; rm -rf /tmp/w/"$U" src', 'rm -rf "/tmp/a"/../src'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" in got, f"đích thứ hai ngoài tmp vẫn phải báo: {cmd!r}: {got!r}")
 # Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
 # thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
 def esc2_time(n):
