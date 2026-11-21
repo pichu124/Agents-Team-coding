@@ -2096,6 +2096,15 @@ MISSED_28 = [
     ("D=/tmp/w/\\ ; E=$D E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá src"),
     ("D='/tmp/w/ 'x; readonly E=$D E=/srv/ F=$D'\\ '; rm -rf ${E}dist/x", "xoá đệ quy",
      "main báo, bản đầu PR #108 bỏ sót: readonly E giữ giá trị của D, xoá xdist/x"),
+    # Khoảng trắng giữa giá trị trong nháy truyền qua phép gán (reviewer PR #108; mọi bản bỏ sót): E giữ khoảng trắng, `$E`
+    # không nháy tách thành hai đích; bash xoá b hay src của dự án.
+    ("D='/tmp/a b'; E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị trong nháy qua E=$D: xoá b"),
+    ('D="/tmp/a b"; E=$D; rm -rf $E', "xoá đệ quy", "khoảng trắng giữa giá trị trong nháy kép qua E=$D: xoá b"),
+    ("D='/tmp/a b'; export E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua export E=$D: xoá b"),
+    ("D='/tmp/w src'; E=$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua E=$D: xoá src"),
+    ("D='/tmp/a b'; E=x$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua E=x$D: xoá b"),
+    # Reviewer PR #108 lần hai: phép gán ghép đứng sau cùng thắng (E=x$D): bash xoá src của dự án.
+    ("D='/tmp/w/ '; E=/tmp/q E=x$D; rm -rf ${E}src", "xoá đệ quy", "phép gán sau cùng E=x$D thắng: xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
