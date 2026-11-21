@@ -2105,6 +2105,27 @@ MISSED_28 = [
     ("D='/tmp/a b'; E=x$D; rm -rf $E", "xoá đệ quy", "khoảng trắng giữa giá trị qua E=x$D: xoá b"),
     # Reviewer PR #108 lần hai: phép gán ghép đứng sau cùng thắng (E=x$D): bash xoá src của dự án.
     ("D='/tmp/w/ '; E=/tmp/q E=x$D; rm -rf ${E}src", "xoá đệ quy", "phép gán sau cùng E=x$D thắng: xoá src"),
+    # Lỗ chung với main (reviewer PR #105): heredoc mở trong lệnh thay thế đóng cùng dòng có thân rỗng (bash và zsh đóng nó ở
+    # backtick đóng; zsh cả ở `)` của `$(…)`), nên các dòng sau là lệnh.
+    ("echo `cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo `cat <<EOF`\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("x=`cat <<-E`\nrm -rf src\nE", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo `cat <<'EOF'` ok\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("y=`: <<E`; echo hi\nrm -rf src\nE", "xoá đệ quy", "heredoc mở và đóng trong một backtick: bash, zsh xoá src"),
+    ("echo $(cat <<'EOF')\nrm -rf src\nEOF", "xoá đệ quy", "heredoc mở và đóng trong một $(…) một dòng: zsh xoá src"),
+    # Reviewer PR #109 lần hai: backtick chữ (trong nháy, sau `\`) đứng trước không được làm lệch cổng của strict=4; `#` giữa
+    # từ không phải comment.
+    ("echo '`'; y=`cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "backtick trong nháy trước heredoc một dòng: bash xoá src"),
+    ("echo \\`; y=`cat <<'EOF'`\nrm -rf src\nEOF", "xoá đệ quy", "backtick thoát trước heredoc một dòng: bash xoá src"),
+    ("a='`' y=`: <<E`\nrm -rf src\nE", "xoá đệ quy", "backtick trong nháy trước heredoc một dòng: bash xoá src"),
+    ("x=$(cat <<E a#b)\nrm -rf src\nE", "xoá đệ quy", "`#` giữa từ trong $(…) một dòng: zsh xoá src"),
+    # Reviewer PR #109 lần ba: nháy lẻ trong thân một heredoc đứng trước (commit message "Don't…") không được tắt cổng strict=4.
+    ("cat <<E\nit's\nE\ny=`cat <<'F'`\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trong thân heredoc trước: bash xoá src"),
+    ("git commit -F - <<EOF\nDon't break it\nEOF\necho `cat <<'X'` ok\nrm -rf src\nX", "xoá đệ quy",
+     "nháy lẻ trong thân heredoc trước: bash xoá src"),
+    ("cat <<E\nit's\nE\nx=$(cat <<'F')\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trong thân heredoc trước: zsh xoá src"),
+    ('cat <<E\nsay "hi\nE\ny=`cat <<\'F\'`\nrm -rf src\nF', "xoá đệ quy", "nháy kép lẻ trong thân heredoc trước: bash xoá src"),
+    ("cat <<E\nit's\nE\necho '`'; y=`cat <<'F'`\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trước, backtick chữ: bash xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -2121,6 +2142,28 @@ for cmd in ('T="x y"; U=$T; rm -rf /tmp/w/"$U"', 'T="x src"; U=$T; rm -rf /tmp/w
 for cmd in ('rm -rf /tmp/w/"x" src', 'T="x y"; U=$T; rm -rf /tmp/w/"$U" src', 'rm -rf "/tmp/a"/../src'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" in got, f"đích thứ hai ngoài tmp vẫn phải báo: {cmd!r}: {got!r}")
+# Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
+# Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
+for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
+            "x=$(cat <<'EOF' ')'\nrm -rf src\nEOF\n)", 'x=$(cat <<\'EOF\' ")"\nrm -rf src\nEOF\n)',
+            "x=$(cat <<EOF # )\nrm -rf src\nEOF\n)",
+            "x=$(printf '%s)' a); y=`cat <<E`; cat <<'EOF' >notes.txt\nrm -rf src\nEOF",
+            'y=`: <<E`\nx=$(echo ")"); cat <<\'EOF\'\nrm -rf src\nEOF',
+            # backtick đóng mồ côi đầu dòng sau thân heredoc của backtick nhiều dòng (reviewer PR #109 lần năm)
+            "x=`cat <<EOF\ndata\nEOF\n`\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",
+            "x=`cat <<EOF\ndata\nEOF\n`; echo ok\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",
+            "x=`cat <<'EOF'\ndata\nEOF\n`\necho `date`; cat <<'E' >notes.txt; echo `date`\nrm -rf src\nE"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"thân heredoc trong lệnh thay thế nhiều dòng là dữ liệu: {cmd!r}: {got!r}")
+# Reviewer PR #109: cổng của strict=4 không được bậc hai theo độ dài dòng (backtick hay `$(` mở rồi nhiều `<<`).
+for opener in ("echo `x ", "echo $(x "):
+    def gate_time(n):
+        c = opener + "<<" * n
+        t0 = time.perf_counter()
+        a.suspicious_labels(c, a.SUSPICIOUS)
+        return time.perf_counter() - t0
+    g1, g4 = min(gate_time(2000) for _ in range(3)), min(gate_time(8000) for _ in range(2))
+    check(g4 < 6 * g1 + 0.1, f"strict=4: cổng tuyến tính với {opener!r}: 8000 `<<` {g4:.3f} s, 2000 `<<` {g1:.3f} s")
 # Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
 # thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
 def esc2_time(n):

@@ -183,6 +183,24 @@ ARITH_X = re.compile(r"\\[\s\S]|\$'(?:[^'\\]|\\[\s\S])*(?:'|\Z)|\"(?:[^\"\\]|\\[
 # cộng thêm, không thay ARITH_X ở strict=2: nháy lẻ trước backtick có `<<` (`` x=`echo it's`; y=`cat <<EOF` `` ⏎ `rm -rf src`)
 # thì ARITH_X mới thấy lệnh dưới đó (reviewer PR #105).
 ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.pattern, re.MULTILINE)
+# ARITH_XS (cách đọc strict=4, chỉ bash): như ARITH_X, thêm lệnh thay thế đóng trên cùng dòng (cặp backtick, `$(…)` không lồng
+# ngoặc) là một khớp: `<<` trong nó mở heredoc có thân rỗng (bash, zsh đóng nó ở backtick đóng; zsh cả ở `)`), nên
+# các dòng sau là lệnh (`` echo `cat <<'EOF'` `` ⏎ `rm -rf src` ⏎ `EOF`: xoá src). Lệnh thay thế kéo qua nhiều dòng thì không
+# khớp: heredoc trong nó vẫn mở, thân là dữ liệu.
+# Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có comment (`#` đầu từ: comment có thể chứa `)`);
+# `#` giữa từ (`a#b`) là chữ (reviewer PR #109). Backtick kéo qua nhiều dòng không là một khớp: mọi cách nhận nó bằng regex
+# đều lệch với backtick đóng mồ côi sau thân heredoc của một backtick nhiều dòng (reviewer PR #109 lần bốn, năm, sáu); muốn bắt
+# phải theo dõi trạng thái trong vòng dò heredoc (việc riêng, xem docs 2.8).
+ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`"
+                      r"|\$\((?:[^()'\"#\\\n]|(?<=[^\s;&|()<>])#|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|"
+                      + ARITH_X.pattern, re.MULTILINE)
+
+
+def subst_heredoc(cmd):
+    """Cổng của strict=4: có `<<` và có backtick hay `$(`. Chỉ chữ, không tách token: mọi cách tách riêng (khác vòng dò heredoc,
+    vốn bỏ qua thân heredoc rồi tách lại) đều lệch ở nháy lẻ trong thân heredoc đứng trước hay backtick chữ (reviewer PR #109
+    lần hai, ba). Tuyến tính."""
+    return "<<" in cmd and ("`" in cmd or "$(" in cmd)
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
@@ -741,7 +759,8 @@ def keep_shell_heredocs(cmd, join=False, scoped=True, raw_marks=False, empty_bod
         if bash == 2 and depth < 8 and "<<" in body:
             body = keep_shell_heredocs(body, join, scoped, raw_marks, empty_body, exact, snap, strict, bash, depth + 1)
         return "\n".join((mark + rest, (OPEN_RAW if quoted else OPEN) + (NOT_LAST if rest.strip() else ""), body, CLOSE, ""))
-    arith = ARITH_XT if strict == 3 else ARITH_X  # strict=3: cách đọc thêm biết backtick khi dò heredoc, here-string
+    # strict=3: cách đọc thêm biết backtick khi dò heredoc, here-string; strict=4: lệnh thay thế một dòng là một khớp
+    arith = ARITH_XT if strict == 3 else ARITH_XS if strict == 4 else ARITH_X
     if scoped and not raw_marks:  # byte dấu có sẵn trong lệnh là chữ thường với bash: đổi thành ký tự trung tính
         cmd = re.sub("[" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + SNAP + "]", "\ufffd", cmd)
     if not (bash and scoped):
@@ -948,7 +967,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
     ps = tool == "PowerShell"
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     if exact:  # PowerShell không thoát bằng `\`: strict che nháy như exact
-        quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict in (2, 3) else QUOTED_XB if strict else QUOTED_X
+        quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict in (2, 3, 4) else QUOTED_XB if strict else QUOTED_X
     # exact: che riêng từng vùng giữa các dấu để nháy không ghép qua ranh giới thân (`echo don't` trong thân với `'x'` sau EOF)
     regions = re.split("([" + OPEN + OPEN_RAW + CLOSE + NOT_LAST + "])", body) if exact else [body]
     mask = (lambda p: quoted.sub(keep, p)) if ps or quoted in (QUOTED_XB, QUOTED_XBT) else (lambda p: quoted_sub(quoted, keep, p))
@@ -1517,6 +1536,10 @@ def reading_combos(cmd, tool="Bash"):
         combos += [c[:10] + (2,) + c[11:] for c in combos if c[10] is True and c[12] != 2]
         # strict=3: như strict=2 với bash, dò heredoc, here-string bằng ARITH_XT. Cộng thêm, không thay (reviewer PR #105).
         combos += [c[:10] + (3,) + c[11:] for c in combos if c[10] == 2 and c[12] is True]
+    # strict=4: như các cách đọc strict với bash, dò heredoc bằng ARITH_XS (heredoc mở và đóng trong lệnh thay thế một dòng
+    # có thân rỗng). Cộng thêm, không sinh ứng viên; chỉ khi lệnh có dạng đó (subst_heredoc).
+    if tool != "PowerShell" and "<<" in cmd and subst_heredoc(cmd):
+        combos += [c[:10] + (4,) + c[11:] for c in combos if c[10] is True and c[12] is True]
     return combos
 
 
