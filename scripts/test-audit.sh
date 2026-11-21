@@ -2132,7 +2132,11 @@ for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf
             'y=`: <<E`\nx=$(echo ")"); cat <<\'EOF\'\nrm -rf src\nEOF',
             # backtick nhiều dòng ghép lệch che `<<` của heredoc dữ liệu (reviewer PR #109 lần bốn)
             "x=`echo a\nb`; cat <<EOF > f; y=`date`\nrm -rf src\nEOF",
-            "x=`printf '%s' \\\n  a`; cat <<EOF >f; echo `date`\nrm -rf src\nEOF"):
+            "x=`printf '%s' \\\n  a`; cat <<EOF >f; echo `date`\nrm -rf src\nEOF",
+            # backtick đóng mồ côi đầu dòng sau thân heredoc của backtick nhiều dòng (reviewer PR #109 lần năm)
+            "x=`cat <<EOF\ndata\nEOF\n`\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",
+            "x=`cat <<EOF\ndata\nEOF\n`; echo ok\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",
+            "x=`cat <<'EOF'\ndata\nEOF\n`\necho `date`; cat <<'E' >notes.txt; echo `date`\nrm -rf src\nE"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check("xoá đệ quy" not in got, f"thân heredoc trong lệnh thay thế nhiều dòng là dữ liệu: {cmd!r}: {got!r}")
 # Reviewer PR #109: cổng của strict=4 không được bậc hai theo độ dài dòng (backtick hay `$(` mở rồi nhiều `<<`).
