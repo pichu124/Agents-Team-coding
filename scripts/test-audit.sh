@@ -2117,8 +2117,6 @@ MISSED_28 = [
     ("cat <<E\nit's\nE\nx=$(cat <<'F')\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trong thân heredoc trước: zsh xoá src"),
     ('cat <<E\nsay "hi\nE\ny=`cat <<\'F\'`\nrm -rf src\nF', "xoá đệ quy", "nháy kép lẻ trong thân heredoc trước: bash xoá src"),
     ("cat <<E\nit's\nE\necho '`'; y=`cat <<'F'`\nrm -rf src\nF", "xoá đệ quy", "nháy lẻ trước, backtick chữ: bash xoá src"),
-    # Reviewer PR #109 lần bốn: backtick kéo qua nhiều dòng đứng trước không được ghép lệch với backtick của dòng sau.
-    ("x=`echo a\nb`; y=`cat <<E`\nrm -rf src\nE", "xoá đệ quy", "backtick nhiều dòng trước heredoc một dòng: bash xoá src"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
@@ -2130,9 +2128,6 @@ for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf
             "x=$(cat <<EOF # )\nrm -rf src\nEOF\n)",
             "x=$(printf '%s)' a); y=`cat <<E`; cat <<'EOF' >notes.txt\nrm -rf src\nEOF",
             'y=`: <<E`\nx=$(echo ")"); cat <<\'EOF\'\nrm -rf src\nEOF',
-            # backtick nhiều dòng ghép lệch che `<<` của heredoc dữ liệu (reviewer PR #109 lần bốn)
-            "x=`echo a\nb`; cat <<EOF > f; y=`date`\nrm -rf src\nEOF",
-            "x=`printf '%s' \\\n  a`; cat <<EOF >f; echo `date`\nrm -rf src\nEOF",
             # backtick đóng mồ côi đầu dòng sau thân heredoc của backtick nhiều dòng (reviewer PR #109 lần năm)
             "x=`cat <<EOF\ndata\nEOF\n`\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",
             "x=`cat <<EOF\ndata\nEOF\n`; echo ok\ny=`date`; cat <<E >f; z=`date`\nrm -rf src\nE",

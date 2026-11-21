@@ -188,10 +188,10 @@ ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.patt
 # các dòng sau là lệnh (`` echo `cat <<'EOF'` `` ⏎ `rm -rf src` ⏎ `EOF`: xoá src). Lệnh thay thế kéo qua nhiều dòng thì không
 # khớp: heredoc trong nó vẫn mở, thân là dữ liệu.
 # Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có comment (`#` đầu từ: comment có thể chứa `)`);
-# `#` giữa từ (`a#b`) là chữ (reviewer PR #109). Backtick kéo qua nhiều dòng không có `<<` cũng là một khớp (như ARITH_XT), để
-# backtick đóng của nó không ghép với backtick của dòng sau (reviewer PR #109 lần bốn); không mở ở đầu dòng: đó thường là
-# backtick đóng mồ côi sau thân heredoc của một backtick nhiều dòng (reviewer PR #109 lần năm).
-ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`|(?<=[^\n])`(?:[^`\\<]|\\[\s\S]|<(?!<))*`"
+# `#` giữa từ (`a#b`) là chữ (reviewer PR #109). Backtick kéo qua nhiều dòng không là một khớp: mọi cách nhận nó bằng regex
+# đều lệch với backtick đóng mồ côi sau thân heredoc của một backtick nhiều dòng (reviewer PR #109 lần bốn, năm, sáu); muốn bắt
+# phải theo dõi trạng thái trong vòng dò heredoc (việc riêng, xem docs 2.8).
+ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`"
                       r"|\$\((?:[^()'\"#\\\n]|(?<=[^\s;&|()<>])#|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|"
                       + ARITH_X.pattern, re.MULTILINE)
 
