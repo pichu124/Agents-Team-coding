@@ -187,16 +187,17 @@ ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.patt
 # ngoặc) là một khớp: `<<` trong nó mở heredoc có thân rỗng (bash, zsh đóng nó ở backtick đóng; zsh cả ở `)`), nên
 # các dòng sau là lệnh (`` echo `cat <<'EOF'` `` ⏎ `rm -rf src` ⏎ `EOF`: xoá src). Lệnh thay thế kéo qua nhiều dòng thì không
 # khớp: heredoc trong nó vẫn mở, thân là dữ liệu.
-# Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có `#` (comment có thể chứa `)`) (reviewer PR #109).
+# Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có comment (`#` đầu từ: comment có thể chứa `)`);
+# `#` giữa từ (`a#b`) là chữ (reviewer PR #109).
 ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`"
-                      r"|\$\((?:[^()'\"#\\\n]|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|" + ARITH_X.pattern, re.MULTILINE)
-SUBST_ONE_LINE = re.compile(r"`[^`\n]*`|\$\([^()\n]*\)")
+                      r"|\$\((?:[^()'\"#\\\n]|(?<=[^\s;&|()<>])#|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|"
+                      + ARITH_X.pattern, re.MULTILINE)
 
 
 def subst_heredoc(cmd):
-    """Cổng của strict=4: có lệnh thay thế một dòng chứa `<<`. Quét các khớp không chồng nhau rồi xét `<<` trong từng khớp: tuyến
-    tính (regex `` `[^`]*<<[^`]*` `` thử lại từ mỗi vị trí nên bậc hai khi backtick mở không đóng rồi nhiều `<<`, reviewer PR #109)."""
-    return any("<<" in m[0] for m in SUBST_ONE_LINE.finditer(cmd))
+    """Cổng của strict=4: có lệnh thay thế một dòng chứa `<<`, tách bằng chính ARITH_XS (biết nháy, ký tự thoát, comment nên
+    backtick chữ trong nháy hay sau dấu thoát không làm lệch cặp; reviewer PR #109 lần hai). Tuyến tính: khớp không chồng nhau."""
+    return any("<<" in m[0] and (m[0][:1] == "`" or m[0][:2] == "$(") for m in ARITH_XS.finditer(cmd))
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
