@@ -2082,10 +2082,38 @@ MISSED_28 = [
     ("D='/tmp'\\ E=$D E=$D && rm -rf $E", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
     ("declare D='/tmp'\\ x; E=$D; rm -rf ${E}dist/x", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
     ("D=/tmp\\;;E=$D F=$E; rm -rf $F", "xoá đệ quy", "main báo, bản đầu PR #106 bỏ sót"),
+    # Reviewer PR #106 (lỗ còn lại của esc2, mọi bản bỏ sót): khoảng trắng cuối nằm trong nháy, và giá trị ghép thêm chữ hay
+    # biến (`E=x$D`, `E=$D$D`, `E=$D'x'`): phép gán không tách từ nên E giữ khoảng trắng, `${E}src` không nháy tách ra.
+    ("D='/tmp/w/ '; E=$D; rm -rf ${E}src", "xoá đệ quy", "khoảng trắng cuối trong nháy qua E=$D: xoá src"),
+    ('D="/tmp/w/ "; E=$D; rm -rf ${E}src', "xoá đệ quy", "khoảng trắng cuối trong nháy kép qua E=$D: xoá src"),
+    ("D='/tmp/w/ '; export E=$D; rm -rf ${E}src", "xoá đệ quy", "khoảng trắng cuối trong nháy qua export E=$D: xoá src"),
+    ("D=/tmp/w/\\ ; E=x$D; rm -rf ${E}src", "xoá đệ quy", "E=x$D giữ khoảng trắng cuối: xoá src"),
+    ("D=/tmp/w/\\ ; E=$D$D; rm -rf ${E}src", "xoá đệ quy", "E=$D$D giữ khoảng trắng: xoá src"),
+    ("D='/tmp/w/'\\ ; E=$D'x'; rm -rf ${E}src", "xoá đệ quy", "E=$D'x' giữ khoảng trắng: xoá xsrc của dự án"),
+    # Reviewer PR #108: bản đầu đổi lượt `E=$D` của esc2 (đã có ở main) tại chỗ nên mất nhãn main vẫn báo; bash xoá trong dự án.
+    ("D='/tmp/a b/'; E=\"$D\"\\ ; rm -rf ${E}/tmp/q", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá b/"),
+    ("D=/tmp/w/\\ ; E=$D E=$D$1; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá src"),
+    ("D=/tmp/w/\\ ; E=$D E=$D\\ ; rm -rf ${E}src", "xoá đệ quy", "main báo, bản đầu PR #108 bỏ sót: xoá src"),
+    ("D='/tmp/w/ 'x; readonly E=$D E=/srv/ F=$D'\\ '; rm -rf ${E}dist/x", "xoá đệ quy",
+     "main báo, bản đầu PR #108 bỏ sót: readonly E giữ giá trị của D, xoá xdist/x"),
 ]
 for cmd, label, why in MISSED_28:
     got = a.suspicious_labels(cmd, a.SUSPICIOUS)
     check(label in got, f"MISSED_28 {why}: {cmd!r}: {got!r}")
+# Reviewer PR #108: tách giá trị trong nháy kép có nhiều biến rồi `$(…)` không được backtrack hàm mũ (bản đầu: 12 biến ~1 s,
+# thêm 2 biến nhân ~10). Tỉ lệ với 6 biến trên cùng máy.
+def esc2_time(n):
+    c = 'D=/tmp/w/\\ ; E=1; E="' + "$aaa" * n + '$(date)"; rm -rf ${E}src'
+    t0 = time.perf_counter()
+    a.suspicious_labels(c, a.SUSPICIOUS)
+    return time.perf_counter() - t0
+# Reviewer PR #108 lần hai: esc2=2 chỉ tính lại phép gán sau cùng của mỗi tên trong đoạn (`E=x$D E=/tmp/q`: E là /tmp/q,
+# bash chỉ xoá /tmp/q). Các cách đọc khác (cả esc2 của main) không đổi nên không mất nhãn.
+for cmd in ("D='/tmp/w/ '; E=x$D E=/tmp/q; rm -rf $E", "D='/srv/a '; E=$D/x E=/tmp/q; rm -rf $E"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS)
+    check("xoá đệ quy" not in got, f"esc2=2: phép gán sau cùng cùng tên thắng, không báo thừa: {cmd!r}: {got!r}")
+t6, t12 = min(esc2_time(6) for _ in range(3)), esc2_time(12)
+check(t12 < 10 * t6 + 0.2, f"esc2: nháy kép nhiều biến rồi $(…) phải tuyến tính: 12 biến {t12:.3f} s, 6 biến {t6:.3f} s")
 # Guard hỏi vì hết ngân sách thời gian (máy chậm: runner Windows tải nặng) không phải phán xét về lệnh: replay trả asked=None
 # (chưa biết) như guard lỗi, để lệnh không rơi từ A sang H tuỳ tốc độ máy (CI Windows rest đỏ chập chờn ở hf2 và ở
 # `export D=/srv/; cat <<'EOF' \` ⏎ `| bash`, mỗi lần một lệnh). Hỏi vì nội dung (cả lệnh quá dài) vẫn là hỏi.
