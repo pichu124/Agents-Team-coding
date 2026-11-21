@@ -195,9 +195,10 @@ ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`"
 
 
 def subst_heredoc(cmd):
-    """Cổng của strict=4: có lệnh thay thế một dòng chứa `<<`, tách bằng chính ARITH_XS (biết nháy, ký tự thoát, comment nên
-    backtick chữ trong nháy hay sau dấu thoát không làm lệch cặp; reviewer PR #109 lần hai). Tuyến tính: khớp không chồng nhau."""
-    return any("<<" in m[0] and (m[0][:1] == "`" or m[0][:2] == "$(") for m in ARITH_XS.finditer(cmd))
+    """Cổng của strict=4: có `<<` và có backtick hay `$(`. Chỉ chữ, không tách token: mọi cách tách riêng (khác vòng dò heredoc,
+    vốn bỏ qua thân heredoc rồi tách lại) đều lệch ở nháy lẻ trong thân heredoc đứng trước hay backtick chữ (reviewer PR #109
+    lần hai, ba). Tuyến tính."""
+    return "<<" in cmd and ("`" in cmd or "$(" in cmd)
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
