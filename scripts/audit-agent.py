@@ -187,8 +187,16 @@ ARITH_XT = re.compile(r"\\[\s\S]|`(?:[^`\\<]|\\[\s\S]|<(?!<))*`|" + ARITH_X.patt
 # ngoặc) là một khớp: `<<` trong nó mở heredoc có thân rỗng (bash, zsh đóng nó ở backtick đóng; zsh cả ở `)`), nên
 # các dòng sau là lệnh (`` echo `cat <<'EOF'` `` ⏎ `rm -rf src` ⏎ `EOF`: xoá src). Lệnh thay thế kéo qua nhiều dòng thì không
 # khớp: heredoc trong nó vẫn mở, thân là dữ liệu.
-ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`|\$\((?:[^()\\\n]|\\[^\n])*\)|" + ARITH_X.pattern, re.MULTILINE)
-SUBST_HEREDOC = re.compile(r"`[^`\n]*<<[^`\n]*`|\$\([^()\n]*<<[^()\n]*\)")  # cổng của strict=4
+# Nhánh `$(…)` biết nháy (`)` trong nháy không đóng nó) và không khớp khi có `#` (comment có thể chứa `)`) (reviewer PR #109).
+ARITH_XS = re.compile(r"\\[\s\S]|`(?:[^`\\\n]|\\[^\n])*`"
+                      r"|\$\((?:[^()'\"#\\\n]|\\[^\n]|'[^'\n]*'|\"(?:[^\"\\\n]|\\[^\n])*\")*\)|" + ARITH_X.pattern, re.MULTILINE)
+SUBST_ONE_LINE = re.compile(r"`[^`\n]*`|\$\([^()\n]*\)")
+
+
+def subst_heredoc(cmd):
+    """Cổng của strict=4: có lệnh thay thế một dòng chứa `<<`. Quét các khớp không chồng nhau rồi xét `<<` trong từng khớp: tuyến
+    tính (regex `` `[^`]*<<[^`]*` `` thử lại từ mỗi vị trí nên bậc hai khi backtick mở không đóng rồi nhiều `<<`, reviewer PR #109)."""
+    return any("<<" in m[0] for m in SUBST_ONE_LINE.finditer(cmd))
 # Here-string `<<<` (keep_shell_heredocs(bash=True)): từ sau toán tử. Đưa vào shell (`bash <<< 'rm -rf src'`, `cat <<< …
 # | bash`) thì chuỗi là lệnh, như thân heredoc.
 HERESTR_X = re.compile(r"<<<[ \t]*(\$'(?:[^'\\]|\\[\s\S])*'|'[^']*'|\"(?:[^\"\\]|\\[\s\S])*\"|(?:[^\s;&|()<>\\'\"]|\\[\s\S])+)")
@@ -1522,8 +1530,8 @@ def reading_combos(cmd, tool="Bash"):
         # strict=3: như strict=2 với bash, dò heredoc, here-string bằng ARITH_XT. Cộng thêm, không thay (reviewer PR #105).
         combos += [c[:10] + (3,) + c[11:] for c in combos if c[10] == 2 and c[12] is True]
     # strict=4: như các cách đọc strict với bash, dò heredoc bằng ARITH_XS (heredoc mở và đóng trong lệnh thay thế một dòng
-    # có thân rỗng). Cộng thêm, không sinh ứng viên; chỉ khi lệnh có dạng đó (SUBST_HEREDOC).
-    if tool != "PowerShell" and "<<" in cmd and SUBST_HEREDOC.search(cmd):
+    # có thân rỗng). Cộng thêm, không sinh ứng viên; chỉ khi lệnh có dạng đó (subst_heredoc).
+    if tool != "PowerShell" and "<<" in cmd and subst_heredoc(cmd):
         combos += [c[:10] + (4,) + c[11:] for c in combos if c[10] is True and c[12] is True]
     return combos
 
