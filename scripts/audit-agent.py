@@ -352,7 +352,8 @@ CHDIR = re.compile(r"(?:^|[\s({!`;&|\\\"'])(?:" + CHDIR_NAMES + r")"
 # `&` chạy nền còn lệnh theo sau trong cùng đoạn (dò trên bản đã che nháy). Không phải `>&`, `<&`, `&>`; `&&` đã tách,
 # `&` đầu đoạn là của `|&`.
 BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
-TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
+# Một từ shell: chữ không trắng ghép với chuỗi nháy (`/tmp/w/"x y"` là một đích, reviewer PR #110); nháy không đóng thì như cũ.
+TOKEN = re.compile(r"(?:\"[^\"]*\"|'[^']*'|[^\s\"'])+|\S+")
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
