@@ -2166,6 +2166,16 @@ for cmd in ("bash -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'", "sh -c 'rm 
             "bash.exe -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'", "wsl bash -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: thân bash -c tách theo bash: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần năm: chữ bash, sh, wsl ở chỗ khác trong lệnh (đường dẫn, Write-Host, `wsl --shutdown`, một đoạn
+# `bash ./build.sh` khác) không làm đoạn Remove-Item thuần PowerShell bị đọc theo luật thoát của bash (main không báo; chỉ
+# xoá trong C:\temp).
+for cmd in ('Remove-Item -Recurse -Force "C:\\temp\\sh\\" -Exclude "C:\\temp\\a b\\"',
+            'Write-Host "cleaning for bash"; Remove-Item -Recurse -Force "C:\\temp\\x\\" -Exclude "C:\\temp\\a b\\"',
+            'Remove-Item -Recurse -Force "C:\\temp\\x\\" -Exclude "C:\\temp\\a b\\"; wsl --shutdown',
+            'Remove-Item -Recurse -Force "C:\\temp\\sh\\" -Include "{dist,build}"',
+            'Remove-Item -Recurse -Force "C:\\temp\\x\\" -Exclude "C:\\temp\\a b\\"; bash ./build.sh'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: đoạn ngoài thân shell lồng tách như main: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
