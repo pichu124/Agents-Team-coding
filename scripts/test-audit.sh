@@ -2160,6 +2160,12 @@ for cmd in ('ri -r "build\\" , "src"', 'Remove-Item "dist\\" , "src" -Recurse',
             'Remove-Item -Recurse "C:\\temp\\x","C:\\src"'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: \\ là chữ, nháy kép đóng ở \\\": xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần bốn: thân `bash -c '…'` gọi từ PowerShell là văn bản bash (nháy đơn của PowerShell là chữ): bash xoá
+# src. Tách theo PowerShell thì `" src /tmp/c "` thành một từ chứa /tmp/ (bỏ sót, bản sửa thoát của Bash từng báo).
+for cmd in ("bash -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'", "sh -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'",
+            "bash.exe -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'", "wsl bash -c 'rm -rf \"/tmp/a\\\"\" src /tmp/c \"/tmp/b\"'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: thân bash -c tách theo bash: xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
