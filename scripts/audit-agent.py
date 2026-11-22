@@ -377,6 +377,8 @@ BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
 TOKEN = re.compile(r"(?:\"(?:\\[\s\S]|[^\"\\])*\"|'[^']*'|\\\S|[^\s\"'])+(?:[\"']\S*)?|\"[^\"]*\"|'[^']*'|\S+")
 # PowerShell thoát bằng backtick, `\` là chữ (`"build\" , "src"` là hai chuỗi, reviewer PR #110 lần ba): giữ cách tách của main.
 PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
+# Lệnh PowerShell gọi shell POSIX: thân có thể là văn bản bash, benign_delete đọc cả theo TOKEN.
+NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash|wsl)(?:\.exe)?(?![\w-])", re.IGNORECASE)
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -1367,13 +1369,20 @@ def shlex_quote(x):
     return "'" + x.replace("'", "'\\''") + "'" if x else "''"
 
 
-def benign_delete(full, ctx, worktree=True, tool="Bash"):
-    """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi)."""
+def benign_delete(full, ctx, worktree=True, tool="Bash", nested_sh=False, tok=None):
+    """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi).
+    nested_sh: lệnh PowerShell có gọi shell POSIX (`bash -c '…'`, `wsl …`): đoạn có thể là văn bản bash, nên chỉ vô hại khi
+    cả PS_TOKEN lẫn TOKEN đều thấy vô hại (reviewer PR #110 lần bốn)."""
+    if tok is None:
+        if tool == "PowerShell" and nested_sh:
+            return (benign_delete(full, ctx, worktree, tool, tok=PS_TOKEN)
+                    and benign_delete(full, ctx, worktree, tool, tok=TOKEN))
+        tok = PS_TOKEN if tool == "PowerShell" else TOKEN
     # Biến hay lệnh lồng chưa thay được có thể chứa `..`, đường tuyệt đối hay khoảng trắng (tách thành đích khác, kể cả từ
     # token trông như cờ: `-$X`), dù đứng sau thư mục tạm hay tên lành.
     if re.search(r"[$`]", full):
         return False
-    toks = [t.strip("\"'") for t in (PS_TOKEN if tool == "PowerShell" else TOKEN).findall(full)]
+    toks = [t.strip("\"'") for t in tok.findall(full)]
     if any(re.split(r"[\\/]", t)[-1].lower() == "xargs" for t in toks):
         return False  # đích đọc từ stdin: không biết
     wsl = False
@@ -1413,7 +1422,7 @@ def benign_delete(full, ctx, worktree=True, tool="Bash"):
                 return False
             if alts != [t]:
                 # `--`: đích mở bằng `-` sau bung (`{-src,/tmp/a}` sau `--`) vẫn là đích.
-                if not benign_delete("rm -- " + " ".join(shlex_quote(x) for x in alts), ctx, worktree, tool):
+                if not benign_delete("rm -- " + " ".join(shlex_quote(x) for x in alts), ctx, worktree, tool, tok=tok):
                     return False
                 continue
         if benign_path(t):
@@ -1551,6 +1560,7 @@ def reading_combos(cmd, tool="Bash"):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
+    nested_sh = tool == "PowerShell" and bool(NESTED_SH.search(cmd))
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
@@ -1593,7 +1603,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
-            if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool):
+            if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool, nested_sh=nested_sh):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
                 continue
