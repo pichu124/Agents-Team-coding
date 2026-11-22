@@ -377,8 +377,27 @@ BACKGROUND = re.compile(r"[^<>|&]&(?![>&])\s*\S")
 TOKEN = re.compile(r"(?:\"(?:\\[\s\S]|[^\"\\])*\"|'[^']*'|\\\S|[^\s\"'])+(?:[\"']\S*)?|\"[^\"]*\"|'[^']*'|\S+")
 # PowerShell thoát bằng backtick, `\` là chữ (`"build\" , "src"` là hai chuỗi, reviewer PR #110 lần ba): giữ cách tách của main.
 PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
-# Lệnh PowerShell gọi shell POSIX: thân có thể là văn bản bash, benign_delete đọc cả theo TOKEN.
-NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash|wsl)(?:\.exe)?(?![\w-])", re.IGNORECASE)
+# Đoạn PowerShell chạy bởi wsl (`wsl rm -rf …`, `wsl.exe -- …`): văn bản bash, benign_delete đọc cả theo TOKEN.
+WSL_SEG = re.compile(r"\s*wsl(?:\.exe)?(?:\s|$)", re.IGNORECASE)
+
+
+def shell_c_bodies(cmd):
+    """Thân của mọi `bash|sh|zsh|dash -c '…'` trong cmd (cả hai regex gỡ thân, gỡ đệ quy, nháy kép gỡ thoát như
+    unwrap_shell_c): đoạn PowerShell nằm trong một thân là văn bản bash (reviewer PR #110 lần năm: chỉ đoạn đó, không phải
+    mọi đoạn của lệnh có chữ bash, sh hay wsl)."""
+    out = []
+    for rx in (SHELL_C_BODY, SHELL_C_BODY_STRICT):
+        for m in rx.finditer(cmd):
+            q = m.group(2)
+            if q[0] == "$":
+                body = re.sub(r"\\(.)", lambda x: {"n": "\n", "t": "\t"}.get(x[1], x[1]), q[2:-1])
+            else:
+                body = q[1:-1]
+                if q[0] == '"':
+                    body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
+            out.append(body)
+            out += shell_c_bodies(body)
+    return out
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
 BENIGN_NAMES = {"tmp", "temp", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache",
@@ -1371,8 +1390,8 @@ def shlex_quote(x):
 
 def benign_delete(full, ctx, worktree=True, tool="Bash", nested_sh=False, tok=None):
     """worktree=False: không nhận đích trong worktree agent (đích thật có thể khác đích ghi).
-    nested_sh: lệnh PowerShell có gọi shell POSIX (`bash -c '…'`, `wsl …`): đoạn có thể là văn bản bash, nên chỉ vô hại khi
-    cả PS_TOKEN lẫn TOKEN đều thấy vô hại (reviewer PR #110 lần bốn)."""
+    nested_sh: đoạn PowerShell nằm trong thân `bash -c '…'` hay chạy bởi wsl: văn bản bash, nên chỉ vô hại khi cả PS_TOKEN
+    lẫn TOKEN đều thấy vô hại (reviewer PR #110 lần bốn, năm)."""
     if tok is None:
         if tool == "PowerShell" and nested_sh:
             return (benign_delete(full, ctx, worktree, tool, tok=PS_TOKEN)
@@ -1560,7 +1579,7 @@ def reading_combos(cmd, tool="Bash"):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
-    nested_sh = tool == "PowerShell" and bool(NESTED_SH.search(cmd))
+    sh_bodies = shell_c_bodies(cmd) if tool == "PowerShell" else []
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
@@ -1603,6 +1622,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
+            nested_sh = tool == "PowerShell" and bool(WSL_SEG.match(full) or any(full.strip() in b for b in sh_bodies))
             if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool, nested_sh=nested_sh):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
