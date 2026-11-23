@@ -15,6 +15,7 @@ Thường gọi qua scripts/audit-agent.sh (để có bash chạy lại guard). 
 Mặc định soát dự án ở thư mục hiện tại; --all soát mọi dự án trên máy (khi kit cài dạng plugin).
 """
 import argparse
+import bisect
 import collections
 import itertools
 import json
@@ -303,10 +304,19 @@ def quoted_sub(rx, f, text):
 # không là shell: lần khớp từ một shell không đi qua chỗ một shell khác mở (`bash -o bash -o …`, `--bash --bash …`,
 # `--x-bash …` quét lại tới cuối từ mỗi shell: bậc hai), thân vẫn được gỡ từ shell sau. Cụm c tìm chữ c bằng lookahead
 # rồi lấy trọn cụm: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c.
-SHELL_C_BODY = re.compile(r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
-                          r"(?:\s+(?:--?(?!(?:bash|sh|zsh|dash)\s)\w(?:\w|-(?!(?:bash|sh|zsh|dash)\s))*"
-                          r"|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
-                          r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+_SHELL_C_HEAD = (r"(?<!\w)((?:bash|sh|zsh|dash)(?:\.exe)?)"
+                 r"(?:\s+(?:--?(?!(?:bash|sh|zsh|dash)\s)\w(?:\w|-(?!(?:bash|sh|zsh|dash)\s))*"
+                 r"|[-+][A-Za-z]*o\s+(?!(?:bash|sh|zsh|dash)\b)\w+))*?"
+                 r"\s+-(?=[A-Za-z]*c)[A-Za-z]+(?:\s+--)?\s+")
+SHELL_C_BODY = re.compile(_SHELL_C_HEAD + r"('[^']*'|\"(?:[^\"\\]|\\.)*\")", re.IGNORECASE)
+# Thân -c viết theo nháy của PowerShell (reviewer PR #110 lần sáu): nháy đơn có `''` là một `'` chữ, nháy kép thoát bằng
+# backtick hay `""`, here-string `@'`/`@"` mở cuối dòng (phần đóng `'@`/`"@` đầu dòng tìm riêng trong shell_c_bodies: lazy
+# tới cuối lệnh ở mỗi chỗ mở là bậc hai).
+PS_SHELL_C_BODY = re.compile(_SHELL_C_HEAD + r"(@['\"][ \t]*\r?\n|'(?:[^']|'')*'|\"(?:[^\"`]|`[\s\S]|\"\")*\")",
+                             re.IGNORECASE)
+PS_BACKTICK = re.compile(r"`([\s\S])|\"\"")
+PS_BACKTICK_CHARS = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b"}
+NO_QUOTES = str.maketrans("", "", "'\"`")
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
 # (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
@@ -381,22 +391,63 @@ PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 WSL_SEG = re.compile(r"\s*wsl(?:\.exe)?(?:\s|$)", re.IGNORECASE)
 
 
-def shell_c_bodies(cmd):
+def ps_shell_c_bodies(cmd):
+    """Thân -c viết theo nháy của PowerShell (PS_SHELL_C_BODY): `''` thành `'`, backtick và `""` của nháy kép gỡ thoát,
+    here-string tới dòng đầu tiên mở bằng `'@`/`"@` sau nó (vị trí các dòng đóng tìm một lần, bisect). Lần tìm sau bắt đầu
+    sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai)."""
+    out, ends, pos = [], {}, 0
+    while True:
+        m = PS_SHELL_C_BODY.search(cmd, pos)
+        if not m:
+            break
+        pos = m.end()
+        q = m.group(2)
+        if q[0] == "@":
+            close = q[1]
+            if close not in ends:
+                ends[close] = [x.start() for x in re.finditer(r"\n[ \t]*" + close + "@", cmd)]
+            i = bisect.bisect_left(ends[close], m.end() - 1)
+            if i == len(ends[close]):
+                continue
+            body = cmd[m.end():ends[close][i]].rstrip("\r")
+            pos = max(pos, ends[close][i] + 1)
+            if close == '"':
+                body = re.sub(r"`([\s\S])", lambda x: PS_BACKTICK_CHARS.get(x[1], x[1]), body)
+        elif q[0] == "'":
+            body = q[1:-1].replace("''", "'")
+        else:
+            body = PS_BACKTICK.sub(lambda x: '"' if x[1] is None else PS_BACKTICK_CHARS.get(x[1], x[1]), q[1:-1])
+        out.append(body)
+    return out
+
+
+def shell_c_bodies(cmd, ps=False):
     """Thân của mọi `bash|sh|zsh|dash -c '…'` trong cmd (cả hai regex gỡ thân, gỡ đệ quy, nháy kép gỡ thoát như
     unwrap_shell_c): đoạn PowerShell nằm trong một thân là văn bản bash (reviewer PR #110 lần năm: chỉ đoạn đó, không phải
-    mọi đoạn của lệnh có chữ bash, sh hay wsl)."""
-    out = []
-    for rx in (SHELL_C_BODY, SHELL_C_BODY_STRICT):
-        for m in rx.finditer(cmd):
-            q = m.group(2)
-            if q[0] == "$":
-                body = re.sub(r"\\(.)", lambda x: {"n": "\n", "t": "\t"}.get(x[1], x[1]), q[2:-1])
-            else:
-                body = q[1:-1]
-                if q[0] == '"':
-                    body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
-            out.append(body)
-            out += shell_c_bodies(body)
+    mọi đoạn của lệnh có chữ bash, sh hay wsl). ps: lệnh PowerShell, thêm thân gỡ theo nháy của PowerShell (lần sáu); thân
+    là văn bản bash nên gỡ tiếp theo bash. Mỗi thân chỉ gỡ tiếp một lần: hai regex cùng khớp một thân thì lồng nhiều tầng
+    không nhân đôi số thân ở mỗi tầng."""
+    out, seen, todo = [], set(), [(cmd, ps)]
+    while todo:
+        text, ps_text = todo.pop()
+        found = []
+        for rx in (SHELL_C_BODY, SHELL_C_BODY_STRICT):
+            for m in rx.finditer(text):
+                q = m.group(2)
+                if q[0] == "$":
+                    body = re.sub(r"\\(.)", lambda x: {"n": "\n", "t": "\t"}.get(x[1], x[1]), q[2:-1])
+                else:
+                    body = q[1:-1]
+                    if q[0] == '"':
+                        body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
+                found.append(body)
+        if ps_text:
+            found += ps_shell_c_bodies(text)
+        for body in found:
+            if body not in seen:
+                seen.add(body)
+                out.append(body)
+                todo.append((body, False))
     return out
 # Xoá đệ quy chỉ được coi là vô hại khi MỌI đích nằm trong thư mục tạm/build (khớp trọn tên một thành phần)
 # hoặc trong worktree tạm của subagent (AGENT_WORKTREE).
@@ -1579,7 +1630,10 @@ def reading_combos(cmd, tool="Bash"):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
-    sh_bodies = shell_c_bodies(cmd) if tool == "PowerShell" else []
+    # Thân shell lồng của lệnh PowerShell, bỏ mọi nháy và backtick, nối bằng NUL: đoạn mà các cách đọc PowerShell tách ra còn
+    # dính nháy thừa (`rm -rf … "/tmp/b"'` khi thân có `''`, reviewer PR #110 lần sáu); bỏ ký tự ở cả hai phía giữ quan hệ
+    # chuỗi con, nên đoạn nằm trong một thân vẫn khớp. Một phép `in` trên chuỗi nối thay vòng lặp Python qua từng thân.
+    sh_text = "\0".join(shell_c_bodies(cmd, ps=True)).translate(NO_QUOTES) if tool == "PowerShell" else ""
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
@@ -1622,7 +1676,8 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if label in labels or not re.search(rx, plain, re.IGNORECASE):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
-            nested_sh = tool == "PowerShell" and bool(WSL_SEG.match(full) or any(full.strip() in b for b in sh_bodies))
+            nested_sh = label == "xoá đệ quy" and tool == "PowerShell" and bool(
+                WSL_SEG.match(full) or (sh_text and full.strip().translate(NO_QUOTES) in sh_text))
             if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool, nested_sh=nested_sh):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
