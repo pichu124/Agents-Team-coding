@@ -2176,6 +2176,16 @@ for cmd in ('Remove-Item -Recurse -Force "C:\\temp\\sh\\" -Exclude "C:\\temp\\a 
             'Remove-Item -Recurse -Force "C:\\temp\\x\\" -Exclude "C:\\temp\\a b\\"; bash ./build.sh'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: đoạn ngoài thân shell lồng tách như main: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần sáu: thân nháy đơn của PowerShell viết `'` chữ bằng `''`, here-string `@'…'@` nguyên văn: bash nhận
+# thân `echo 'a'; rm -rf "/tmp/a\"" src …` và xoá src (bash, zsh thật). Thân gỡ theo luật bash bị cắt ở `''` đầu tiên,
+# here-string không được nhận là thân (bản trước báo, main bỏ sót).
+P6 = 'rm -rf "/tmp/a\\"" src /tmp/c "/tmp/b"'
+for cmd in ("bash -c 'echo ''a''; %s'" % P6, "bash -c 'grep -q ''x'' f || %s'" % P6,
+            "bash -c 'printf ''%%s'' x && %s'" % P6, "bash -c 'echo ''''; %s'" % P6,
+            "bash -c 'echo ''start''\n%s'" % P6, "wsl -e bash -c 'echo ''a''; %s'" % P6,
+            "bash -c @'\n%s\n'@" % P6, "bash -c @'\necho hi\n%s\n'@" % P6):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: thân bash -c gỡ theo nháy của PowerShell: xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
