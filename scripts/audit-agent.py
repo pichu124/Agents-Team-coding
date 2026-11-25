@@ -317,6 +317,29 @@ PS_SHELL_C_BODY = re.compile(_SHELL_C_HEAD + r"(@['\"][ \t]*\r?\n|'(?:[^']|'')*'
 PS_BACKTICK = re.compile(r"`([\s\S])|\"\"")
 PS_BACKTICK_CHARS = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b"}
 NO_QUOTES = str.maketrans("", "", "'\"`")
+# Đầu một câu lệnh trong thân đã bỏ nháy (thân nối bằng NUL, mở bằng NUL): sau NUL, xuống dòng, `;`, `&`, `|`, `(`, `{`, `!`
+# hay từ khoá mở lệnh, kèm khoảng trắng (reviewer PR #110 lần bảy).
+STMT_START = re.compile(r"(?:[\0\n;&|({!]|(?<![\w-])(?:then|do|else|elif|if|while|until|time)[ \t])[ \t]*\Z")
+
+
+def in_sh_body(full, raw, flat):
+    """Đoạn `full` của lệnh PowerShell nằm trong một thân shell lồng: chuỗi con nguyên văn của các thân (`raw`, như
+    7f74e11), hay sau khi bỏ nháy và backtick ở cả hai phía là chuỗi con của `flat` bắt đầu ở đầu một câu lệnh của thân.
+    Bỏ nháy giữ quan hệ chuỗi con: đoạn mà các cách đọc PowerShell tách ra còn dính nháy thừa (`rm -rf … "/tmp/b"'` khi
+    thân có `''`, reviewer PR #110 lần sáu) vẫn khớp. Chỉ ở đầu câu lệnh: Remove-Item ngoài thân trùng chữ mà thân echo
+    hay grep không khớp (lần bảy). Quá 64 chỗ trùng thì một lần regex quét: không bậc hai theo số chỗ trùng."""
+    f = full.strip()
+    if f in raw:
+        return True
+    n = f.translate(NO_QUOTES)
+    i, k = flat.find(n), 0
+    while i >= 0 and k < 64:
+        if STMT_START.search(flat, max(0, i - 24), i):
+            return True
+        i, k = flat.find(n, i + 1), k + 1
+    if i < 0:
+        return False
+    return re.search(STMT_START.pattern[:-2] + re.escape(n), flat) is not None
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
 # (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
@@ -1630,10 +1653,10 @@ def reading_combos(cmd, tool="Bash"):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
-    # Thân shell lồng của lệnh PowerShell, bỏ mọi nháy và backtick, nối bằng NUL: đoạn mà các cách đọc PowerShell tách ra còn
-    # dính nháy thừa (`rm -rf … "/tmp/b"'` khi thân có `''`, reviewer PR #110 lần sáu); bỏ ký tự ở cả hai phía giữ quan hệ
-    # chuỗi con, nên đoạn nằm trong một thân vẫn khớp. Một phép `in` trên chuỗi nối thay vòng lặp Python qua từng thân.
-    sh_text = "\0".join(shell_c_bodies(cmd, ps=True)).translate(NO_QUOTES) if tool == "PowerShell" else ""
+    # Thân shell lồng của lệnh PowerShell nối bằng NUL, nguyên văn và bản bỏ nháy (in_sh_body): một phép `in` trên chuỗi nối
+    # thay vòng lặp Python qua từng thân.
+    sh_raw = "\0".join(shell_c_bodies(cmd, ps=True)) if tool == "PowerShell" else ""
+    sh_flat = "\0" + sh_raw.translate(NO_QUOTES)
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
@@ -1677,7 +1700,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
             nested_sh = label == "xoá đệ quy" and tool == "PowerShell" and bool(
-                WSL_SEG.match(full) or (sh_text and full.strip().translate(NO_QUOTES) in sh_text))
+                WSL_SEG.match(full) or (sh_raw and in_sh_body(full, sh_raw, sh_flat)))
             if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool, nested_sh=nested_sh):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
