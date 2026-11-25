@@ -396,11 +396,6 @@ _STRICT_HEAD = (rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
                 rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
                 rf"(?:\s+--?)?\s+")
 SHELL_C_BODY_STRICT = re.compile(_STRICT_HEAD + r"('[^']*'|\"(?:[^\"\\]|\\.)*\"|\$'(?:[^'\\]|\\.)*')", re.IGNORECASE)
-# Lệnh PowerShell gọi shell POSIX với -c sau cờ gộp, cờ dài, `-o tên`, `+e` (`bash -lc`, `--login -c`, `-o pipefail -c`),
-# rồi một chuỗi nháy hay here-string: segments không che thân như chuỗi (như SHELL_C với `-c` đứng riêng), để thân viết
-# theo nháy PowerShell (`''`, `@'…'@`) thành đoạn (reviewer PR #110 lần mười; bash xoá src, mọi bản trả []). Chỉ PowerShell:
-# lệnh Bash có thân -c đã được unwrap_shell_c gỡ theo luật bash.
-PS_SHELL_C = re.compile(_STRICT_HEAD + r"(?=['\"@$])", re.IGNORECASE)
 # Thân -c theo nháy PowerShell sau cờ mà phần đầu của SHELL_C_BODY không nhận (`+e -c`): ps_shell_c_bodies đọc thêm bằng
 # phần đầu strict, chỉ thêm thân (reviewer PR #110 lần mười).
 PS_SHELL_C_BODY_STRICT = re.compile(_STRICT_HEAD + PS_SHELL_C_BODY.pattern[len(_SHELL_C_HEAD):], re.IGNORECASE)
@@ -465,7 +460,9 @@ def ps_shell_c_bodies(cmd):
     return out
 
 
-def ps_bodies_rx(cmd, rx, ends):
+def ps_bodies_rx(cmd, rx, ends, spans=None):
+    """Thân của một regex (PS_SHELL_C_BODY hay PS_SHELL_C_BODY_STRICT). spans: thêm (đầu lần khớp, cuối phần nháy, shell,
+    phần nháy, thân) cho ps_rewrite."""
     out, pos = [], 0
     while True:
         m = rx.search(cmd, pos)
@@ -482,14 +479,54 @@ def ps_bodies_rx(cmd, rx, ends):
                 continue
             body = cmd[m.end():ends[close][i]].rstrip("\r")
             pos = max(pos, ends[close][i] + 1)
+            qend = cmd.index(close + "@", ends[close][i]) + 2
             if close == '"':
                 body = re.sub(r"`([\s\S])", lambda x: PS_BACKTICK_CHARS.get(x[1], x[1]), body)
         elif q[0] == "'":
             body = q[1:-1].replace("''", "'")
         else:
             body = PS_BACKTICK.sub(lambda x: '"' if x[1] is None else PS_BACKTICK_CHARS.get(x[1], x[1]), q[1:-1])
+        if spans is not None:
+            spans.append((m.start(), qend if q[0] == "@" else m.end(), m.group(1), q, body))
         out.append(body)
     return out
+
+
+# Trước tên shell ở vị trí lệnh của PowerShell: đầu lệnh, sau dấu ngắt hay mở nhóm, hay sau `wsl` kèm cờ chọn bản phân phối,
+# người dùng hay `--`/`-e` (reviewer PR #110 lần mười một: `*.sh -Recurse "x"` không phải lệnh shell).
+PS_CMD_POS = re.compile(r"(?:^|[\n;&|({]|(?<![\w.-])wsl(?:\.exe)?(?:\s+(?:--|-e|--exec|(?:-d|--distribution|-u|--user)\s+\S+))*)"
+                        r"[ \t]*\Z", re.IGNORECASE)
+
+
+def ps_cmd_pos(cmd, i):
+    """Tên shell bắt đầu ở i (có thể kèm đường dẫn đứng trước: `/usr/bin/bash`, `C:\\Git\\bin\\bash.exe`) ở vị trí lệnh."""
+    j = i
+    while j > 0 and not cmd[j - 1].isspace() and cmd[j - 1] not in ";&|({":
+        j -= 1
+    if j < i and cmd[i - 1] not in "/\\":
+        return False
+    return bool(PS_CMD_POS.search(cmd, max(0, j - 256), j))
+
+
+def ps_rewrite(cmd):
+    """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
+    hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
+    mỗi thân đó thành `<shell> -c "<thân>"` theo nháy kép của bash (`\\`, `"`, `$`, backtick thoát bằng `\\`, unwrap_shell_c
+    gỡ trọn), như lệnh main đọc được. suspicious_labels đọc thêm bản viết lại bằng các cách đọc exact (thân là phạm vi
+    shell con, nháy trong thân vẫn che) rồi hợp nhãn: cộng thêm, không thể mất nhãn (reviewer PR #110 lần mười, mười một).
+    None: không có thân nào cần viết lại."""
+    spans, ends = [], {}
+    for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
+        ps_bodies_rx(cmd, rx, ends, spans)
+    out, last = [], 0
+    for start, end, sh, q, body in sorted(spans):
+        if start < last or not ps_cmd_pos(cmd, start):
+            continue
+        if not (q[0] == "@" or "''" in q or (q[0] == '"' and ("`" in q or '""' in q[1:-1])) or not SHELL_C.match(cmd, start)):
+            continue
+        out += [cmd[last:start], sh, ' -c "', re.sub(r'([\\"$`])', r"\\\1", body), '"']
+        last = end
+    return "".join(out) + cmd[last:] if out else None
 
 
 def shell_c_bodies(cmd, ps=False):
@@ -1112,7 +1149,7 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
 
     ps = tool == "PowerShell"
-    shell_c = bool(SHELL_C.search(body) or (ps and PS_SHELL_C.search(body)))
+    shell_c = bool(SHELL_C.search(body))
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     if exact:  # PowerShell không thoát bằng `\`: strict che nháy như exact
         quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict in (2, 3, 4) else QUOTED_XB if strict else QUOTED_X
@@ -1735,6 +1772,20 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if key not in read3:
                 read3.add(key)
                 segs += segments(cmd, tool, *combo, esc2=2)
+    # PowerShell: đọc thêm bản viết lại thân -c theo nháy PowerShell thành `<shell> -c "…"` (ps_rewrite), các tổ hợp exact
+    # (thân gỡ thành phạm vi shell con, phần còn lại vẫn che nháy), cộng thêm sau các cách đọc trên. Reviewer PR #110 lần
+    # mười một: bỏ che cả lệnh thay vì chỉ thân từng làm mất nhãn; các cách đọc không exact của bản viết lại cũng bỏ che cả
+    # lệnh, nên chữ trong echo của thân (`echo 'Remove-Item -Recurse …'`) thành lệnh: báo thừa.
+    cmd2 = ps_rewrite(cmd) if tool == "PowerShell" else None
+    if cmd2 is not None:
+        read4, bodies2 = set(), {}
+        for combo in reading_combos(cmd2, tool):
+            if not combo[8]:
+                continue
+            key = reading_key(cmd2, tool, combo, bodies2)
+            if key not in read4:
+                read4.add(key)
+                segs += segments(cmd2, tool, *combo)
     done = set()
     for seg in segs:
         if seg in done:
