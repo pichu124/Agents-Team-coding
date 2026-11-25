@@ -392,9 +392,18 @@ _NAME = rf"(?:(?!{_SH}\b){_WORD}|{_QUOTED})"
 _ARG = rf"(?:(?![-+]){_NOT_SH}(?:\w|[^\s\w'\"]{_NOT_SH})+|{_QUOTED})"
 _FLAG = rf"(?:[-+][A-Za-z]*o\s+{_NAME}|--(?:rcfile|init-file)\s+{_ARG}|(?:--?|\+)(?!{_SH}\s){_WORD})"
 _C = r"[-+](?=[A-Za-z]*c)"
-SHELL_C_BODY_STRICT = re.compile(rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
-                                 rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
-                                 rf"(?:\s+--?)?\s+('[^']*'|\"(?:[^\"\\]|\\.)*\"|\$'(?:[^'\\]|\\.)*')", re.IGNORECASE)
+_STRICT_HEAD = (rf"(?<!\w)({_SH}(?:\.exe)?)(?:\s+(?!{_C}[A-Za-z]+\s){_FLAG})*?"
+                rf"\s+{_C}(?:(?=[A-Za-z]*o)[A-Za-z]+\s+{_NAME}|[A-Za-z]+)(?:\s+{_FLAG})*?"
+                rf"(?:\s+--?)?\s+")
+SHELL_C_BODY_STRICT = re.compile(_STRICT_HEAD + r"('[^']*'|\"(?:[^\"\\]|\\.)*\"|\$'(?:[^'\\]|\\.)*')", re.IGNORECASE)
+# Lệnh PowerShell gọi shell POSIX với -c sau cờ gộp, cờ dài, `-o tên`, `+e` (`bash -lc`, `--login -c`, `-o pipefail -c`),
+# rồi một chuỗi nháy hay here-string: segments không che thân như chuỗi (như SHELL_C với `-c` đứng riêng), để thân viết
+# theo nháy PowerShell (`''`, `@'…'@`) thành đoạn (reviewer PR #110 lần mười; bash xoá src, mọi bản trả []). Chỉ PowerShell:
+# lệnh Bash có thân -c đã được unwrap_shell_c gỡ theo luật bash.
+PS_SHELL_C = re.compile(_STRICT_HEAD + r"(?=['\"@$])", re.IGNORECASE)
+# Thân -c theo nháy PowerShell sau cờ mà phần đầu của SHELL_C_BODY không nhận (`+e -c`): ps_shell_c_bodies đọc thêm bằng
+# phần đầu strict, chỉ thêm thân (reviewer PR #110 lần mười).
+PS_SHELL_C_BODY_STRICT = re.compile(_STRICT_HEAD + PS_SHELL_C_BODY.pattern[len(_SHELL_C_HEAD):], re.IGNORECASE)
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S+)")
 ASSIGN_EMPTY = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|\S*)")  # pure: `D=` gán rỗng (73226cf)
 # Đoạn (đã che nháy, bỏ comment) đổi biến của shell: toàn từ NAME=VALUE, hay lệnh export/declare/typeset/local/readonly.
@@ -446,12 +455,20 @@ WSL_SEG = re.compile(r"\s*wsl(?:\.exe)?(?:\s|$)", re.IGNORECASE)
 
 
 def ps_shell_c_bodies(cmd):
-    """Thân -c viết theo nháy của PowerShell (PS_SHELL_C_BODY): `''` thành `'`, backtick và `""` của nháy kép gỡ thoát,
+    """Thân -c viết theo nháy của PowerShell (PS_SHELL_C_BODY, cộng PS_SHELL_C_BODY_STRICT cho cờ như `+e`; mỗi regex một
+    lượt quét): `''` thành `'`, backtick và `""` của nháy kép gỡ thoát,
     here-string tới dòng đầu tiên mở bằng `'@`/`"@` sau nó (vị trí các dòng đóng tìm một lần, bisect). Lần tìm sau bắt đầu
     sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai)."""
-    out, ends, pos = [], {}, 0
+    out, ends = [], {}
+    for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
+        out += ps_bodies_rx(cmd, rx, ends)
+    return out
+
+
+def ps_bodies_rx(cmd, rx, ends):
+    out, pos = [], 0
     while True:
-        m = PS_SHELL_C_BODY.search(cmd, pos)
+        m = rx.search(cmd, pos)
         if not m:
             break
         pos = m.end()
@@ -1094,8 +1111,8 @@ def segments(cmd, tool="Bash", join=True, scoped=True, parent_env=False, comment
         n = m[1].lstrip("0") or "0"
         return store[int(n)] if len(n) < 10 and int(n) < len(store) else m[0]
 
-    shell_c = bool(SHELL_C.search(body))
     ps = tool == "PowerShell"
+    shell_c = bool(SHELL_C.search(body) or (ps and PS_SHELL_C.search(body)))
     quoted = (QUOTED_PS if ps else QUOTED) if comments else (QUOTED_PS_6F32D5A if ps else QUOTED_6F32D5A)
     if exact:  # PowerShell không thoát bằng `\`: strict che nháy như exact
         quoted = QUOTED_PS_X if ps else QUOTED_XBT if strict in (2, 3, 4) else QUOTED_XB if strict else QUOTED_X
