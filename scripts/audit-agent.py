@@ -332,8 +332,9 @@ class ShBodies:
       khớp. Chỉ khớp ở đầu một câu lệnh (starts, STMT_START): Remove-Item ngoài thân trùng chữ mà thân echo, grep hay
       here-string nhắc tới không khớp (lần bảy, tám). Thân gỡ theo PowerShell không so nguyên văn ở mọi chỗ: lần tám.
     - Tuyến tính: starts tính một lần; kết quả nhớ theo chuỗi đã bỏ nháy (nhiều đoạn cùng chuỗi chỉ tìm một lần); tổng số
-      chỗ trùng xét qua mọi đoạn không quá độ dài flat cộng 4096, quá thì coi là trong thân (đọc thêm theo bash: chỉ thêm
-      nhãn)."""
+      ký tự mà các chỗ trùng xét qua mọi đoạn phải so (mỗi chỗ trùng so đủ độ dài chuỗi: chỗ trùng chồng nhau của chuỗi có
+      chu kỳ, reviewer lần chín) không quá hai lần độ dài flat cộng 4096, quá thì coi là trong thân (đọc thêm theo bash:
+      chỉ thêm nhãn)."""
     def __init__(self, cmd):
         self.cmd, self.any = cmd, None
 
@@ -344,7 +345,7 @@ class ShBodies:
         self.any = bool(bodies)
         self.flat = "\0" + "\0".join(bodies).translate(NO_QUOTES)
         self.starts = {m.end() for m in STMT_START.finditer(self.flat)} if bodies else set()
-        self.memo, self.budget = {}, len(self.flat) + 4096
+        self.memo, self.budget = {}, 2 * len(self.flat) + 4096
 
     def contains(self, full):
         if self.any is None:
@@ -363,7 +364,7 @@ class ShBodies:
                 if i in self.starts:
                     r = True
                     break
-                self.budget -= 1
+                self.budget -= len(n)
                 if self.budget < 0:
                     r = True
                     break
