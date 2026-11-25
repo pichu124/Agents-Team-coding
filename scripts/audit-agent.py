@@ -318,28 +318,58 @@ PS_BACKTICK = re.compile(r"`([\s\S])|\"\"")
 PS_BACKTICK_CHARS = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "e": "\x1b"}
 NO_QUOTES = str.maketrans("", "", "'\"`")
 # Đầu một câu lệnh trong thân đã bỏ nháy (thân nối bằng NUL, mở bằng NUL): sau NUL, xuống dòng, `;`, `&`, `|`, `(`, `{`, `!`
-# hay từ khoá mở lệnh, kèm khoảng trắng (reviewer PR #110 lần bảy).
-STMT_START = re.compile(r"(?:[\0\n;&|({!]|(?<![\w-])(?:then|do|else|elif|if|while|until|time)[ \t])[ \t]*\Z")
+# hay từ khoá mở lệnh, kèm mọi khoảng trắng theo sau (reviewer PR #110 lần bảy, lần tám: không giới hạn độ dài khoảng trắng).
+# Vị trí đầu câu lệnh là chỗ kết thúc của mỗi lần khớp.
+STMT_START = re.compile(r"(?:[\0\n;&|({!]|(?<![\w-])(?:then|do|else|elif|if|while|until|time)[ \t])[ \t]*")
 
 
-def in_sh_body(full, raw, flat):
-    """Đoạn `full` của lệnh PowerShell nằm trong một thân shell lồng: chuỗi con nguyên văn của các thân (`raw`, như
-    7f74e11), hay sau khi bỏ nháy và backtick ở cả hai phía là chuỗi con của `flat` bắt đầu ở đầu một câu lệnh của thân.
-    Bỏ nháy giữ quan hệ chuỗi con: đoạn mà các cách đọc PowerShell tách ra còn dính nháy thừa (`rm -rf … "/tmp/b"'` khi
-    thân có `''`, reviewer PR #110 lần sáu) vẫn khớp. Chỉ ở đầu câu lệnh: Remove-Item ngoài thân trùng chữ mà thân echo
-    hay grep không khớp (lần bảy). Quá 64 chỗ trùng thì một lần regex quét: không bậc hai theo số chỗ trùng."""
-    f = full.strip()
-    if f in raw:
-        return True
-    n = f.translate(NO_QUOTES)
-    i, k = flat.find(n), 0
-    while i >= 0 and k < 64:
-        if STMT_START.search(flat, max(0, i - 24), i):
+class ShBodies:
+    """Thân shell lồng của một lệnh PowerShell, để biết một đoạn có nằm trong thân không (contains), tính một lần mỗi lệnh.
+    - raw: các thân gỡ theo bash (shell_c_bodies, đúng tập của 7f74e11) nối bằng NUL; đoạn là chuỗi con nguyên văn thì nằm
+      trong thân, như 7f74e11.
+    - flat: mọi thân, cả thân gỡ theo nháy PowerShell (`''`, here-string, reviewer lần sáu), bỏ nháy và backtick, nối bằng
+      NUL. Bỏ ký tự ở cả hai phía giữ quan hệ chuỗi con: đoạn mà các cách đọc PowerShell tách ra còn dính nháy thừa vẫn
+      khớp. Chỉ khớp ở đầu một câu lệnh (starts, STMT_START): Remove-Item ngoài thân trùng chữ mà thân echo, grep hay
+      here-string nhắc tới không khớp (lần bảy, tám). Thân gỡ theo PowerShell không so nguyên văn ở mọi chỗ: lần tám.
+    - Tuyến tính: starts tính một lần; kết quả nhớ theo chuỗi đã bỏ nháy (nhiều đoạn cùng chuỗi chỉ tìm một lần); tổng số
+      chỗ trùng xét qua mọi đoạn không quá độ dài flat cộng 4096, quá thì coi là trong thân (đọc thêm theo bash: chỉ thêm
+      nhãn)."""
+    def __init__(self, cmd):
+        self.cmd, self.any = cmd, None
+
+    def load(self):  # lười: lệnh không có đoạn xoá đệ quy nào thì không gỡ thân
+        cmd = self.cmd
+        self.raw = "\0".join(shell_c_bodies(cmd))
+        bodies = shell_c_bodies(cmd, ps=True)
+        self.any = bool(bodies)
+        self.flat = "\0" + "\0".join(bodies).translate(NO_QUOTES)
+        self.starts = {m.end() for m in STMT_START.finditer(self.flat)} if bodies else set()
+        self.memo, self.budget = {}, len(self.flat) + 4096
+
+    def contains(self, full):
+        if self.any is None:
+            self.load()
+        f = full.strip()
+        if not self.any or not f:
+            return False
+        if f in self.raw:
             return True
-        i, k = flat.find(n, i + 1), k + 1
-    if i < 0:
-        return False
-    return re.search(STMT_START.pattern[:-2] + re.escape(n), flat) is not None
+        n = f.translate(NO_QUOTES)
+        if not n:
+            return False
+        if n not in self.memo:
+            r, i = False, self.flat.find(n)
+            while i >= 0:
+                if i in self.starts:
+                    r = True
+                    break
+                self.budget -= 1
+                if self.budget < 0:
+                    r = True
+                    break
+                i = self.flat.find(n, i + 1)
+            self.memo[n] = r
+        return self.memo[n]
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
 # (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
@@ -1653,10 +1683,8 @@ def reading_combos(cmd, tool="Bash"):
 def suspicious_labels(cmd, patterns, tool="Bash"):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
-    # Thân shell lồng của lệnh PowerShell nối bằng NUL, nguyên văn và bản bỏ nháy (in_sh_body): một phép `in` trên chuỗi nối
-    # thay vòng lặp Python qua từng thân.
-    sh_raw = "\0".join(shell_c_bodies(cmd, ps=True)) if tool == "PowerShell" else ""
-    sh_flat = "\0" + sh_raw.translate(NO_QUOTES)
+    # Thân shell lồng của lệnh PowerShell (ShBodies): đoạn nằm trong thân là văn bản bash.
+    sh = ShBodies(cmd) if tool == "PowerShell" else None
     # Nhiều tổ hợp cho cùng danh sách đoạn (reading_key): chỉ đọc tổ hợp đầu của mỗi lớp, và mỗi đoạn chỉ so mẫu một lần.
     # Đoạn đã so thì so lại không thêm nhãn nào, nên nhãn và thứ tự nhãn y như khi đọc đủ mọi tổ hợp.
     # Bản ứng viên chỉ từ cách đọc bash (lệnh không có `<<` thì strict, cùng b) không pure, không raw_marks; ứng viên lấy từ b
@@ -1700,7 +1728,7 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
                 continue
             # Đích worktree có được nhờ thay biến thì không tin: gán tạm `D=x lệnh` không đổi biến của shell mà ASSIGN vẫn ghi.
             nested_sh = label == "xoá đệ quy" and tool == "PowerShell" and bool(
-                WSL_SEG.match(full) or (sh_raw and in_sh_body(full, sh_raw, sh_flat)))
+                WSL_SEG.match(full) or sh.contains(full))
             if label == "xoá đệ quy" and benign_delete(full, ctx, worktree=not (subst or ifs), tool=tool, nested_sh=nested_sh):
                 continue
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):

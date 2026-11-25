@@ -2204,7 +2204,7 @@ for cmd in ("bash -c 'echo ''a'';%s%s'" % (" " * 24, P6), "bash -c 'echo ''a'';%
             "bash -c 'echo ''a''\n%s%s'" % (" " * 40, P6), "bash -c 'echo ''a'' &&%scommand %s'" % ("\t" * 24, P6)):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: đầu câu lệnh sau khoảng trắng dài trong thân: xoá src: {cmd!r}: {got!r}")
-for cmd in ("bash -c @'\necho '%s'\n'@\n%s" % (R7, R7), "bash -c @'\nprintf '%%s' '%s'\n'@\n%s" % (R7, R7)):
+for cmd in ("bash -c @'\necho '%s'\n'@\n%s" % (R7, R7), "bash -c @'\necho start\necho '%s'\n'@\n%s" % (R7, R7)):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: here-string nhắc lại Remove-Item ngoài thân tách như main: {cmd!r}: {got!r}")
 # Nhiều đoạn khác nhau mà bỏ nháy ra cùng một chuỗi, chuỗi đó trùng hơn 64 chỗ (không ở đầu câu lệnh) trong thân: mỗi
