@@ -493,15 +493,16 @@ def ps_bodies_rx(cmd, rx, ends, spans=None):
 
 
 # Trước tên shell ở vị trí lệnh của PowerShell: đầu lệnh, sau dấu ngắt hay mở nhóm, hay sau `wsl` kèm cờ chọn bản phân phối,
-# người dùng hay `--`/`-e` (reviewer PR #110 lần mười một: `*.sh -Recurse "x"` không phải lệnh shell).
-PS_CMD_POS = re.compile(r"(?:^|[\n;&|({]|(?<![\w.-])wsl(?:\.exe)?(?:\s+(?:--|-e|--exec|(?:-d|--distribution|-u|--user)\s+\S+))*)"
+# người dùng hay `--`/`-e` (reviewer PR #110 lần mười một: `*.sh -Recurse "x"` không phải lệnh shell), hay sau `=` của phép
+# gán (`$r = bash …`, `$r=bash`, `$x += `, `$env:X = `; reviewer PR #111).
+PS_CMD_POS = re.compile(r"(?:^|[\n;&|({=]|(?<![\w.-])wsl(?:\.exe)?(?:\s+(?:--|-e|--exec|(?:-d|--distribution|-u|--user)\s+\S+))*)"
                         r"[ \t]*\Z", re.IGNORECASE)
 
 
 def ps_cmd_pos(cmd, i):
     """Tên shell bắt đầu ở i (có thể kèm đường dẫn đứng trước: `/usr/bin/bash`, `C:\\Git\\bin\\bash.exe`) ở vị trí lệnh."""
     j = i
-    while j > 0 and not cmd[j - 1].isspace() and cmd[j - 1] not in ";&|({":
+    while j > 0 and not cmd[j - 1].isspace() and cmd[j - 1] not in ";&|({=":
         j -= 1
     if j < i and cmd[i - 1] not in "/\\":
         return False
