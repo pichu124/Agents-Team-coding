@@ -453,16 +453,19 @@ def ps_shell_c_bodies(cmd):
     """Thân -c viết theo nháy của PowerShell (PS_SHELL_C_BODY, cộng PS_SHELL_C_BODY_STRICT cho cờ như `+e`; mỗi regex một
     lượt quét): `''` thành `'`, backtick và `""` của nháy kép gỡ thoát,
     here-string tới dòng đầu tiên mở bằng `'@`/`"@` sau nó (vị trí các dòng đóng tìm một lần, bisect). Lần tìm sau bắt đầu
-    sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai)."""
+    sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai).
+    Dòng đóng đọc hai cách, hợp thân: cho phép khoảng trắng trước như bản trước, và chỉ ở cột đầu như PowerShell
+    (col0=True; khoảng trắng trước `'@` là lỗi cú pháp, dòng đó còn thuộc thân)."""
     out, ends = [], {}
-    for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
-        out += ps_bodies_rx(cmd, rx, ends)
+    for col0 in (False, True):
+        for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
+            out += ps_bodies_rx(cmd, rx, ends, col0=col0)
     return out
 
 
-def ps_bodies_rx(cmd, rx, ends, spans=None):
+def ps_bodies_rx(cmd, rx, ends, spans=None, col0=False):
     """Thân của một regex (PS_SHELL_C_BODY hay PS_SHELL_C_BODY_STRICT). spans: thêm (đầu lần khớp, cuối phần nháy, shell,
-    phần nháy, thân) cho ps_rewrite."""
+    phần nháy, thân) cho ps_rewrite. col0: dòng đóng here-string chỉ ở cột đầu."""
     out, pos = [], 0
     while True:
         m = rx.search(cmd, pos)
@@ -472,14 +475,15 @@ def ps_bodies_rx(cmd, rx, ends, spans=None):
         q = m.group(2)
         if q[0] == "@":
             close = q[1]
-            if close not in ends:
-                ends[close] = [x.start() for x in re.finditer(r"\n[ \t]*" + close + "@", cmd)]
-            i = bisect.bisect_left(ends[close], m.end() - 1)
-            if i == len(ends[close]):
+            key = (close, col0)
+            if key not in ends:
+                ends[key] = [x.start() for x in re.finditer((r"\n" if col0 else r"\n[ \t]*") + close + "@", cmd)]
+            i = bisect.bisect_left(ends[key], m.end() - 1)
+            if i == len(ends[key]):
                 continue
-            body = cmd[m.end():ends[close][i]].rstrip("\r")
-            pos = max(pos, ends[close][i] + 1)
-            qend = cmd.index(close + "@", ends[close][i]) + 2
+            body = cmd[m.end():ends[key][i]].rstrip("\r")
+            pos = max(pos, ends[key][i] + 1)
+            qend = cmd.index(close + "@", ends[key][i]) + 2
             if close == '"':
                 body = re.sub(r"`([\s\S])", lambda x: PS_BACKTICK_CHARS.get(x[1], x[1]), body)
         elif q[0] == "'":
@@ -511,7 +515,7 @@ def ps_cmd_pos(cmd, i, eq=False):
     return bool((PS_CMD_POS_EQ if eq else PS_CMD_POS).search(cmd, max(0, j - 256), j))
 
 
-def ps_rewrite(cmd, eq=False):
+def ps_rewrite(cmd, eq=False, col0=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
     mỗi thân đó thành `<shell> -c "<thân>"` theo nháy kép của bash (`\\`, `"`, `$`, backtick thoát bằng `\\`, unwrap_shell_c
@@ -522,7 +526,7 @@ def ps_rewrite(cmd, eq=False):
     (reviewer PR #111 lần hai: `$r = bash +e -c "echo; bash -lc '…''…'"` từng mất nhãn)."""
     spans, ends = [], {}
     for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
-        ps_bodies_rx(cmd, rx, ends, spans)
+        ps_bodies_rx(cmd, rx, ends, spans, col0)
     out, last = [], 0
     for start, end, sh, q, body in sorted(spans):
         if start < last or not ps_cmd_pos(cmd, start, eq):
@@ -1784,7 +1788,8 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Bản eq (shell sau `=` của phép gán cũng ở vị trí lệnh) đọc thêm cạnh bản thường khi hai bản khác nhau.
     rewrites = []
     if tool == "PowerShell":
-        for cmd2 in (ps_rewrite(cmd), ps_rewrite(cmd, eq=True)):
+        # col0: dòng đóng here-string chỉ ở cột đầu, đọc thêm cạnh bản cho phép khoảng trắng như bản trước.
+        for cmd2 in (ps_rewrite(cmd), ps_rewrite(cmd, eq=True), ps_rewrite(cmd, col0=True), ps_rewrite(cmd, True, True)):
             if cmd2 is not None and cmd2 not in rewrites:
                 rewrites.append(cmd2)
     for cmd2 in rewrites:
