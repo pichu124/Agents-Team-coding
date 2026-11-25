@@ -2234,6 +2234,31 @@ def ps_overlap_occ(k):
     return "bash -c @'\nrm -r /tmp/b" + u * mb + "\n'@\n" + "\n".join(u * (kk - j) for j in range(13))
 linear("thân PowerShell, chỗ trùng chồng nhau", lambda c: a.suspicious_labels(c, a.SUSPICIOUS, tool="PowerShell"),
        ps_overlap_occ)
+# Reviewer PR #110 lần mười (2.8): cờ gộp, cờ dài, `-o tên`, `+e` trước -c (`bash -lc`, `--login -c`, `-o pipefail -c`):
+# SHELL_C chỉ nhận `-c` đứng riêng nên cách đọc PowerShell che thân như chuỗi, thân `''` hay here-string không thành
+# đoạn (bash xoá src; mọi bản trả []). `-c` tách riêng đã báo.
+for head in ("bash -lc", "bash -ec", "bash --login -c", "bash -o pipefail -c", "bash -euo pipefail -c", "bash --norc -c",
+             "sh -ec", "wsl bash -lc", "bash.exe -lc", "bash -lc --", "bash +e -c", "zsh -fc"):
+    for cmd in ("%s @'\n%s\n'@" % (head, P6), "%s 'echo ''a''; %s'" % (head, P6)):
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: thân -c sau cờ gộp hay cờ dài: xoá src: {cmd!r}: {got!r}")
+for cmd in ("bash -lc 'echo ok'; %s" % R7, "bash --login -c @'\necho ok\n'@\n%s" % R7):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: Remove-Item ngoài thân -lc tách như main: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần mười một: bỏ che cả lệnh khi có `-lc` làm `cd`, `;`, phép gán trong nháy của lệnh PowerShell sau
+# thành lệnh (thân `$cmd` hay here-string: không cách đọc nào gỡ được), mất nhãn main vẫn báo; chữ `.sh` theo sau là
+# tham số PowerShell có chữ c (`-Recurse`) rồi nháy không phải lệnh shell (báo thừa). Thân chỉ đọc thêm qua ps_rewrite.
+for head in ("bash -lc", "bash -o pipefail -c", "bash +e -c"):
+    for cmd in ('%s $cmd; Write-Host "build && cd C:\\temp" && Remove-Item -Recurse -Force src' % head,
+                "%s @'\nmake\n'@; Write-Host \"x; D=C:/temp\"; Remove-Item -Recurse -Force $D/src" % head,
+                '%s $cmd\nRemove-Item -Recurse -Force "C:\\temp\\a;b", src' % head):
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: nháy ngoài thân -lc vẫn che như main: xoá src: {cmd!r}: {got!r}")
+for cmd in ('Get-ChildItem -Path . -Filter *.sh -Recurse -Exclude "vendor" | Select-String -Pattern "rm -rf"',
+            'Get-ChildItem .\\scripts\\*.sh -Recurse "x" | Select-String "Remove-Item -Recurse -Force src"',
+            'Copy-Item .\\deploy.sh -Force -Destination "C:\\out"; Write-Host "later: rm -rf src"'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: tên file .sh trước tham số không phải shell -c: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
@@ -3063,6 +3088,49 @@ NARROWING_OK = [
     ("Bash", "bash <<'EOF'\nD=/srv/\nEOF\nbash <<'A' <<'EOF'\nA\ncd /tmp/x && rm -rf y # don't\ntrue && cd /tmp/x\nD=/tmp/x/\nbash <<'EOF'\nEOF",
      'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
 ]
+# Thu hẹp so với a6351a2 (bản trung gian của PR #111, chưa merge): bản đó bỏ che nháy cả lệnh PowerShell khi phần đầu
+# strict khớp nên báo các lệnh fuzz dưới; 06566df bỏ cách đó (mất nhãn main vẫn báo, reviewer lần mười một), main không
+# báo lệnh nào ở đây. Thân chỉ xoá trong /tmp/w (`-- --`: chuỗi lệnh là `--`, sh không chạy gì).
+NARROWING_OK += [("PowerShell", c, "a6351a2 bỏ che cả lệnh (bản trung gian PR #111); main không báo, bash chỉ xoá trong /tmp/w")
+                 for c in (
+    "bash +e -lc 'cd /tmp/w && rm -rf src'",
+    "bash -lc -- 'cd /tmp/w && rm -rf src'",
+    "sh +e -lc -x 'cd /tmp/w && rm -rf src'",
+    "git-bash +c +e 'cd /tmp/w && rm -rf src'",
+    "sh -lc -o pipefail 'cd /tmp/w && rm -rf src'",
+    "git-bash -co pipefail 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh --login -x +c 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && bash -o pipefail -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh -o pipefail -c +e 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash -lc +e 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh -o 'pipefail' --init-file x -ec -- 'cd /tmp/w && rm -rf src'",
+    "sh --login -o interactive-comments -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh +e +O extglob -ec +e -- 'cd /tmp/w && rm -rf src'",
+    "sh -o 'pipefail' --rcfile /dev/null -ec 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh --rcfile /dev/null +e -lc 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; bash --rcfile /dev/null +c 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; git-bash -o interactive-comments +c -x 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh -o 'pipefail' -c -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh --rcfile /dev/null --rcfile /dev/null -c 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash --login --init-file x +c 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "cd /tmp/w && git-bash -o interactive-comments +e -lc -- 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob --init-file x -ec -o pipefail +e 'cd /tmp/w && rm -rf src'",
+    "git-bash --login -o interactive-comments -c -o pipefail +e 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && bash +e -o interactive-comments +c -o pipefail 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash -o pipefail +O extglob -c -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh -o interactive-comments -o interactive-comments -co pipefail -x 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob --rcfile /dev/null -lc -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh --rcfile /dev/null -o 'pipefail' -ec -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; bash -o interactive-comments +O extglob -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "cd /tmp/w && git-bash -o interactive-comments -co pipefail -o pipefail -- 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh -o interactive-comments -x -ec -o pipefail -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh --init-file x -o 'pipefail' +c 'cd /tmp/w && rm -rf src'\nD=/tmp/w; git-bash +e +O extglob -ec 'echo hi'",
+    "cd /tmp/w && sh -o 'pipefail' -o 'pipefail' -co pipefail -- -- 'D=/; rm -rf $D'\nbash --init-file x +e -c 'echo hi'",
+    "D=/tmp/w; git-bash -o 'pipefail' -o interactive-comments -c 'cd /tmp/w && rm -rf src'\nsh -lc -o pipefail 'echo hi'; rm -rf $D",
+)]
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     m = importlib.util.module_from_spec(spec)
