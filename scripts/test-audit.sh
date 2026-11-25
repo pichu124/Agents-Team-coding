@@ -2226,6 +2226,14 @@ def ps_many_occ(k):
     return "bash -c @'\n" + occ + "\n" + filler + "\n'@\n" + "\n".join(segs)
 linear("thân PowerShell, nhiều đoạn cùng chuỗi bỏ nháy trùng nhiều chỗ",
        lambda c: a.suspicious_labels(c, a.SUSPICIOUS, tool="PowerShell"), ps_many_occ)
+# Chỗ trùng chồng nhau (chuỗi có chu kỳ): mỗi lần tìm chỗ kế tiếp so đủ độ dài chuỗi, trần theo số chỗ trùng vẫn bậc
+# hai (reviewer PR #110 lần chín: 191 KiB 2,3 s, tỉ lệ 8,9). 13 đoạn khác độ dài: nhớ kết quả không cứu.
+def ps_overlap_occ(k):
+    u, tot = "rm -r /tmp/a", k * 48 * 1024
+    mb, kk = tot // 2 // 12, tot // 2 // 13 // 12
+    return "bash -c @'\nrm -r /tmp/b" + u * mb + "\n'@\n" + "\n".join(u * (kk - j) for j in range(13))
+linear("thân PowerShell, chỗ trùng chồng nhau", lambda c: a.suspicious_labels(c, a.SUSPICIOUS, tool="PowerShell"),
+       ps_overlap_occ)
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
