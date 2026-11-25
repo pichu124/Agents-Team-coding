@@ -3088,6 +3088,49 @@ NARROWING_OK = [
     ("Bash", "bash <<'EOF'\nD=/srv/\nEOF\nbash <<'A' <<'EOF'\nA\ncd /tmp/x && rm -rf y # don't\ntrue && cd /tmp/x\nD=/tmp/x/\nbash <<'EOF'\nEOF",
      'TOKEN ghép chữ với chuỗi nháy như bash (reviewer PR #110): nháy lẻ của lệnh fixture từng cắt từ khác, bash và zsh thật chỉ xoá trong /tmp'),
 ]
+# Thu hẹp so với a6351a2 (bản trung gian của PR #111, chưa merge): bản đó bỏ che nháy cả lệnh PowerShell khi phần đầu
+# strict khớp nên báo các lệnh fuzz dưới; 06566df bỏ cách đó (mất nhãn main vẫn báo, reviewer lần mười một), main không
+# báo lệnh nào ở đây. Thân chỉ xoá trong /tmp/w (`-- --`: chuỗi lệnh là `--`, sh không chạy gì).
+NARROWING_OK += [("PowerShell", c, "a6351a2 bỏ che cả lệnh (bản trung gian PR #111); main không báo, bash chỉ xoá trong /tmp/w")
+                 for c in (
+    "bash +e -lc 'cd /tmp/w && rm -rf src'",
+    "bash -lc -- 'cd /tmp/w && rm -rf src'",
+    "sh +e -lc -x 'cd /tmp/w && rm -rf src'",
+    "git-bash +c +e 'cd /tmp/w && rm -rf src'",
+    "sh -lc -o pipefail 'cd /tmp/w && rm -rf src'",
+    "git-bash -co pipefail 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh --login -x +c 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && bash -o pipefail -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh -o pipefail -c +e 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash -lc +e 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh -o 'pipefail' --init-file x -ec -- 'cd /tmp/w && rm -rf src'",
+    "sh --login -o interactive-comments -lc 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh +e +O extglob -ec +e -- 'cd /tmp/w && rm -rf src'",
+    "sh -o 'pipefail' --rcfile /dev/null -ec 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && sh --rcfile /dev/null +e -lc 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; bash --rcfile /dev/null +c 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; git-bash -o interactive-comments +c -x 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh -o 'pipefail' -c -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh --rcfile /dev/null --rcfile /dev/null -c 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; git-bash --login --init-file x +c 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "cd /tmp/w && git-bash -o interactive-comments +e -lc -- 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob --init-file x -ec -o pipefail +e 'cd /tmp/w && rm -rf src'",
+    "git-bash --login -o interactive-comments -c -o pipefail +e 'cd /tmp/w && rm -rf src'",
+    "cd /tmp/w && bash +e -o interactive-comments +c -o pipefail 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash -o pipefail +O extglob -c -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh -o interactive-comments -o interactive-comments -co pipefail -x 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; bash +O extglob --rcfile /dev/null -lc -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; sh --rcfile /dev/null -o 'pipefail' -ec -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "D=/tmp/w; bash -o interactive-comments +O extglob -co pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "cd /tmp/w && git-bash -o interactive-comments -co pipefail -o pipefail -- 'cd /tmp/w && rm -rf src'",
+    "D=/tmp/w; sh -o interactive-comments -x -ec -o pipefail -o pipefail 'cd /tmp/w && rm -rf src'; rm -rf $D",
+    "sh --init-file x -o 'pipefail' +c 'cd /tmp/w && rm -rf src'\nD=/tmp/w; git-bash +e +O extglob -ec 'echo hi'",
+    "cd /tmp/w && sh -o 'pipefail' -o 'pipefail' -co pipefail -- -- 'D=/; rm -rf $D'\nbash --init-file x +e -c 'echo hi'",
+    "D=/tmp/w; git-bash -o 'pipefail' -o interactive-comments -c 'cd /tmp/w && rm -rf src'\nsh -lc -o pipefail 'echo hi'; rm -rf $D",
+)]
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     m = importlib.util.module_from_spec(spec)
