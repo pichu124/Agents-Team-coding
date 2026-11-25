@@ -2272,6 +2272,14 @@ for pre in ("$r = ", "$r=", "$x += ", "$a, $b = "):
         cmd = pre + head + " \"echo; bash -lc 'echo ''a''; rm -rf src'\""
         got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
         check("xoá đệ quy" in got, f"PowerShell: thân lồng trong thân sau phép gán: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần mười (tuỳ chọn): dòng đóng here-string của PowerShell phải ở cột đầu (khoảng trắng trước `'@`: lỗi
+# cú pháp "White space is not allowed before the string terminator"), nên dòng `  '@'` còn thuộc thân và bash chạy rm
+# sau nó (xoá src). Bản nhận `\n[ \t]*'@` cắt thân ở đó (mọi bản trả []).
+for head in ("bash -c", "bash -lc", "$r = bash -lc"):
+    for q in ("'", '"'):
+        cmd = "%s @%s\necho a\n  %s@x\n%s\n%s@" % (head, q, q, P6.replace('"', '`"') if q == '"' else P6, q)
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: dòng đóng here-string thụt lề không đóng: xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
