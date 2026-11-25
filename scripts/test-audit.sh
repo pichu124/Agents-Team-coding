@@ -2245,6 +2245,20 @@ for head in ("bash -lc", "bash -ec", "bash --login -c", "bash -o pipefail -c", "
 for cmd in ("bash -lc 'echo ok'; %s" % R7, "bash --login -c @'\necho ok\n'@\n%s" % R7):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: Remove-Item ngoài thân -lc tách như main: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần mười một: bỏ che cả lệnh khi có `-lc` làm `cd`, `;`, phép gán trong nháy của lệnh PowerShell sau
+# thành lệnh (thân `$cmd` hay here-string: không cách đọc nào gỡ được), mất nhãn main vẫn báo; chữ `.sh` theo sau là
+# tham số PowerShell có chữ c (`-Recurse`) rồi nháy không phải lệnh shell (báo thừa). Thân chỉ đọc thêm qua ps_rewrite.
+for head in ("bash -lc", "bash -o pipefail -c", "bash +e -c"):
+    for cmd in ('%s $cmd; Write-Host "build && cd C:\\temp" && Remove-Item -Recurse -Force src' % head,
+                "%s @'\nmake\n'@; Write-Host \"x; D=C:/temp\"; Remove-Item -Recurse -Force $D/src" % head,
+                '%s $cmd\nRemove-Item -Recurse -Force "C:\\temp\\a;b", src' % head):
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: nháy ngoài thân -lc vẫn che như main: xoá src: {cmd!r}: {got!r}")
+for cmd in ('Get-ChildItem -Path . -Filter *.sh -Recurse -Exclude "vendor" | Select-String -Pattern "rm -rf"',
+            'Get-ChildItem .\\scripts\\*.sh -Recurse "x" | Select-String "Remove-Item -Recurse -Force src"',
+            'Copy-Item .\\deploy.sh -Force -Destination "C:\\out"; Write-Host "later: rm -rf src"'):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: tên file .sh trước tham số không phải shell -c: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
