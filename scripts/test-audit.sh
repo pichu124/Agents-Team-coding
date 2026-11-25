@@ -2198,6 +2198,34 @@ for cmd in ("wsl bash -c 'grep -F \"%s\" /mnt/c/log.txt'; %s" % (T7, R7), "bash 
             "bash -c 'echo \"%s\"'\n%s" % (T7, R7)):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: đoạn ngoài thân trùng chữ thân nhắc tới tách như main: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần tám: đầu câu lệnh sau khoảng trắng dài (cửa sổ 24 ký tự từng bỏ sót, bash xoá src); here-string
+# nhắc lại nguyên văn Remove-Item ngoài thân thì chỉ in ra (so nguyên văn chỉ trên thân gỡ theo bash như 7f74e11).
+for cmd in ("bash -c 'echo ''a'';%s%s'" % (" " * 24, P6), "bash -c 'echo ''a'';%s%s'" % ("\t" * 30, P6),
+            "bash -c 'echo ''a''\n%s%s'" % (" " * 40, P6), "bash -c 'echo ''a'' &&%scommand %s'" % ("\t" * 24, P6)):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: đầu câu lệnh sau khoảng trắng dài trong thân: xoá src: {cmd!r}: {got!r}")
+for cmd in ("bash -c @'\necho '%s'\n'@\n%s" % (R7, R7), "bash -c @'\nprintf '%%s' '%s'\n'@\n%s" % (R7, R7)):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: here-string nhắc lại Remove-Item ngoài thân tách như main: {cmd!r}: {got!r}")
+# Nhiều đoạn khác nhau mà bỏ nháy ra cùng một chuỗi, chuỗi đó trùng hơn 64 chỗ (không ở đầu câu lệnh) trong thân: mỗi
+# đoạn một lượt regex trên cả thân là bậc hai (reviewer lần tám: 190 KiB 5,4 s, bản trước 0,4 s).
+def ps_many_occ(k):
+    import itertools
+    name = "x" * 30
+    occ = "cd /tmp/w && echo " + " ".join(["rm -r /tmp/" + name] * 65)
+    segs, tot = [], 0
+    for ps in itertools.combinations(range(1, 30), 3):
+        if tot >= k * 20000:
+            break
+        x = name
+        for q in reversed(ps):
+            x = x[:q] + "''" + x[q:]
+        segs.append("rm -r /tmp/" + x)
+        tot += len(segs[-1]) + 1
+    filler = "\n".join(": " + "a" * 70 for _ in range(k * 20000 // 73))
+    return "bash -c @'\n" + occ + "\n" + filler + "\n'@\n" + "\n".join(segs)
+linear("thân PowerShell, nhiều đoạn cùng chuỗi bỏ nháy trùng nhiều chỗ",
+       lambda c: a.suspicious_labels(c, a.SUSPICIOUS, tool="PowerShell"), ps_many_occ)
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
