@@ -2234,6 +2234,17 @@ def ps_overlap_occ(k):
     return "bash -c @'\nrm -r /tmp/b" + u * mb + "\n'@\n" + "\n".join(u * (kk - j) for j in range(13))
 linear("thân PowerShell, chỗ trùng chồng nhau", lambda c: a.suspicious_labels(c, a.SUSPICIOUS, tool="PowerShell"),
        ps_overlap_occ)
+# Reviewer PR #110 lần mười (2.8): cờ gộp, cờ dài, `-o tên`, `+e` trước -c (`bash -lc`, `--login -c`, `-o pipefail -c`):
+# SHELL_C chỉ nhận `-c` đứng riêng nên cách đọc PowerShell che thân như chuỗi, thân `''` hay here-string không thành
+# đoạn (bash xoá src; mọi bản trả []). `-c` tách riêng đã báo.
+for head in ("bash -lc", "bash -ec", "bash --login -c", "bash -o pipefail -c", "bash -euo pipefail -c", "bash --norc -c",
+             "sh -ec", "wsl bash -lc", "bash.exe -lc", "bash -lc --", "bash +e -c", "zsh -fc"):
+    for cmd in ("%s @'\n%s\n'@" % (head, P6), "%s 'echo ''a''; %s'" % (head, P6)):
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: thân -c sau cờ gộp hay cờ dài: xoá src: {cmd!r}: {got!r}")
+for cmd in ("bash -lc 'echo ok'; %s" % R7, "bash --login -c @'\necho ok\n'@\n%s" % R7):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: Remove-Item ngoài thân -lc tách như main: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
