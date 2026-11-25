@@ -2259,6 +2259,19 @@ for cmd in ('Get-ChildItem -Path . -Filter *.sh -Recurse -Exclude "vendor" | Sel
             'Copy-Item .\\deploy.sh -Force -Destination "C:\\out"; Write-Host "later: rm -rf src"'):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: tên file .sh trước tham số không phải shell -c: {cmd!r}: {got!r}")
+# Reviewer PR #111: sau phép gán của PowerShell (`$r = `, `$r=`, `$x += `, `$a, $b = `, `$env:X = `) cũng là vị trí lệnh:
+# bash chạy thân và xoá src; `-c` đứng riêng main đã báo, `-lc` thì ps_cmd_pos không nhận chỗ sau `=` (mọi bản trả []).
+for pre in ("$r = ", "$r=", "$null = ", "$x += ", "$a, $b = ", "$env:X = "):
+    for cmd in (pre + "bash -lc 'echo ''a''; %s'" % P6, pre + "bash -lc @'\n%s\n'@" % P6):
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: thân -lc sau phép gán: xoá src: {cmd!r}: {got!r}")
+# Reviewer lần hai: thân ngoài nay được viết lại vì đứng sau `=` không được nuốt thân lồng mà bản trước viết lại riêng
+# (bash xoá src; main báo): bản viết lại của main luôn được đọc, bản nhận `=` chỉ đọc thêm.
+for pre in ("$r = ", "$r=", "$x += ", "$a, $b = "):
+    for head in ("bash +e -c", "bash --rcfile /x -c"):
+        cmd = pre + head + " \"echo; bash -lc 'echo ''a''; rm -rf src'\""
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: thân lồng trong thân sau phép gán: xoá src: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",

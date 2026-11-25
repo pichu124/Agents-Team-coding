@@ -493,34 +493,39 @@ def ps_bodies_rx(cmd, rx, ends, spans=None):
 
 
 # Trước tên shell ở vị trí lệnh của PowerShell: đầu lệnh, sau dấu ngắt hay mở nhóm, hay sau `wsl` kèm cờ chọn bản phân phối,
-# người dùng hay `--`/`-e` (reviewer PR #110 lần mười một: `*.sh -Recurse "x"` không phải lệnh shell).
-PS_CMD_POS = re.compile(r"(?:^|[\n;&|({]|(?<![\w.-])wsl(?:\.exe)?(?:\s+(?:--|-e|--exec|(?:-d|--distribution|-u|--user)\s+\S+))*)"
-                        r"[ \t]*\Z", re.IGNORECASE)
+# người dùng hay `--`/`-e` (reviewer PR #110 lần mười một: `*.sh -Recurse "x"` không phải lệnh shell). PS_CMD_POS_EQ nhận
+# thêm sau `=` của phép gán (`$r = bash …`, `$r=bash`, `$x += `, `$env:X = `; reviewer PR #111).
+_PS_WSL = r"(?<![\w.-])wsl(?:\.exe)?(?:\s+(?:--|-e|--exec|(?:-d|--distribution|-u|--user)\s+\S+))*"
+PS_CMD_POS = re.compile(r"(?:^|[\n;&|({]|" + _PS_WSL + r")[ \t]*\Z", re.IGNORECASE)
+PS_CMD_POS_EQ = re.compile(r"(?:^|[\n;&|({=]|" + _PS_WSL + r")[ \t]*\Z", re.IGNORECASE)
 
 
-def ps_cmd_pos(cmd, i):
-    """Tên shell bắt đầu ở i (có thể kèm đường dẫn đứng trước: `/usr/bin/bash`, `C:\\Git\\bin\\bash.exe`) ở vị trí lệnh."""
-    j = i
-    while j > 0 and not cmd[j - 1].isspace() and cmd[j - 1] not in ";&|({":
+def ps_cmd_pos(cmd, i, eq=False):
+    """Tên shell bắt đầu ở i (có thể kèm đường dẫn đứng trước: `/usr/bin/bash`, `C:\\Git\\bin\\bash.exe`) ở vị trí lệnh.
+    eq: cả sau `=` của phép gán."""
+    j, stop = i, ";&|({=" if eq else ";&|({"
+    while j > 0 and not cmd[j - 1].isspace() and cmd[j - 1] not in stop:
         j -= 1
     if j < i and cmd[i - 1] not in "/\\":
         return False
-    return bool(PS_CMD_POS.search(cmd, max(0, j - 256), j))
+    return bool((PS_CMD_POS_EQ if eq else PS_CMD_POS).search(cmd, max(0, j - 256), j))
 
 
-def ps_rewrite(cmd):
+def ps_rewrite(cmd, eq=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
     mỗi thân đó thành `<shell> -c "<thân>"` theo nháy kép của bash (`\\`, `"`, `$`, backtick thoát bằng `\\`, unwrap_shell_c
     gỡ trọn), như lệnh main đọc được. suspicious_labels đọc thêm bản viết lại bằng các cách đọc exact (thân là phạm vi
     shell con, nháy trong thân vẫn che) rồi hợp nhãn: cộng thêm, không thể mất nhãn (reviewer PR #110 lần mười, mười một).
-    None: không có thân nào cần viết lại."""
+    None: không có thân nào cần viết lại. eq: shell sau `=` của phép gán cũng ở vị trí lệnh; suspicious_labels đọc bản eq
+    thêm cạnh bản thường, không thay: thân ngoài chỉ được nhận nhờ `=` nuốt thân lồng mà bản thường viết lại riêng
+    (reviewer PR #111 lần hai: `$r = bash +e -c "echo; bash -lc '…''…'"` từng mất nhãn)."""
     spans, ends = [], {}
     for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
         ps_bodies_rx(cmd, rx, ends, spans)
     out, last = [], 0
     for start, end, sh, q, body in sorted(spans):
-        if start < last or not ps_cmd_pos(cmd, start):
+        if start < last or not ps_cmd_pos(cmd, start, eq):
             continue
         if not (q[0] == "@" or "''" in q or (q[0] == '"' and ("`" in q or '""' in q[1:-1])) or not SHELL_C.match(cmd, start)):
             continue
@@ -1776,8 +1781,13 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # (thân gỡ thành phạm vi shell con, phần còn lại vẫn che nháy), cộng thêm sau các cách đọc trên. Reviewer PR #110 lần
     # mười một: bỏ che cả lệnh thay vì chỉ thân từng làm mất nhãn; các cách đọc không exact của bản viết lại cũng bỏ che cả
     # lệnh, nên chữ trong echo của thân (`echo 'Remove-Item -Recurse …'`) thành lệnh: báo thừa.
-    cmd2 = ps_rewrite(cmd) if tool == "PowerShell" else None
-    if cmd2 is not None:
+    # Bản eq (shell sau `=` của phép gán cũng ở vị trí lệnh) đọc thêm cạnh bản thường khi hai bản khác nhau.
+    rewrites = []
+    if tool == "PowerShell":
+        for cmd2 in (ps_rewrite(cmd), ps_rewrite(cmd, eq=True)):
+            if cmd2 is not None and cmd2 not in rewrites:
+                rewrites.append(cmd2)
+    for cmd2 in rewrites:
         read4, bodies2 = set(), {}
         for combo in reading_combos(cmd2, tool):
             if not combo[8]:
