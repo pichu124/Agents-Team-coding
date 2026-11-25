@@ -2186,6 +2186,18 @@ for cmd in ("bash -c 'echo ''a''; %s'" % P6, "bash -c 'grep -q ''x'' f || %s'" %
             "bash -c @'\n%s\n'@" % P6, "bash -c @'\necho hi\n%s\n'@" % P6):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: thân bash -c gỡ theo nháy của PowerShell: xoá src: {cmd!r}: {got!r}")
+for cmd in ("bash -c 'if true; then echo ''x''; %s; fi'" % P6, "bash -c 'for i in 1; do echo ''x''; %s; done'" % P6,
+            "bash -c 'true; echo ''y'' && sudo %s'" % P6):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: đoạn sau then, do, && trong thân có '': xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần bảy: đoạn Remove-Item ngoài thân mà sau khi bỏ nháy trùng chữ thân echo hay grep thì vẫn là
+# PowerShell (`\` là chữ, chỉ xoá trong C:\temp\a; main không báo): chỉ khớp ở đầu một câu lệnh của thân.
+T7 = 'Remove-Item -Recurse -Force C:\\temp\\a\\ -Exclude C:\\temp\\c d'
+R7 = 'Remove-Item -Recurse -Force "C:\\temp\\a\\" -Exclude "C:\\temp\\c d"'
+for cmd in ("wsl bash -c 'grep -F \"%s\" /mnt/c/log.txt'; %s" % (T7, R7), "bash -c 'echo \"%s\"'; %s" % (T7, R7),
+            "bash -c 'echo \"%s\"'\n%s" % (T7, R7)):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: đoạn ngoài thân trùng chữ thân nhắc tới tách như main: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
