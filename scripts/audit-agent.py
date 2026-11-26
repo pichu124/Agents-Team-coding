@@ -540,6 +540,12 @@ PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+"
 # trên, không thay: `&` trong thân -c (văn bản bash) đứng trước `. "$(rm -rf src)/bash"` thì bản này viết lại cả đường đó,
 # lệnh thay thế mất khỏi lần đọc bản trên vẫn bắt được (reviewer PR #115).
 PS_LAUNCH_AMP = re.compile(r"(?:^|(?<=[\n;|({=&]))" + PS_LAUNCH.pattern[len(r"(?:^|(?<=[\n;|({=]))"):], re.IGNORECASE)
+# `&'<đường>'` không khoảng trắng sau `&` cũng là toán tử gọi (`.` liền thì không nhận). Hai bản này đọc thêm cạnh hai bản
+# trên, không thay. Ở bản sau `&`, `&` liền không được đứng ngay sau `&`: `x&&'…'` là `&&` rồi một chuỗi, không gọi gì.
+_PS_LAUNCH_PATH = PS_LAUNCH.pattern[PS_LAUNCH.pattern.index("('"):]
+PS_LAUNCH_NS = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)(?:[&.][ \t]+|&(?=['\"]))" + _PS_LAUNCH_PATH, re.IGNORECASE)
+PS_LAUNCH_AMP_NS = re.compile(r"(?:^|(?<=[\n;|({=&]))([ \t]*)(?:[&.][ \t]+|(?<!&)&(?=['\"]))" + _PS_LAUNCH_PATH,
+                              re.IGNORECASE)
 PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
 
 
@@ -1869,7 +1875,7 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
     # PowerShell gọi shell bằng `&` với đường trong nháy (ps_launcher, 2.8): đọc thêm bản viết lại thành tên shell trần.
     # Bản nhận vị trí sau `&` (PS_LAUNCH_AMP) đọc thêm khi khác bản thường.
     done3 = set()
-    for rx, plain in ((PS_LAUNCH, False), (PS_LAUNCH_AMP, False), (PS_LAUNCH, True), (PS_LAUNCH_AMP, True)) \
+    for rx, plain in [(r, p) for p in (False, True) for r in (PS_LAUNCH, PS_LAUNCH_AMP, PS_LAUNCH_NS, PS_LAUNCH_AMP_NS)] \
             if tool == "PowerShell" and launch else ():
         cmd3 = ps_launcher(cmd, rx, plain)
         if cmd3 is not None and cmd3 not in done3:
