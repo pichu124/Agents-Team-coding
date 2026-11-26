@@ -2310,6 +2310,13 @@ for cmd in ("& 'C:\\Program Files\\Git\\usr\\bin\\sh.exe' -c 'rm -rf /tmp/x'",
             "Write-Host '& C:\\x\\bash.exe' -c 'rm -rf src'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: `&` gọi shell vô hại: {cmd!r}: {got!r}")
+# Reviewer PR #114: `&` trong chuỗi, đường trong nháy đơn nuốt cả nháy kép (hay ngược lại): bản viết lại lệch chẵn lẻ nháy
+# và Remove-Item trong chuỗi thành lệnh. PowerShell in chuỗi, không xoá gì (main trả []).
+for cmd in ("Write-Host \"a; & '\"; Write-Output C:\\bash'x'; Write-Host \"; Remove-Item -Recurse src\"",
+            "Write-Host 'a; & \"'; Write-Output C:\\bash\"x\"; Write-Host '; Remove-Item -Recurse src'",
+            "Write-Host 'a; & \"x`\"'; Write-Output C:\\bash\"x\"; Write-Host '; Remove-Item -Recurse src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: `&` trong chuỗi không đổi chẵn lẻ nháy: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
