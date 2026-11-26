@@ -2347,6 +2347,13 @@ for cmd in ("cd C:\\w && & 'C:\\x\\bash.exe' -c 'echo a &. \"$(rm -rf src)/bash\
             "& 'C:\\x\\bash.exe' -c 'echo a; . \"$(rm -rf src)/bash\"'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: đường có lệnh thay thế không viết lại thành tên shell: {cmd!r}: {got!r}")
+# Reviewer PR #116 (tuỳ chọn): launcher có đường PowerShell hợp lệ chứa `$(` (bản plain giữ nguyên đường đó) vẫn được bản
+# thường viết lại: bash xoá src, main báo; chốt để bản plain không thay bản thường.
+for cmd in ("& \"$($env:ProgramFiles)\\Git\\bin\\bash.exe\" -c 'rm -rf src'",
+            "& \"$(Get-Location)\\sh.exe\" -lc 'rm -rf src'",
+            "cd C:\\w && & \"$($env:ProgramFiles)\\Git\\bin\\bash.exe\" -c 'rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher có `$(` trong đường vẫn được viết lại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
