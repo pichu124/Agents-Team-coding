@@ -531,9 +531,11 @@ def ps_cmd_pos(cmd, i, eq=False):
 # Toán tử gọi `&` (hay `.`) ở vị trí lệnh rồi đường tới shell trong nháy (`& 'C:\Program Files\Git\bin\bash.exe' -c …`):
 # PowerShell chạy shell đó. Đường có khoảng trắng phải nằm trong nháy, nên tên shell không đứng trần như SHELL_C cần.
 # Đường trong nháy dài tối đa 512 ký tự (MAX_PATH của Windows là 260): nháy không đóng không quét tới cuối dòng từ mỗi `&`
-# (`; & 'x; & 'x; …` bậc hai).
-PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+('(?:[^'\n]|''){0,512}'|\"(?:[^\"`\n]|`.){0,512}\")",
-                       re.IGNORECASE)
+# (`; & 'x; & 'x; …` bậc hai). Đường không chứa nháy loại kia, nháy kép không có `` `" ``: bản viết lại bỏ một số chẵn nháy
+# mỗi loại, chẵn lẻ nháy của phần còn lại không đổi. Không thì `&` trong chuỗi (`Write-Host "a; & '"; … C:\bash'x'; …`) nuốt
+# nháy loại kia và phần sau của lệnh thành câu lệnh (reviewer PR #114). Đường Windows không chứa `"`.
+PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+"
+                       r"('(?:[^'\"\n]|''){0,512}'|\"(?:[^\"'`\n]|`[^\"'\n]){0,512}\")", re.IGNORECASE)
 PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
 
 
