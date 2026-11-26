@@ -534,7 +534,8 @@ def ps_cmd_pos(cmd, i, eq=False):
 # (`; & 'x; & 'x; …` bậc hai). Đường không chứa nháy loại kia, nháy kép không có `` `" ``: bản viết lại bỏ một số chẵn nháy
 # mỗi loại, chẵn lẻ nháy của phần còn lại không đổi. Không thì `&` trong chuỗi (`Write-Host "a; & '"; … C:\bash'x'; …`) nuốt
 # nháy loại kia và phần sau của lệnh thành câu lệnh (reviewer PR #114). Đường Windows không chứa `"`.
-PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+"
+# Sau `&` cũng là vị trí lệnh: `&&` của PowerShell 7, `&` chạy nền (reviewer PR #114, tuỳ chọn).
+PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=&]))([ \t]*)[&.][ \t]+"
                        r"('(?:[^'\"\n]|''){0,512}'|\"(?:[^\"'`\n]|`[^\"'\n]){0,512}\")", re.IGNORECASE)
 PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
 
