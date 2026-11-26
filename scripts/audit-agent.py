@@ -528,6 +528,31 @@ def ps_cmd_pos(cmd, i, eq=False):
     return bool((PS_CMD_POS_EQ if eq else PS_CMD_POS).search(cmd, max(0, j - 256), j))
 
 
+# Toán tử gọi `&` (hay `.`) ở vị trí lệnh rồi đường tới shell trong nháy (`& 'C:\Program Files\Git\bin\bash.exe' -c …`):
+# PowerShell chạy shell đó. Đường có khoảng trắng phải nằm trong nháy, nên tên shell không đứng trần như SHELL_C cần.
+# Đường trong nháy dài tối đa 512 ký tự (MAX_PATH của Windows là 260): nháy không đóng không quét tới cuối dòng từ mỗi `&`
+# (`; & 'x; & 'x; …` bậc hai). Đường không chứa nháy loại kia, nháy kép không có `` `" ``: bản viết lại bỏ một số chẵn nháy
+# mỗi loại, chẵn lẻ nháy của phần còn lại không đổi. Không thì `&` trong chuỗi (`Write-Host "a; & '"; … C:\bash'x'; …`) nuốt
+# nháy loại kia và phần sau của lệnh thành câu lệnh (reviewer PR #114). Đường Windows không chứa `"`.
+PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+"
+                       r"('(?:[^'\"\n]|''){0,512}'|\"(?:[^\"'`\n]|`[^\"'\n]){0,512}\")", re.IGNORECASE)
+PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
+
+
+def ps_launcher(cmd):
+    """Lệnh PowerShell với mỗi `& '<đường>/<shell>[.exe]'` ở vị trí lệnh viết lại thành `<shell>`; None nếu không có. Bỏ
+    cả toán tử: main đọc `& sh -c 'rm -rf /tmp/x'` khác `sh -c 'rm -rf /tmp/x'` (báo thừa với `&`).
+    suspicious_labels đọc thêm bản viết lại như một lệnh riêng rồi hợp nhãn: cộng thêm, nhãn của bản viết lại là nhãn main
+    báo cho lệnh gọi shell bằng tên trần (nên cũng không có lớp báo thừa nào mà main chưa có)."""
+    def sub(m):
+        name = PS_LAUNCH_SH.search(m.group(2)[1:-1])
+        return m.group(1) + name.group(1) if name else m.group(0)
+    if "&" not in cmd and "." not in cmd:
+        return None
+    out = PS_LAUNCH.sub(sub, cmd)
+    return out if out != cmd else None
+
+
 def ps_rewrite(cmd, eq=False, col0=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
@@ -1757,7 +1782,7 @@ def reading_combos(cmd, tool="Bash"):
     return combos
 
 
-def suspicious_labels(cmd, patterns, tool="Bash"):
+def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
     labels = []
     ifs = bool(re.search(r"\bIFS\b", cmd))  # IFS khác: giá trị của biến bị tách thành đích khác
     # Thân shell lồng của lệnh PowerShell (ShBodies): đoạn nằm trong thân là văn bản bash.
@@ -1831,6 +1856,10 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
             if label == "xoá nhánh local (-D)" and AGENT_BRANCH_DELETE.search(TAIL_REDIRECT.sub("", full)):
                 continue
             labels.append(label)
+    # PowerShell gọi shell bằng `&` với đường trong nháy (ps_launcher, 2.8): đọc thêm bản viết lại thành tên shell trần.
+    cmd3 = ps_launcher(cmd) if tool == "PowerShell" and launch else None
+    if cmd3 is not None:
+        labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     return labels
 
 
