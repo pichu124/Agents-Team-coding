@@ -534,13 +534,16 @@ def ps_cmd_pos(cmd, i, eq=False):
 # (`; & 'x; & 'x; …` bậc hai). Đường không chứa nháy loại kia, nháy kép không có `` `" ``: bản viết lại bỏ một số chẵn nháy
 # mỗi loại, chẵn lẻ nháy của phần còn lại không đổi. Không thì `&` trong chuỗi (`Write-Host "a; & '"; … C:\bash'x'; …`) nuốt
 # nháy loại kia và phần sau của lệnh thành câu lệnh (reviewer PR #114). Đường Windows không chứa `"`.
-# Sau `&` cũng là vị trí lệnh: `&&` của PowerShell 7, `&` chạy nền (reviewer PR #114, tuỳ chọn).
-PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=&]))([ \t]*)[&.][ \t]+"
+PS_LAUNCH = re.compile(r"(?:^|(?<=[\n;|({=]))([ \t]*)[&.][ \t]+"
                        r"('(?:[^'\"\n]|''){0,512}'|\"(?:[^\"'`\n]|`[^\"'\n]){0,512}\")", re.IGNORECASE)
+# Sau `&` cũng là vị trí lệnh: `&&` của PowerShell 7, `&` chạy nền (reviewer PR #114, tuỳ chọn). Bản này đọc thêm cạnh bản
+# trên, không thay: `&` trong thân -c (văn bản bash) đứng trước `. "$(rm -rf src)/bash"` thì bản này viết lại cả đường đó,
+# lệnh thay thế mất khỏi lần đọc bản trên vẫn bắt được (reviewer PR #115).
+PS_LAUNCH_AMP = re.compile(r"(?:^|(?<=[\n;|({=&]))" + PS_LAUNCH.pattern[len(r"(?:^|(?<=[\n;|({=]))"):], re.IGNORECASE)
 PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
 
 
-def ps_launcher(cmd):
+def ps_launcher(cmd, rx=PS_LAUNCH):
     """Lệnh PowerShell với mỗi `& '<đường>/<shell>[.exe]'` ở vị trí lệnh viết lại thành `<shell>`; None nếu không có. Bỏ
     cả toán tử: main đọc `& sh -c 'rm -rf /tmp/x'` khác `sh -c 'rm -rf /tmp/x'` (báo thừa với `&`).
     suspicious_labels đọc thêm bản viết lại như một lệnh riêng rồi hợp nhãn: cộng thêm, nhãn của bản viết lại là nhãn main
@@ -550,7 +553,7 @@ def ps_launcher(cmd):
         return m.group(1) + name.group(1) if name else m.group(0)
     if "&" not in cmd and "." not in cmd:
         return None
-    out = PS_LAUNCH.sub(sub, cmd)
+    out = rx.sub(sub, cmd)
     return out if out != cmd else None
 
 
@@ -1858,9 +1861,13 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
                 continue
             labels.append(label)
     # PowerShell gọi shell bằng `&` với đường trong nháy (ps_launcher, 2.8): đọc thêm bản viết lại thành tên shell trần.
-    cmd3 = ps_launcher(cmd) if tool == "PowerShell" and launch else None
-    if cmd3 is not None:
-        labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
+    # Bản nhận vị trí sau `&` (PS_LAUNCH_AMP) đọc thêm khi khác bản thường.
+    done3 = set()
+    for rx in (PS_LAUNCH, PS_LAUNCH_AMP) if tool == "PowerShell" and launch else ():
+        cmd3 = ps_launcher(cmd, rx)
+        if cmd3 is not None and cmd3 not in done3:
+            done3.add(cmd3)
+            labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     return labels
 
 
