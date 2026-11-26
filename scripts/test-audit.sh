@@ -2273,11 +2273,12 @@ for pre in ("$r = ", "$r=", "$x += ", "$a, $b = "):
         got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
         check("xoá đệ quy" in got, f"PowerShell: thân lồng trong thân sau phép gán: xoá src: {cmd!r}: {got!r}")
 # Reviewer PR #110 lần mười (tuỳ chọn): dòng đóng here-string của PowerShell phải ở cột đầu (khoảng trắng trước `'@`: lỗi
-# cú pháp "White space is not allowed before the string terminator"), nên dòng `  '@'` còn thuộc thân và bash chạy rm
-# sau nó (xoá src). Bản nhận `\n[ \t]*'@` cắt thân ở đó (mọi bản trả []).
+# cú pháp "White space is not allowed before the string terminator"), nên dòng `  '@'` còn thuộc thân; với bash đó là
+# chuỗi `@` (lệnh không có, bash chạy tiếp), rồi bash chạy rm sau nó (xoá src). Bản nhận `\n[ \t]*'@` cắt thân ở đó
+# (main trả []). Reviewer PR #113: dòng `  '@x` mở nháy không đóng, bash báo lỗi cú pháp và không xoá gì.
 for head in ("bash -c", "bash -lc", "$r = bash -lc"):
     for q in ("'", '"'):
-        cmd = "%s @%s\necho a\n  %s@x\n%s\n%s@" % (head, q, q, P6.replace('"', '`"') if q == '"' else P6, q)
+        cmd = "%s @%s\necho a\n  %s@%s\n%s\n%s@" % (head, q, q, q, P6.replace('"', '`"') if q == '"' else P6, q)
         got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
         check("xoá đệ quy" in got, f"PowerShell: dòng đóng here-string thụt lề không đóng: xoá src: {cmd!r}: {got!r}")
 # Reviewer PR #113: thân đọc thêm với dòng đóng chỉ ở cột đầu không được đổi ngân sách so chuỗi của ShBodies mà bản trước
