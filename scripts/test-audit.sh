@@ -2354,6 +2354,16 @@ for cmd in ("& \"$($env:ProgramFiles)\\Git\\bin\\bash.exe\" -c 'rm -rf src'",
             "cd C:\\w && & \"$($env:ProgramFiles)\\Git\\bin\\bash.exe\" -c 'rm -rf src'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: launcher có `$(` trong đường vẫn được viết lại: {cmd!r}: {got!r}")
+# 2.8 (reviewer PR #114, tuỳ chọn): `&'<đường>'` không có khoảng trắng sau `&` cũng là toán tử gọi của PowerShell: bash xoá src.
+for cmd in ("&'C:\\Program Files\\Git\\bin\\bash.exe' -c 'rm -rf src'", "&\"C:\\x\\bash.exe\" -lc 'rm -rf src'",
+            "cd C:\\w; &'C:\\x\\sh.exe' -c 'rm -rf src'", "$r = &'C:\\x\\bash.exe' -c 'rm -rf src'",
+            "cd C:\\w && &'C:\\x\\bash.exe' -c 'rm -rf src'", "(&'C:\\x\\bash.exe' -c 'rm -rf src')"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: `&` liền đường trong nháy: xoá src: {cmd!r}: {got!r}")
+# `&&'…'` liền: chuỗi sau `&&` không được gọi (PowerShell báo lỗi cú pháp ở `-c`); thân chỉ xoá trong /tmp (main cũng trả []).
+for cmd in ("x&&'C:\\x\\bash.exe' -c 'rm -rf src'", "&'C:\\x\\sh.exe' -c 'rm -rf /tmp/x'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: `&` liền đường vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
