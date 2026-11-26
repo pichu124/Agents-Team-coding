@@ -2317,6 +2317,17 @@ for cmd in ("Write-Host \"a; & '\"; Write-Output C:\\bash'x'; Write-Host \"; Rem
             "Write-Host 'a; & \"x`\"'; Write-Output C:\\bash\"x\"; Write-Host '; Remove-Item -Recurse src'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: `&` trong chuỗi không đổi chẵn lẻ nháy: {cmd!r}: {got!r}")
+# Reviewer PR #114 (tuỳ chọn): `&` gọi shell sau `&&` của PowerShell 7 (hay sau `&` chạy nền) cũng ở vị trí lệnh: bash xoá src.
+for cmd in ("cd C:\\w && & 'C:\\Program Files\\Git\\bin\\bash.exe' -c 'rm -rf src'",
+            "cd C:\\w&&& 'C:\\x\\bash.exe' -c 'rm -rf src'",
+            "Start-Job { 1 } & & 'C:\\x\\bash.exe' -c 'rm -rf src'",
+            "cd C:\\w && . \"C:\\x\\bash.exe\" -lc 'rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: `&` gọi shell sau `&&`: xoá src: {cmd!r}: {got!r}")
+for cmd in ("cd C:\\w && & 'C:\\x\\sh.exe' -c 'rm -rf /tmp/x'",
+            "Write-Host 'a && & \"x' ; Write-Output C:\\bash\"y\"; Write-Host '; Remove-Item -Recurse src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: `&` gọi shell sau `&&` vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
