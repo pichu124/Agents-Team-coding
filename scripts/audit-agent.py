@@ -334,18 +334,22 @@ class ShBodies:
     - Tuyến tính: starts tính một lần; kết quả nhớ theo chuỗi đã bỏ nháy (nhiều đoạn cùng chuỗi chỉ tìm một lần); tổng số
       ký tự mà các chỗ trùng xét qua mọi đoạn phải so (mỗi chỗ trùng so đủ độ dài chuỗi: chỗ trùng chồng nhau của chuỗi có
       chu kỳ, reviewer lần chín) không quá hai lần độ dài flat cộng 4096, quá thì coi là trong thân (đọc thêm theo bash:
-      chỉ thêm nhãn)."""
+      chỉ thêm nhãn).
+    - Thân here-string đọc với dòng đóng chỉ ở cột đầu (col0) mà bản cho phép khoảng trắng không có nằm ở phần riêng (flat,
+      starts, ngân sách riêng): phần của bản trước giữ y nguyên ngân sách, contains là hoặc của hai phần nên chỉ thêm nhãn
+      (reviewer PR #113: thân col0 nối chung làm ngân sách lớn ra, đoạn có chu kỳ thôi được coi là trong thân, mất nhãn)."""
     def __init__(self, cmd):
         self.cmd, self.any = cmd, None
 
     def load(self):  # lười: lệnh không có đoạn xoá đệ quy nào thì không gỡ thân
         cmd = self.cmd
         self.raw = "\0".join(shell_c_bodies(cmd))
-        bodies = shell_c_bodies(cmd, ps=True)
-        self.any = bool(bodies)
-        self.flat = "\0" + "\0".join(bodies).translate(NO_QUOTES)
-        self.starts = {m.end() for m in STMT_START.finditer(self.flat)} if bodies else set()
-        self.memo, self.budget = {}, 2 * len(self.flat) + 4096
+        bodies = shell_c_bodies(cmd, ps=True, col0s=(False,))
+        seen = set(bodies)
+        extra = [b for b in shell_c_bodies(cmd, ps=True) if b not in seen]
+        self.any = bool(bodies or extra)
+        self.parts = [ShFlat(b) for b in (bodies, extra) if b]
+        self.memo = {}
 
     def contains(self, full):
         if self.any is None:
@@ -359,18 +363,27 @@ class ShBodies:
         if not n:
             return False
         if n not in self.memo:
-            r, i = False, self.flat.find(n)
-            while i >= 0:
-                if i in self.starts:
-                    r = True
-                    break
-                self.budget -= len(n)
-                if self.budget < 0:
-                    r = True
-                    break
-                i = self.flat.find(n, i + 1)
-            self.memo[n] = r
+            self.memo[n] = any(p.find(n) for p in self.parts)
         return self.memo[n]
+
+
+class ShFlat:
+    """Một phần của ShBodies: các thân bỏ nháy và backtick nối bằng NUL, chỗ mở câu lệnh, ngân sách so chuỗi riêng."""
+    def __init__(self, bodies):
+        self.flat = "\0" + "\0".join(bodies).translate(NO_QUOTES)
+        self.starts = {m.end() for m in STMT_START.finditer(self.flat)}
+        self.budget = 2 * len(self.flat) + 4096
+
+    def find(self, n):
+        i = self.flat.find(n)
+        while i >= 0:
+            if i in self.starts:
+                return True
+            self.budget -= len(n)
+            if self.budget < 0:
+                return True
+            i = self.flat.find(n, i + 1)
+        return False
 # Thân -c cho segments(strict=True) gỡ ra: shell, các cờ, một cụm cờ có chữ c (-c, -lc, +c, -co pipefail), các cờ, `--` hay
 # `-` lẻ nếu có, rồi chuỗi nháy đơn, kép hay ANSI-C `$'…'`. Shell mở ở mọi chỗ `\b` của 96f49a6 nhận, cả sau `-`
 # (`git-bash`, `-bash`). Cờ: `-x`, `+e`,
@@ -449,20 +462,23 @@ PS_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 WSL_SEG = re.compile(r"\s*wsl(?:\.exe)?(?:\s|$)", re.IGNORECASE)
 
 
-def ps_shell_c_bodies(cmd):
+def ps_shell_c_bodies(cmd, col0s=(False, True)):
     """Thân -c viết theo nháy của PowerShell (PS_SHELL_C_BODY, cộng PS_SHELL_C_BODY_STRICT cho cờ như `+e`; mỗi regex một
     lượt quét): `''` thành `'`, backtick và `""` của nháy kép gỡ thoát,
     here-string tới dòng đầu tiên mở bằng `'@`/`"@` sau nó (vị trí các dòng đóng tìm một lần, bisect). Lần tìm sau bắt đầu
-    sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai)."""
+    sau dòng đóng: here-string không lồng, và nhiều chỗ mở chung một dòng đóng không cho các thân chồng nhau (bậc hai).
+    Dòng đóng đọc hai cách, hợp thân: cho phép khoảng trắng trước như bản trước, và chỉ ở cột đầu như PowerShell
+    (col0=True; khoảng trắng trước `'@` là lỗi cú pháp, dòng đó còn thuộc thân)."""
     out, ends = [], {}
-    for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
-        out += ps_bodies_rx(cmd, rx, ends)
+    for col0 in col0s:
+        for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
+            out += ps_bodies_rx(cmd, rx, ends, col0=col0)
     return out
 
 
-def ps_bodies_rx(cmd, rx, ends, spans=None):
+def ps_bodies_rx(cmd, rx, ends, spans=None, col0=False):
     """Thân của một regex (PS_SHELL_C_BODY hay PS_SHELL_C_BODY_STRICT). spans: thêm (đầu lần khớp, cuối phần nháy, shell,
-    phần nháy, thân) cho ps_rewrite."""
+    phần nháy, thân) cho ps_rewrite. col0: dòng đóng here-string chỉ ở cột đầu."""
     out, pos = [], 0
     while True:
         m = rx.search(cmd, pos)
@@ -472,14 +488,15 @@ def ps_bodies_rx(cmd, rx, ends, spans=None):
         q = m.group(2)
         if q[0] == "@":
             close = q[1]
-            if close not in ends:
-                ends[close] = [x.start() for x in re.finditer(r"\n[ \t]*" + close + "@", cmd)]
-            i = bisect.bisect_left(ends[close], m.end() - 1)
-            if i == len(ends[close]):
+            key = (close, col0)
+            if key not in ends:
+                ends[key] = [x.start() for x in re.finditer((r"\n" if col0 else r"\n[ \t]*") + close + "@", cmd)]
+            i = bisect.bisect_left(ends[key], m.end() - 1)
+            if i == len(ends[key]):
                 continue
-            body = cmd[m.end():ends[close][i]].rstrip("\r")
-            pos = max(pos, ends[close][i] + 1)
-            qend = cmd.index(close + "@", ends[close][i]) + 2
+            body = cmd[m.end():ends[key][i]].rstrip("\r")
+            pos = max(pos, ends[key][i] + 1)
+            qend = cmd.index(close + "@", ends[key][i]) + 2
             if close == '"':
                 body = re.sub(r"`([\s\S])", lambda x: PS_BACKTICK_CHARS.get(x[1], x[1]), body)
         elif q[0] == "'":
@@ -511,7 +528,7 @@ def ps_cmd_pos(cmd, i, eq=False):
     return bool((PS_CMD_POS_EQ if eq else PS_CMD_POS).search(cmd, max(0, j - 256), j))
 
 
-def ps_rewrite(cmd, eq=False):
+def ps_rewrite(cmd, eq=False, col0=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
     mỗi thân đó thành `<shell> -c "<thân>"` theo nháy kép của bash (`\\`, `"`, `$`, backtick thoát bằng `\\`, unwrap_shell_c
@@ -522,7 +539,7 @@ def ps_rewrite(cmd, eq=False):
     (reviewer PR #111 lần hai: `$r = bash +e -c "echo; bash -lc '…''…'"` từng mất nhãn)."""
     spans, ends = [], {}
     for rx in (PS_SHELL_C_BODY, PS_SHELL_C_BODY_STRICT):
-        ps_bodies_rx(cmd, rx, ends, spans)
+        ps_bodies_rx(cmd, rx, ends, spans, col0)
     out, last = [], 0
     for start, end, sh, q, body in sorted(spans):
         if start < last or not ps_cmd_pos(cmd, start, eq):
@@ -534,12 +551,12 @@ def ps_rewrite(cmd, eq=False):
     return "".join(out) + cmd[last:] if out else None
 
 
-def shell_c_bodies(cmd, ps=False):
+def shell_c_bodies(cmd, ps=False, col0s=(False, True)):
     """Thân của mọi `bash|sh|zsh|dash -c '…'` trong cmd (cả hai regex gỡ thân, gỡ đệ quy, nháy kép gỡ thoát như
     unwrap_shell_c): đoạn PowerShell nằm trong một thân là văn bản bash (reviewer PR #110 lần năm: chỉ đoạn đó, không phải
     mọi đoạn của lệnh có chữ bash, sh hay wsl). ps: lệnh PowerShell, thêm thân gỡ theo nháy của PowerShell (lần sáu); thân
     là văn bản bash nên gỡ tiếp theo bash. Mỗi thân chỉ gỡ tiếp một lần: hai regex cùng khớp một thân thì lồng nhiều tầng
-    không nhân đôi số thân ở mỗi tầng."""
+    không nhân đôi số thân ở mỗi tầng. col0s: các cách nhận dòng đóng here-string (ps_shell_c_bodies)."""
     out, seen, todo = [], set(), [(cmd, ps)]
     while todo:
         text, ps_text = todo.pop()
@@ -555,7 +572,7 @@ def shell_c_bodies(cmd, ps=False):
                         body = re.sub(r'\\([$`"\\\n])', lambda x: "" if x[1] == "\n" else x[1], body)
                 found.append(body)
         if ps_text:
-            found += ps_shell_c_bodies(text)
+            found += ps_shell_c_bodies(text, col0s)
         for body in found:
             if body not in seen:
                 seen.add(body)
@@ -1784,7 +1801,8 @@ def suspicious_labels(cmd, patterns, tool="Bash"):
     # Bản eq (shell sau `=` của phép gán cũng ở vị trí lệnh) đọc thêm cạnh bản thường khi hai bản khác nhau.
     rewrites = []
     if tool == "PowerShell":
-        for cmd2 in (ps_rewrite(cmd), ps_rewrite(cmd, eq=True)):
+        # col0: dòng đóng here-string chỉ ở cột đầu, đọc thêm cạnh bản cho phép khoảng trắng như bản trước.
+        for cmd2 in (ps_rewrite(cmd), ps_rewrite(cmd, eq=True), ps_rewrite(cmd, col0=True), ps_rewrite(cmd, True, True)):
             if cmd2 is not None and cmd2 not in rewrites:
                 rewrites.append(cmd2)
     for cmd2 in rewrites:

@@ -2272,6 +2272,25 @@ for pre in ("$r = ", "$r=", "$x += ", "$a, $b = "):
         cmd = pre + head + " \"echo; bash -lc 'echo ''a''; rm -rf src'\""
         got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
         check("xoá đệ quy" in got, f"PowerShell: thân lồng trong thân sau phép gán: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #110 lần mười (tuỳ chọn): dòng đóng here-string của PowerShell phải ở cột đầu (khoảng trắng trước `'@`: lỗi
+# cú pháp "White space is not allowed before the string terminator"), nên dòng `  '@'` còn thuộc thân; với bash đó là
+# chuỗi `@` (lệnh không có, bash chạy tiếp), rồi bash chạy rm sau nó (xoá src). Bản nhận `\n[ \t]*'@` cắt thân ở đó
+# (main trả []). Reviewer PR #113: dòng `  '@x` mở nháy không đóng, bash báo lỗi cú pháp và không xoá gì.
+for head in ("bash -c", "bash -lc", "$r = bash -lc"):
+    for q in ("'", '"'):
+        cmd = "%s @%s\necho a\n  %s@%s\n%s\n%s@" % (head, q, q, q, P6.replace('"', '`"') if q == '"' else P6, q)
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: dòng đóng here-string thụt lề không đóng: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #113: thân đọc thêm với dòng đóng chỉ ở cột đầu không được đổi ngân sách so chuỗi của ShBodies mà bản trước
+# dùng. Đoạn có chu kỳ tiêu hết ngân sách (thì coi là trong thân, đọc thêm theo bash); thân col0 dài hơn làm ngân sách lớn ra,
+# đoạn Remove-Item chỉ còn đọc theo PowerShell và mất nhãn mà main báo.
+B13 = 'Remove-Item -Recurse -Force "/tmp/a\\"" src /tmp/c " /tmp/b'
+for m13, f13 in ((180, 4000), (180, 20000), (400, 20000)):
+    for ind in ("  ", "\t"):
+        cmd = ("ri -r /tmp/ri -r /tmp/ri -r /tmp/ri -r /tmp/ri\n" + B13 + "\nbash -c @'\necho '" + "ri -r /tmp/" * m13
+               + "ri'\necho '" + B13.translate(a.NO_QUOTES) + "'\n" + ind + "'@\n# " + "z" * f13 + "\n'@")
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+        check("xoá đệ quy" in got, f"PowerShell: ngân sách ShBodies như bản trước (thân col0 riêng): {m13} {f13} {ind!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
