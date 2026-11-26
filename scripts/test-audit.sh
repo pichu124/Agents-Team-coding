@@ -2338,6 +2338,15 @@ for cmd in ("& 'C:\\x\\bash.exe' -c 'echo a &. \"$(rm -rf src)/bash\"'",
             "& 'C:\\x\\sh.exe' -c 'echo a &. \"$(rm -rf src)/sh\"'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: launcher sau `&` không nuốt lệnh thay thế trong đường: {cmd!r}: {got!r}")
+# Reviewer PR #115 (tuỳ chọn): launcher ngoài chỉ được nhận nhờ `&&`/`;`, thân có `&. "$(rm -rf src)/bash"` (hay `; .`): mọi
+# bản viết lại cũng viết lại đường trong thân thành tên shell trần, lệnh thay thế mất (main trả []). Bash xoá src.
+for cmd in ("cd C:\\w && & 'C:\\x\\bash.exe' -c 'echo a &. \"$(rm -rf src)/bash\"'",
+            "x && & 'C:\\x\\bash.exe' -c 'true &. \"$(rm -rf src)/zsh\"; echo'",
+            "cd C:\\w && & 'C:\\x\\bash.exe' -c 'echo a &. \"`rm -rf src`/sh\"'",
+            "cd C:\\w && & 'C:\\x\\bash.exe' -c 'echo a; . \"$(rm -rf src)/bash\"'",
+            "& 'C:\\x\\bash.exe' -c 'echo a; . \"$(rm -rf src)/bash\"'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: đường có lệnh thay thế không viết lại thành tên shell: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
