@@ -543,14 +543,20 @@ PS_LAUNCH_AMP = re.compile(r"(?:^|(?<=[\n;|({=&]))" + PS_LAUNCH.pattern[len(r"(?
 PS_LAUNCH_SH = re.compile(r"(?:^|[\\/])(bash|sh|zsh|dash)(?:\.exe)?\Z", re.IGNORECASE)
 
 
-def ps_launcher(cmd, rx=PS_LAUNCH):
+def ps_launcher(cmd, rx=PS_LAUNCH, plain=False):
     """Lệnh PowerShell với mỗi `& '<đường>/<shell>[.exe]'` ở vị trí lệnh viết lại thành `<shell>`; None nếu không có. Bỏ
     cả toán tử: main đọc `& sh -c 'rm -rf /tmp/x'` khác `sh -c 'rm -rf /tmp/x'` (báo thừa với `&`).
     suspicious_labels đọc thêm bản viết lại như một lệnh riêng rồi hợp nhãn: cộng thêm, nhãn của bản viết lại là nhãn main
-    báo cho lệnh gọi shell bằng tên trần (nên cũng không có lớp báo thừa nào mà main chưa có)."""
+    báo cho lệnh gọi shell bằng tên trần (nên cũng không có lớp báo thừa nào mà main chưa có).
+    plain: chỉ viết lại đường không có `$(` hay backtick. Đường trong thân -c (văn bản bash) như `&. "$(rm -rf src)/bash"`
+    cũng khớp; viết lại nó thành tên shell trần làm mất lệnh thay thế (reviewer PR #115). suspicious_labels đọc bản plain
+    thêm cạnh bản thường."""
     def sub(m):
-        name = PS_LAUNCH_SH.search(m.group(2)[1:-1])
-        return m.group(1) + name.group(1) if name else m.group(0)
+        path = m.group(2)[1:-1]
+        name = PS_LAUNCH_SH.search(path)
+        if not name or plain and ("$(" in path or "`" in path):
+            return m.group(0)
+        return m.group(1) + name.group(1)
     if "&" not in cmd and "." not in cmd:
         return None
     out = rx.sub(sub, cmd)
@@ -1863,8 +1869,9 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
     # PowerShell gọi shell bằng `&` với đường trong nháy (ps_launcher, 2.8): đọc thêm bản viết lại thành tên shell trần.
     # Bản nhận vị trí sau `&` (PS_LAUNCH_AMP) đọc thêm khi khác bản thường.
     done3 = set()
-    for rx in (PS_LAUNCH, PS_LAUNCH_AMP) if tool == "PowerShell" and launch else ():
-        cmd3 = ps_launcher(cmd, rx)
+    for rx, plain in ((PS_LAUNCH, False), (PS_LAUNCH_AMP, False), (PS_LAUNCH, True), (PS_LAUNCH_AMP, True)) \
+            if tool == "PowerShell" and launch else ():
+        cmd3 = ps_launcher(cmd, rx, plain)
         if cmd3 is not None and cmd3 not in done3:
             done3.add(cmd3)
             labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
