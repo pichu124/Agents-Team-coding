@@ -2364,6 +2364,21 @@ for cmd in ("&'C:\\Program Files\\Git\\bin\\bash.exe' -c 'rm -rf src'", "&\"C:\\
 for cmd in ("x&&'C:\\x\\bash.exe' -c 'rm -rf src'", "&'C:\\x\\sh.exe' -c 'rm -rf /tmp/x'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: `&` liền đường vô hại: {cmd!r}: {got!r}")
+# 2.8: launcher qua biến (`$b = '<đường>\bash.exe'; & $b -c …`): PowerShell chạy shell trong biến, bash xoá src. Main chỉ bắt được
+# khi tên biến trùng tên shell (`$bash -c` khớp SHELL_C), tên khác thì trả [].
+for cmd in ("$b = \"$env:ProgramFiles\\Git\\bin\\bash.exe\"; & $b --login -c 'rm -rf src'",
+            "$git = 'C:\\Program Files\\Git\\bin\\bash.exe'; & $git -c 'rm -rf src'",
+            "$exe='C:\\x\\sh.exe'\n&$exe -lc 'rm -rf src'",
+            "$p = 'C:\\x\\bash.exe'; cd C:\\w && & $p -c 'rm -rf src'",
+            "$P = 'C:\\x\\bash.exe'; . $p -c 'rm -rf src'",
+            "$p = 'C:\\x\\bash.exe'; & $p -c 'echo ''a''; rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến: xoá src: {cmd!r}: {got!r}")
+# Biến không trỏ tới shell, thân chỉ xoá trong /tmp, `& $p` nằm trong chuỗi, `x&&$p` (không gọi gì): main cũng trả [].
+for cmd in ("$p = 'C:\\x\\notepad.exe'; & $p -c 'rm -rf src'", "$p = 'C:\\x\\bash.exe'; & $p -c 'rm -rf /tmp/x'",
+            "$p = 'C:\\x\\bash.exe'; Write-Host \"& $p -c 'rm -rf src'\"", "$p = 'C:\\x\\bash.exe'; x&&$p -c 'rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: launcher qua biến vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
