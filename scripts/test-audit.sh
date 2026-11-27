@@ -2392,6 +2392,12 @@ for cmd in ("$bs = 'C:\\x\\bash.exe'; & $b\u017f -c 'echo'; Remove-Item -Recurse
     except Exception as e:  # noqa: BLE001
         got = [f"ngoại lệ {e!r}"]
     check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, tên Unicode: {cmd!r}: {got!r}")
+# Reviewer PR #119 lần hai (tuỳ chọn, hồi quy của bản casefold): casefold làm tên dài ra (ß→ss, İ, ﬆ), regex dựng từ khoá
+# casefold không khớp lại chính tên gốc: launcher gọi đúng tên đã gán bị bỏ sót. Bash xoá src.
+for name in ("b\u00df", "stra\u00dfe", "b\u0130", "b\ufb06"):
+    cmd = "$%s = 'C:\\x\\bash.exe'; & $%s -c 'rm -rf src'" % (name, name)
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, cùng tên Unicode: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
