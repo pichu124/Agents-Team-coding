@@ -2428,6 +2428,20 @@ for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"", "bash -
             "bash -lc \"echo zsh 'rm -rf src'\""):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: cờ ngoài SHELL_C, thân vô hại: {cmd!r}: {got!r}")
+# 2.8 (reviewer PR #120 lần ba, tuỳ chọn): shell lồng có cờ kèm tên hay cờ dài trước -c (`-o pipefail`, `-O extglob`,
+# `+o nomatch`, `--login`, `--norc`): bash xoá src. Main và cổng cũ của ps_flag_norm (chỉ `[-+]\w+`) trả [].
+T8 = "'echo ''a''; rm -rf src'"
+for cmd in ("bash +e -c \"echo; bash -o pipefail -c %s\"" % T8, "bash +e -c \"echo; bash --login -c %s\"" % T8,
+            "bash +e -c \"echo; bash --norc -lc %s\"" % T8, "bash +e -c \"echo; bash -O extglob -c %s\"" % T8,
+            "bash -lc \"echo; bash -o errexit -o nounset -c %s\"" % T8, "zsh -fc \"echo; zsh +o nomatch -c %s\"" % T8):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: shell lồng có cờ kèm tên hay cờ dài: xoá src: {cmd!r}: {got!r}")
+for cmd in ("bash +e -c \"echo; bash -o pipefail -c 'echo ''a''; rm -rf /tmp/x'\"",
+            "bash -lc \"echo bash -o pipefail x; echo 'rm -rf src'\"", "bash -lc \"echo 'rm -rf src' --login -c\""):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: shell lồng có cờ kèm tên, vô hại: {cmd!r}: {got!r}")
+linear("ps_flag_norm, nhiều cờ kèm tên trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash' + " -o x" * 3000 * k + '1"')
+linear("ps_flag_norm, nhiều cờ dài trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash' + " --a-b" * 3000 * k + '1"')
 # Reviewer PR #120 lần ba: cụm cờ dài nhiều chữ c không có khoảng trắng sau trong thân (`bash -lc "bash -ccc…c1"`): cổng shell
 # lồng của ps_flag_norm không được backtrack bậc hai (`[A-Za-z]*c[A-Za-z]*` từng mất 18 giây ở 48 KB).
 linear("ps_flag_norm, cụm cờ nhiều chữ c trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash -' + "c" * 3000 * k + '1"')
