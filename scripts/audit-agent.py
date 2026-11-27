@@ -585,6 +585,39 @@ def ps_var_key(name):
     return name[m.end():] if m else name
 
 
+# Phép gán mà main nhận (tên trần, không phạm vi, không `${…}`, không sau `&&`): ps_launcher_var_main giữ y bản của main, đọc
+# cạnh bản mở rộng để các dạng mới không chiếm trần 64 tên của dạng main nhận (reviewer PR #122).
+PS_ASSIGN_LAUNCH_MAIN = re.compile(r"(?:^|(?<=[\n;|({]))[ \t]*\$([A-Za-z_]\w{0,63})[ \t]*=[ \t]*" + _PS_LAUNCH_PATH)
+
+def ps_launcher_var_main(cmd):
+    """Bản của main (PR #119): tên trần, trần 64 tên riêng. Lệnh PowerShell với mỗi `& $b` (`$b` được gán đường tới shell trong cùng lệnh) ở vị trí lệnh viết lại thành `<shell>`;
+    None nếu không có. suspicious_labels đọc thêm bản này như ps_launcher (chỉ cộng thêm). Main chỉ bắt được khi tên biến
+    trùng tên shell (`$bash -c` khớp SHELL_C)."""
+    if "$" not in cmd or "=" not in cmd:
+        return None
+    names = {}  # tên gốc như đã gán -> shell; regex dựng từ tên gốc (casefold làm ß, İ, ﬆ dài ra: không khớp lại chính nó)
+    for m in PS_ASSIGN_LAUNCH_MAIN.finditer(cmd):
+        sh = PS_LAUNCH_SH.search(m.group(2)[1:-1])
+        # Biến thể hoa thường của một tên đã ghi (PowerShell coi là một biến) không chiếm chỗ trong trần 64 tên (reviewer PR #119
+        # lần ba); phép gán đầu thắng như trước.
+        if sh and len(names) < 64 and not any(re.fullmatch(re.escape(n), m.group(1), re.IGNORECASE) for n in names):
+            names[m.group(1)] = sh.group(1)
+    if not names:
+        return None
+    use = re.compile(r"(?:^|(?<=[\n;|({=&]))([ \t]*)(?:(?<!&)&[ \t]*|\.[ \t]+)\$("
+                     + "|".join(re.escape(n) for n in names) + r")(?!\w)", re.IGNORECASE)
+
+    def sub(m):
+        # Tên khớp được tra lại bằng chính phép so của regex (re.IGNORECASE), không bằng lower/casefold: hai cách lệch nhau ở
+        # vài chữ Unicode (ſ/s, ı/i, ß) và từng ném KeyError, cả lần audit dừng (reviewer PR #119). Không tên nào khớp: giữ nguyên.
+        for n, sh in names.items():
+            if re.fullmatch(re.escape(n), m.group(2), re.IGNORECASE):
+                return m.group(1) + sh
+        return m.group(0)
+    out = use.sub(sub, cmd)
+    return out if out != cmd else None
+
+
 def ps_launcher_var(cmd):
     """Lệnh PowerShell với mỗi `& $b` (`$b` được gán đường tới shell trong cùng lệnh) ở vị trí lệnh viết lại thành `<shell>`;
     None nếu không có. suspicious_labels đọc thêm bản này như ps_launcher (chỉ cộng thêm). Main chỉ bắt được khi tên biến
@@ -592,13 +625,20 @@ def ps_launcher_var(cmd):
     if "$" not in cmd or "=" not in cmd:
         return None
     names = {}  # tên gốc như đã gán -> shell; regex dựng từ tên gốc (casefold làm ß, İ, ﬆ dài ra: không khớp lại chính nó)
+    # Tên main nhận ghi trước với trần riêng (như ps_launcher_var_main); dạng mới thêm sau với trần 64 riêng.
+    for m in PS_ASSIGN_LAUNCH_MAIN.finditer(cmd):
+        sh = PS_LAUNCH_SH.search(m.group(2)[1:-1])
+        if sh and len(names) < 64 and not any(re.fullmatch(re.escape(n), m.group(1), re.IGNORECASE) for n in names):
+            names[m.group(1)] = sh.group(1)
+    extra = 0
     for m in PS_ASSIGN_LAUNCH.finditer(cmd):
         sh = PS_LAUNCH_SH.search(m.group(3)[1:-1])
         name = ps_var_key(m.group(1) or m.group(2))
         # Biến thể hoa thường của một tên đã ghi (PowerShell coi là một biến) không chiếm chỗ trong trần 64 tên (reviewer PR #119
         # lần ba); phép gán đầu thắng như trước.
-        if sh and len(names) < 64 and not any(re.fullmatch(re.escape(n), name, re.IGNORECASE) for n in names):
+        if sh and extra < 64 and not any(re.fullmatch(re.escape(n), name, re.IGNORECASE) for n in names):
             names[name] = sh.group(1)
+            extra += 1
     if not names:
         return None
     alts = "|".join(re.escape(n) if n.lower().startswith("env:") else r"(?:(?:script|global|local|private):)?" + re.escape(n)
@@ -1963,10 +2003,12 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
         if cmd3 is not None and cmd3 not in done3:
             done3.add(cmd3)
             labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
-    cmd3 = ps_launcher_var(cmd) if tool == "PowerShell" and launch else None
-    if cmd3 is not None and cmd3 not in done3:
-        done3.add(cmd3)
-        labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
+    # Bản của main (ps_launcher_var_main) và bản mở rộng (phạm vi, `${…}`, sau `&&`), đọc cả hai: chỉ cộng thêm (reviewer PR #122).
+    for f in (ps_launcher_var_main, ps_launcher_var) if tool == "PowerShell" and launch else ():
+        cmd3 = f(cmd)
+        if cmd3 is not None and cmd3 not in done3:
+            done3.add(cmd3)
+            labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     # Cờ mà SHELL_C không nhận trước -c (ps_flag_norm, 2.8): đọc thêm bản viết lại phần đầu thành `<shell> -c`.
     cmd3 = ps_flag_norm(cmd) if tool == "PowerShell" and launch else None
     if cmd3 is not None and cmd3 not in done3:
