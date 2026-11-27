@@ -2379,6 +2379,19 @@ for cmd in ("$p = 'C:\\x\\notepad.exe'; & $p -c 'rm -rf src'", "$p = 'C:\\x\\bas
             "$p = 'C:\\x\\bash.exe'; Write-Host \"& $p -c 'rm -rf src'\"", "$p = 'C:\\x\\bash.exe'; x&&$p -c 'rm -rf src'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: launcher qua biến vô hại: {cmd!r}: {got!r}")
+# Reviewer PR #119: tên biến có chữ mà re.IGNORECASE coi là cùng chữ còn str.lower() thì không (ſ/s, ς/σ, ı/i, İ/i): tra tên
+# không được ném KeyError (cả lần audit dừng, mất mọi nhãn main báo). Remove-Item ngoài thân vẫn phải báo.
+for cmd in ("$bs = 'C:\\x\\bash.exe'; & $b\u017f -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$b\u03c3 = 'C:\\x\\bash.exe'; & $b\u03c2 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$b\u017f = 'C:\\x\\bash.exe'; & $bs -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$bi = 'C:\\x\\bash.exe'; & $b\u0130 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$bi = 'C:\\x\\bash.exe'; & $b\u0131 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$sh = 'C:\\x\\bash.exe'; & $\u017fh -c 'rm -rf src'"):
+    try:
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    except Exception as e:  # noqa: BLE001
+        got = [f"ngoại lệ {e!r}"]
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, tên Unicode: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
