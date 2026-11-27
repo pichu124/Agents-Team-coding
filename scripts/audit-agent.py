@@ -583,8 +583,10 @@ def ps_launcher_var(cmd):
     names = {}  # tên gốc như đã gán -> shell; regex dựng từ tên gốc (casefold làm ß, İ, ﬆ dài ra: không khớp lại chính nó)
     for m in PS_ASSIGN_LAUNCH.finditer(cmd):
         sh = PS_LAUNCH_SH.search(m.group(2)[1:-1])
-        if sh and len(names) < 64:
-            names.setdefault(m.group(1), sh.group(1))
+        # Biến thể hoa thường của một tên đã ghi (PowerShell coi là một biến) không chiếm chỗ trong trần 64 tên (reviewer PR #119
+        # lần ba); phép gán đầu thắng như trước.
+        if sh and len(names) < 64 and not any(re.fullmatch(re.escape(n), m.group(1), re.IGNORECASE) for n in names):
+            names[m.group(1)] = sh.group(1)
     if not names:
         return None
     use = re.compile(r"(?:^|(?<=[\n;|({=&]))([ \t]*)(?:(?<!&)&[ \t]*|\.[ \t]+)\$("
