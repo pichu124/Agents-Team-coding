@@ -2416,8 +2416,12 @@ for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
             "bash +e -c @'\necho; bash -lc 'echo ''a''; rm -rf src'\n'@"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: cờ ngoài SHELL_C rồi thân lồng: xoá src: {cmd!r}: {got!r}")
-# Thân lồng chỉ xoá trong /tmp: không báo (main cũng không báo dạng `bash -c` trần).
-for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"",):
+# Thân lồng chỉ xoá trong /tmp: không báo (main cũng không báo dạng `bash -c` trần). Reviewer PR #120 (tuỳ chọn, hồi quy):
+# thân không có shell lồng không được viết lại, không thì báo thừa của `-c` trần (chữ trong echo, grep) lan sang `-lc`, `-ec`,
+# `+e` rất hay gặp; main trả [] cho các ca dưới.
+for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"", "bash -lc \"echo 'rm -rf src'\"",
+            "bash -lc \"grep 'rm -rf src' f\"", "bash -ec \"echo 'rm -rf src'\"", "bash -lc 'echo \"rm -rf src\"'",
+            "bash +e -c 'cd /tmp/w && rm -rf x'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: cờ ngoài SHELL_C, thân vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
