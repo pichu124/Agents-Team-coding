@@ -603,6 +603,38 @@ def ps_launcher_var(cmd):
     return out if out != cmd else None
 
 
+# Phần đầu `<shell> … -c` lồng trong thân (ps_flag_norm): shell không đứng sau chữ, `-` hay `.` (đuôi `.sh` của tên file), tối
+# đa 8 cờ rồi một cụm có chữ c. Chữ shell trong echo hay comment không mở cổng (reviewer PR #120 lần hai). Số cờ có trần, cụm c
+# tìm chữ c bằng lookahead rồi lấy trọn cụm như _SHELL_C_HEAD: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c
+# không có khoảng trắng sau (reviewer PR #120 lần ba: 18 giây ở 48 KB).
+PS_NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash)(?:\.exe)?(?:\s+[-+]\w+){0,8}?\s+[-+](?=[A-Za-z]*c)[A-Za-z]+\s",
+                          re.IGNORECASE)
+
+
+def ps_flag_norm(cmd):
+    """Lệnh PowerShell với mỗi phần đầu `<shell> <cờ> -c` mà SHELL_C không nhận (`+e -c`, `-o pipefail -c`, `-euo pipefail
+    -c`, `-lc`), shell ở vị trí lệnh, rồi thân nháy của PowerShell (PS_SHELL_C_BODY_STRICT; here-string không qua đây: khớp
+    dừng sau `@'`, main đọc thân here-string theo đường có sẵn): phần đầu viết
+    lại thành `<shell> -c `, thân giữ nguyên văn; None nếu không có. suspicious_labels đọc bản này như ps_launcher (một lệnh
+    riêng, hợp nhãn): nhãn thêm là nhãn main báo cho `<shell> -c` cùng thân. Cờ không đổi lệnh nào chạy trong thân (`-e`
+    dừng ở lệnh lỗi: main cũng báo `bash -c "false; rm -rf src"`). Thân lồng theo luật bash trong thân nháy kép (`bash +e -c
+    "echo; bash -lc 'echo ''a''; rm -rf src'"`) main chỉ đọc được sau `-c` trần (doc 2.8). Chỉ viết lại thân có shell lồng
+    (PS_NESTED_SH): thân khác thì main đã đọc theo cách của nó, viết lại chỉ đem báo thừa của `-c` trần (chữ trong echo, grep)
+    sang `-lc`, `-ec`, `+e` rất hay gặp (reviewer PR #120)."""
+    out, last = [], 0
+    for m in PS_SHELL_C_BODY_STRICT.finditer(cmd):
+        sh, body = m.group(1), m.start(2)
+        head = cmd[m.start():body]
+        if re.fullmatch(re.escape(sh) + r"\s+-c\s+", head) or not PS_NESTED_SH.search(cmd, body, m.end()) \
+                or not ps_cmd_pos(cmd, m.start()):
+            continue
+        out += [cmd[last:m.start()], sh, " -c "]
+        last = body
+    if not out:
+        return None
+    return "".join(out) + cmd[last:]
+
+
 def ps_rewrite(cmd, eq=False, col0=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
@@ -1916,6 +1948,11 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
             done3.add(cmd3)
             labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     cmd3 = ps_launcher_var(cmd) if tool == "PowerShell" and launch else None
+    if cmd3 is not None and cmd3 not in done3:
+        done3.add(cmd3)
+        labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
+    # Cờ mà SHELL_C không nhận trước -c (ps_flag_norm, 2.8): đọc thêm bản viết lại phần đầu thành `<shell> -c`.
+    cmd3 = ps_flag_norm(cmd) if tool == "PowerShell" and launch else None
     if cmd3 is not None and cmd3 not in done3:
         labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     return labels
