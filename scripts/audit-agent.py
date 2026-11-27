@@ -603,12 +603,17 @@ def ps_launcher_var(cmd):
     return out if out != cmd else None
 
 
-PS_NESTED_SH = re.compile(r"(?<![\w-])(?:bash|sh|zsh|dash)(?:\.exe)?\s", re.IGNORECASE)  # shell lồng trong thân (ps_flag_norm)
+# Phần đầu `<shell> … -c` lồng trong thân (ps_flag_norm): shell không đứng sau chữ, `-` hay `.` (đuôi `.sh` của tên file), tối
+# đa 8 cờ rồi một cụm có chữ c. Chữ shell trong echo hay comment không mở cổng (reviewer PR #120 lần hai). Số cờ có trần: mỗi
+# chỗ mở chỉ quét một đoạn ngắn, tuyến tính.
+PS_NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash)(?:\.exe)?(?:\s+[-+]\w+){0,8}?\s+[-+][A-Za-z]*c[A-Za-z]*\s",
+                          re.IGNORECASE)
 
 
 def ps_flag_norm(cmd):
     """Lệnh PowerShell với mỗi phần đầu `<shell> <cờ> -c` mà SHELL_C không nhận (`+e -c`, `-o pipefail -c`, `-euo pipefail
-    -c`, `-lc`), shell ở vị trí lệnh, rồi thân nháy hay here-string của PowerShell (PS_SHELL_C_BODY_STRICT): phần đầu viết
+    -c`, `-lc`), shell ở vị trí lệnh, rồi thân nháy của PowerShell (PS_SHELL_C_BODY_STRICT; here-string không qua đây: khớp
+    dừng sau `@'`, main đọc thân here-string theo đường có sẵn): phần đầu viết
     lại thành `<shell> -c `, thân giữ nguyên văn; None nếu không có. suspicious_labels đọc bản này như ps_launcher (một lệnh
     riêng, hợp nhãn): nhãn thêm là nhãn main báo cho `<shell> -c` cùng thân. Cờ không đổi lệnh nào chạy trong thân (`-e`
     dừng ở lệnh lỗi: main cũng báo `bash -c "false; rm -rf src"`). Thân lồng theo luật bash trong thân nháy kép (`bash +e -c
