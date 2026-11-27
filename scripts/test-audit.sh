@@ -2407,7 +2407,7 @@ got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
 check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, 64 biến thể hoa thường không chiếm trần: {got!r}")
 # 2.8: shell với cờ mà SHELL_C không nhận (`+e`, `-o pipefail`, `-euo pipefail`, `+o nomatch`) rồi thân nháy kép có thân lồng
 # theo luật bash (`'echo ''a''; …'` là `echo a; …`): bash xoá src. Main đọc `bash -c "…"` cùng thân thì báo, với các cờ này
-# thì trả [] (doc 2.8: "thân lồng sau `+e -c` có `''` theo luật bash").
+# thì trả [] (doc 2.8: "thân lồng sau `+e -c` có `''` theo luật bash"). Ca here-string cuối main đã báo (đường đọc có sẵn).
 for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
             "bash -o pipefail -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
             "zsh +o nomatch -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
@@ -2421,7 +2421,11 @@ for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
 # `+e` rất hay gặp; main trả [] cho các ca dưới.
 for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"", "bash -lc \"echo 'rm -rf src'\"",
             "bash -lc \"grep 'rm -rf src' f\"", "bash -ec \"echo 'rm -rf src'\"", "bash -lc 'echo \"rm -rf src\"'",
-            "bash +e -c 'cd /tmp/w && rm -rf x'"):
+            "bash +e -c 'cd /tmp/w && rm -rf x'",
+            # Reviewer PR #120 lần hai (tuỳ chọn, hồi quy): chữ shell không là phần đầu `<shell> … -c` lồng (đuôi `.sh`, chữ
+            # trong echo hay comment) không mở cổng; main trả [].
+            "bash -lc \"grep 'rm -rf src' build.sh \"", "bash -lc \"echo 'rm -rf src' # bash \"",
+            "bash -lc \"echo zsh 'rm -rf src'\""):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: cờ ngoài SHELL_C, thân vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
