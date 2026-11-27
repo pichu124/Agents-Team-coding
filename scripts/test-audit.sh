@@ -2398,6 +2398,13 @@ for name in ("b\u00df", "stra\u00dfe", "b\u0130", "b\ufb06"):
     cmd = "$%s = 'C:\\x\\bash.exe'; & $%s -c 'rm -rf src'" % (name, name)
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, cùng tên Unicode: {cmd!r}: {got!r}")
+# Reviewer PR #119 lần ba (tuỳ chọn, hồi quy của bản tra bằng re.IGNORECASE): biến thể hoa thường của một tên (PowerShell coi
+# là một biến) không được chiếm chỗ trong trần 64 tên, không thì launcher gán sau đó bị bỏ sót. Bash xoá src.
+import itertools
+variants = ["".join(c.upper() if u else c for c, u in zip("abcdef", bits)) for bits in itertools.product((0, 1), repeat=6)]
+cmd = "".join("$%s = 'C:\\x\\bash.exe'; " % v for v in variants) + "$zz = 'C:\\x\\bash.exe'; & $zz -c 'rm -rf src'"
+got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, 64 biến thể hoa thường không chiếm trần: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
