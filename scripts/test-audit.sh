@@ -2379,6 +2379,26 @@ for cmd in ("$p = 'C:\\x\\notepad.exe'; & $p -c 'rm -rf src'", "$p = 'C:\\x\\bas
             "$p = 'C:\\x\\bash.exe'; Write-Host \"& $p -c 'rm -rf src'\"", "$p = 'C:\\x\\bash.exe'; x&&$p -c 'rm -rf src'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: launcher qua biến vô hại: {cmd!r}: {got!r}")
+# 2.8: launcher qua biến viết `${b}`, có phạm vi (`$script:b`, `$global:b`, cùng biến với `$b` ở mức script), biến môi
+# trường (`$env:B`), hay phép gán sau `&&` của PowerShell 7: bash xoá src. Main trả [] mọi ca.
+PB = "'C:\\Program Files\\Git\\bin\\bash.exe'"
+for cmd in ("$b = %s; & ${b} -c 'rm -rf src'" % PB, "${b} = %s; & ${b} -c 'rm -rf src'" % PB,
+            "$script:b = %s; & $script:b -c 'rm -rf src'" % PB, "$global:b = %s; & $global:b -c 'rm -rf src'" % PB,
+            "$b = %s; & $script:b -c 'rm -rf src'" % PB, "$env:B = %s; & $env:B -c 'rm -rf src'" % PB,
+            "${env:B} = %s; & $env:B -c 'rm -rf src'" % PB, "cd x && $b = %s; & $b -c 'rm -rf src'" % PB):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến có phạm vi hay ngoặc nhọn: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #122: các dạng tên mới không được chiếm trần 64 tên của dạng main nhận, không thì 64 phép gán dạng mới trước
+# `$b = …; & $b -c 'rm -rf src'` làm mất nhãn main báo. Bash xoá src.
+for pre in ("$env:V%d = " + PB + "; ", "${v%d} = " + PB + "; ", "x && $v%d = " + PB + "; ", "$script:v%d = " + PB + "; "):
+    cmd = "".join(pre % i for i in range(64)) + "$b = %s; & $b -c 'rm -rf src'" % PB
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: dạng tên mới không chiếm trần 64 tên của main: {pre!r}: {got!r}")
+# `$env:B` và `$B` là hai biến khác nhau: gọi biến chưa gán thì PowerShell báo lỗi, không chạy bash (main cũng trả []).
+for cmd in ("$b = %s; & ${b} -c 'rm -rf /tmp/x'" % PB, "$b = 'C:\\x\\notepad.exe'; & ${b} -c 'rm -rf src'",
+            "$env:B = %s; & $B -c 'rm -rf src'" % PB, "$b = %s; & $env:b -c 'rm -rf src'" % PB):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: launcher qua biến có phạm vi, vô hại: {cmd!r}: {got!r}")
 # Reviewer PR #119: tên biến có chữ mà re.IGNORECASE coi là cùng chữ còn str.lower() thì không (ſ/s, ς/σ, ı/i, İ/i): tra tên
 # không được ném KeyError (cả lần audit dừng, mất mọi nhãn main báo). Remove-Item ngoài thân vẫn phải báo.
 for cmd in ("$bs = 'C:\\x\\bash.exe'; & $b\u017f -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
