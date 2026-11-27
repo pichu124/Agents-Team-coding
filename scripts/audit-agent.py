@@ -604,9 +604,10 @@ def ps_launcher_var(cmd):
 
 
 # Phần đầu `<shell> … -c` lồng trong thân (ps_flag_norm): shell không đứng sau chữ, `-` hay `.` (đuôi `.sh` của tên file), tối
-# đa 8 cờ rồi một cụm có chữ c. Chữ shell trong echo hay comment không mở cổng (reviewer PR #120 lần hai). Số cờ có trần: mỗi
-# chỗ mở chỉ quét một đoạn ngắn, tuyến tính.
-PS_NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash)(?:\.exe)?(?:\s+[-+]\w+){0,8}?\s+[-+][A-Za-z]*c[A-Za-z]*\s",
+# đa 8 cờ rồi một cụm có chữ c. Chữ shell trong echo hay comment không mở cổng (reviewer PR #120 lần hai). Số cờ có trần, cụm c
+# tìm chữ c bằng lookahead rồi lấy trọn cụm như _SHELL_C_HEAD: `[A-Za-z]*c[A-Za-z]*` backtrack bậc hai trên cụm dài nhiều chữ c
+# không có khoảng trắng sau (reviewer PR #120 lần ba: 18 giây ở 48 KB).
+PS_NESTED_SH = re.compile(r"(?<![\w.-])(?:bash|sh|zsh|dash)(?:\.exe)?(?:\s+[-+]\w+){0,8}?\s+[-+](?=[A-Za-z]*c)[A-Za-z]+\s",
                           re.IGNORECASE)
 
 
