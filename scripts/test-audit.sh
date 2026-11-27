@@ -2364,6 +2364,47 @@ for cmd in ("&'C:\\Program Files\\Git\\bin\\bash.exe' -c 'rm -rf src'", "&\"C:\\
 for cmd in ("x&&'C:\\x\\bash.exe' -c 'rm -rf src'", "&'C:\\x\\sh.exe' -c 'rm -rf /tmp/x'"):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: `&` liền đường vô hại: {cmd!r}: {got!r}")
+# 2.8: launcher qua biến (`$b = '<đường>\bash.exe'; & $b -c …`): PowerShell chạy shell trong biến, bash xoá src. Main chỉ bắt được
+# khi tên biến trùng tên shell (`$bash -c` khớp SHELL_C), tên khác thì trả [].
+for cmd in ("$b = \"$env:ProgramFiles\\Git\\bin\\bash.exe\"; & $b --login -c 'rm -rf src'",
+            "$git = 'C:\\Program Files\\Git\\bin\\bash.exe'; & $git -c 'rm -rf src'",
+            "$exe='C:\\x\\sh.exe'\n&$exe -lc 'rm -rf src'",
+            "$p = 'C:\\x\\bash.exe'; cd C:\\w && & $p -c 'rm -rf src'",
+            "$P = 'C:\\x\\bash.exe'; . $p -c 'rm -rf src'",
+            "$p = 'C:\\x\\bash.exe'; & $p -c 'echo ''a''; rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến: xoá src: {cmd!r}: {got!r}")
+# Biến không trỏ tới shell, thân chỉ xoá trong /tmp, `& $p` nằm trong chuỗi, `x&&$p` (không gọi gì): main cũng trả [].
+for cmd in ("$p = 'C:\\x\\notepad.exe'; & $p -c 'rm -rf src'", "$p = 'C:\\x\\bash.exe'; & $p -c 'rm -rf /tmp/x'",
+            "$p = 'C:\\x\\bash.exe'; Write-Host \"& $p -c 'rm -rf src'\"", "$p = 'C:\\x\\bash.exe'; x&&$p -c 'rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: launcher qua biến vô hại: {cmd!r}: {got!r}")
+# Reviewer PR #119: tên biến có chữ mà re.IGNORECASE coi là cùng chữ còn str.lower() thì không (ſ/s, ς/σ, ı/i, İ/i): tra tên
+# không được ném KeyError (cả lần audit dừng, mất mọi nhãn main báo). Remove-Item ngoài thân vẫn phải báo.
+for cmd in ("$bs = 'C:\\x\\bash.exe'; & $b\u017f -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$b\u03c3 = 'C:\\x\\bash.exe'; & $b\u03c2 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$b\u017f = 'C:\\x\\bash.exe'; & $bs -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$bi = 'C:\\x\\bash.exe'; & $b\u0130 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$bi = 'C:\\x\\bash.exe'; & $b\u0131 -c 'echo'; Remove-Item -Recurse -Force C:\\proj\\src",
+            "$sh = 'C:\\x\\bash.exe'; & $\u017fh -c 'rm -rf src'"):
+    try:
+        got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    except Exception as e:  # noqa: BLE001
+        got = [f"ngoại lệ {e!r}"]
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, tên Unicode: {cmd!r}: {got!r}")
+# Reviewer PR #119 lần hai (tuỳ chọn, hồi quy của bản casefold): casefold làm tên dài ra (ß→ss, İ, ﬆ), regex dựng từ khoá
+# casefold không khớp lại chính tên gốc: launcher gọi đúng tên đã gán bị bỏ sót. Bash xoá src.
+for name in ("b\u00df", "stra\u00dfe", "b\u0130", "b\ufb06"):
+    cmd = "$%s = 'C:\\x\\bash.exe'; & $%s -c 'rm -rf src'" % (name, name)
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, cùng tên Unicode: {cmd!r}: {got!r}")
+# Reviewer PR #119 lần ba (tuỳ chọn, hồi quy của bản tra bằng re.IGNORECASE): biến thể hoa thường của một tên (PowerShell coi
+# là một biến) không được chiếm chỗ trong trần 64 tên, không thì launcher gán sau đó bị bỏ sót. Bash xoá src.
+import itertools
+variants = ["".join(c.upper() if u else c for c, u in zip("abcdef", bits)) for bits in itertools.product((0, 1), repeat=6)]
+cmd = "".join("$%s = 'C:\\x\\bash.exe'; " % v for v in variants) + "$zz = 'C:\\x\\bash.exe'; & $zz -c 'rm -rf src'"
+got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, 64 biến thể hoa thường không chiếm trần: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
