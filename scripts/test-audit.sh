@@ -2388,6 +2388,12 @@ for cmd in ("$b = %s; & ${b} -c 'rm -rf src'" % PB, "${b} = %s; & ${b} -c 'rm -r
             "${env:B} = %s; & $env:B -c 'rm -rf src'" % PB, "cd x && $b = %s; & $b -c 'rm -rf src'" % PB):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" in got, f"PowerShell: launcher qua biến có phạm vi hay ngoặc nhọn: xoá src: {cmd!r}: {got!r}")
+# Reviewer PR #122: các dạng tên mới không được chiếm trần 64 tên của dạng main nhận, không thì 64 phép gán dạng mới trước
+# `$b = …; & $b -c 'rm -rf src'` làm mất nhãn main báo. Bash xoá src.
+for pre in ("$env:V%d = " + PB + "; ", "${v%d} = " + PB + "; ", "x && $v%d = " + PB + "; ", "$script:v%d = " + PB + "; "):
+    cmd = "".join(pre % i for i in range(64)) + "$b = %s; & $b -c 'rm -rf src'" % PB
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: dạng tên mới không chiếm trần 64 tên của main: {pre!r}: {got!r}")
 # `$env:B` và `$B` là hai biến khác nhau: gọi biến chưa gán thì PowerShell báo lỗi, không chạy bash (main cũng trả []).
 for cmd in ("$b = %s; & ${b} -c 'rm -rf /tmp/x'" % PB, "$b = 'C:\\x\\notepad.exe'; & ${b} -c 'rm -rf src'",
             "$env:B = %s; & $B -c 'rm -rf src'" % PB, "$b = %s; & $env:b -c 'rm -rf src'" % PB):
