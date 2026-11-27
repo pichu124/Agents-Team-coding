@@ -2448,9 +2448,11 @@ linear("PS_NESTED_SH, nhiều shell lồng có cờ dài", nested_all, lambda k:
 linear("PS_NESTED_SH, nhiều shell lồng có -ooo kèm tên", nested_all, lambda k: ("bash" + " -ooo x" * 9 + " 1 ") * 4000 * k)
 # Reviewer PR #120 lần ba: cụm cờ dài nhiều chữ c không có khoảng trắng sau trong thân (`bash -lc "bash -ccc…c1"`): cổng shell
 # lồng của ps_flag_norm không được backtrack bậc hai (`[A-Za-z]*c[A-Za-z]*` từng mất 18 giây ở 48 KB).
-linear("ps_flag_norm, cụm cờ nhiều chữ c trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash -' + "c" * 3000 * k + '1"')
-linear("ps_flag_norm, nhiều thân có cụm cờ nhiều chữ c", a.ps_flag_norm,
-       lambda k: ('bash -lc "bash -' + "c" * 60 + '1"; ') * 50 * k)
+# Cỡ đủ lớn để mỗi lần đo cỡ chục mili giây: ở 3000 chữ c lần đo ngắn dưới 1 ms, nhiễu runner Windows của PR #121 từng đẩy tỉ lệ
+# lên x10 dù tuyến tính (0,0003 → 0,0014 s ở máy này).
+linear("ps_flag_norm, cụm cờ nhiều chữ c trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash -' + "c" * 400000 * k + '1"')
+linear("PS_NESTED_SH, nhiều chỗ mở có cụm cờ nhiều chữ c", lambda c: sum(1 for _ in a.PS_NESTED_SH.finditer(c)),
+       lambda k: ("bash -" + "c" * 60 + "1 ") * 3000 * k)
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
