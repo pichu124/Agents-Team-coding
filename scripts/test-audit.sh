@@ -2405,6 +2405,21 @@ variants = ["".join(c.upper() if u else c for c, u in zip("abcdef", bits)) for b
 cmd = "".join("$%s = 'C:\\x\\bash.exe'; " % v for v in variants) + "$zz = 'C:\\x\\bash.exe'; & $zz -c 'rm -rf src'"
 got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
 check("xoá đệ quy" in got, f"PowerShell: launcher qua biến, 64 biến thể hoa thường không chiếm trần: {got!r}")
+# 2.8: shell với cờ mà SHELL_C không nhận (`+e`, `-o pipefail`, `-euo pipefail`, `+o nomatch`) rồi thân nháy kép có thân lồng
+# theo luật bash (`'echo ''a''; …'` là `echo a; …`): bash xoá src. Main đọc `bash -c "…"` cùng thân thì báo, với các cờ này
+# thì trả [] (doc 2.8: "thân lồng sau `+e -c` có `''` theo luật bash").
+for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
+            "bash -o pipefail -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
+            "zsh +o nomatch -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
+            "bash -euo pipefail -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
+            "cd C:\\w; bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf src'\"",
+            "bash +e -c @'\necho; bash -lc 'echo ''a''; rm -rf src'\n'@"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: cờ ngoài SHELL_C rồi thân lồng: xoá src: {cmd!r}: {got!r}")
+# Thân lồng chỉ xoá trong /tmp: không báo (main cũng không báo dạng `bash -c` trần).
+for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"",):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: cờ ngoài SHELL_C, thân vô hại: {cmd!r}: {got!r}")
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
