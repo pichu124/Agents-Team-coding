@@ -2428,6 +2428,11 @@ for cmd in ("bash +e -c \"echo; bash -lc 'echo ''a''; rm -rf /tmp/x'\"", "bash -
             "bash -lc \"echo zsh 'rm -rf src'\""):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: cờ ngoài SHELL_C, thân vô hại: {cmd!r}: {got!r}")
+# Reviewer PR #120 lần ba: cụm cờ dài nhiều chữ c không có khoảng trắng sau trong thân (`bash -lc "bash -ccc…c1"`): cổng shell
+# lồng của ps_flag_norm không được backtrack bậc hai (`[A-Za-z]*c[A-Za-z]*` từng mất 18 giây ở 48 KB).
+linear("ps_flag_norm, cụm cờ nhiều chữ c trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash -' + "c" * 3000 * k + '1"')
+linear("ps_flag_norm, nhiều thân có cụm cờ nhiều chữ c", a.ps_flag_norm,
+       lambda k: ('bash -lc "bash -' + "c" * 60 + '1"; ') * 50 * k)
 # Heredoc mà lệnh thay thế kéo qua nhiều dòng (thân nằm trong backtick hay `$(…)`) là dữ liệu: bash, zsh không chạy rm.
 # Reviewer PR #109: `)` trong nháy hay sau `#` không đóng `$(…)` (bash, zsh không chạy rm ở mọi ca dưới).
 for cmd in ("echo `cat <<'EOF'\nrm -rf src\nEOF\n`", "echo $(cat <<'EOF'\nrm -rf src\nEOF\n)",
