@@ -2440,8 +2440,12 @@ for cmd in ("bash +e -c \"echo; bash -o pipefail -c 'echo ''a''; rm -rf /tmp/x'\
             "bash -lc \"echo bash -o pipefail x; echo 'rm -rf src'\"", "bash -lc \"echo 'rm -rf src' --login -c\""):
     got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
     check("xoá đệ quy" not in got, f"PowerShell: shell lồng có cờ kèm tên, vô hại: {cmd!r}: {got!r}")
-linear("ps_flag_norm, nhiều cờ kèm tên trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash' + " -o x" * 3000 * k + '1"')
-linear("ps_flag_norm, nhiều cờ dài trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash' + " --a-b" * 3000 * k + '1"')
+# Đo chính cổng PS_NESTED_SH trên nhiều chỗ mở có cờ kèm tên hay cờ dài, cỡ đủ lớn (mỗi lần đo cỡ chục mili giây): bản đầu
+# đo ps_flag_norm ở 1–2 ms, phần lớn là PS_SHELL_C_BODY_STRICT có sẵn, nhiễu của runner macOS từng đẩy tỉ lệ lên x10.
+nested_all = lambda c: sum(1 for _ in a.PS_NESTED_SH.finditer(c))
+linear("PS_NESTED_SH, nhiều shell lồng có cờ kèm tên", nested_all, lambda k: ("bash" + " -o x" * 9 + " 1 ") * 4000 * k)
+linear("PS_NESTED_SH, nhiều shell lồng có cờ dài", nested_all, lambda k: ("bash" + " --a-b" * 9 + " 1 ") * 4000 * k)
+linear("PS_NESTED_SH, nhiều shell lồng có -ooo kèm tên", nested_all, lambda k: ("bash" + " -ooo x" * 9 + " 1 ") * 4000 * k)
 # Reviewer PR #120 lần ba: cụm cờ dài nhiều chữ c không có khoảng trắng sau trong thân (`bash -lc "bash -ccc…c1"`): cổng shell
 # lồng của ps_flag_norm không được backtrack bậc hai (`[A-Za-z]*c[A-Za-z]*` từng mất 18 giây ở 48 KB).
 linear("ps_flag_norm, cụm cờ nhiều chữ c trong thân", a.ps_flag_norm, lambda k: 'bash -lc "bash -' + "c" * 3000 * k + '1"')
