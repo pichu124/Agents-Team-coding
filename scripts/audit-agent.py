@@ -603,18 +603,24 @@ def ps_launcher_var(cmd):
     return out if out != cmd else None
 
 
+PS_NESTED_SH = re.compile(r"(?<![\w-])(?:bash|sh|zsh|dash)(?:\.exe)?\s", re.IGNORECASE)  # shell lồng trong thân (ps_flag_norm)
+
+
 def ps_flag_norm(cmd):
     """Lệnh PowerShell với mỗi phần đầu `<shell> <cờ> -c` mà SHELL_C không nhận (`+e -c`, `-o pipefail -c`, `-euo pipefail
     -c`, `-lc`), shell ở vị trí lệnh, rồi thân nháy hay here-string của PowerShell (PS_SHELL_C_BODY_STRICT): phần đầu viết
     lại thành `<shell> -c `, thân giữ nguyên văn; None nếu không có. suspicious_labels đọc bản này như ps_launcher (một lệnh
     riêng, hợp nhãn): nhãn thêm là nhãn main báo cho `<shell> -c` cùng thân. Cờ không đổi lệnh nào chạy trong thân (`-e`
     dừng ở lệnh lỗi: main cũng báo `bash -c "false; rm -rf src"`). Thân lồng theo luật bash trong thân nháy kép (`bash +e -c
-    "echo; bash -lc 'echo ''a''; rm -rf src'"`) main chỉ đọc được sau `-c` trần (doc 2.8)."""
+    "echo; bash -lc 'echo ''a''; rm -rf src'"`) main chỉ đọc được sau `-c` trần (doc 2.8). Chỉ viết lại thân có shell lồng
+    (PS_NESTED_SH): thân khác thì main đã đọc theo cách của nó, viết lại chỉ đem báo thừa của `-c` trần (chữ trong echo, grep)
+    sang `-lc`, `-ec`, `+e` rất hay gặp (reviewer PR #120)."""
     out, last = [], 0
     for m in PS_SHELL_C_BODY_STRICT.finditer(cmd):
         sh, body = m.group(1), m.start(2)
         head = cmd[m.start():body]
-        if re.fullmatch(re.escape(sh) + r"\s+-c\s+", head) or not ps_cmd_pos(cmd, m.start()):
+        if re.fullmatch(re.escape(sh) + r"\s+-c\s+", head) or not PS_NESTED_SH.search(cmd, body, m.end()) \
+                or not ps_cmd_pos(cmd, m.start()):
             continue
         out += [cmd[last:m.start()], sh, " -c "]
         last = body
