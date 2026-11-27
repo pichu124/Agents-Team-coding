@@ -603,6 +603,26 @@ def ps_launcher_var(cmd):
     return out if out != cmd else None
 
 
+def ps_flag_norm(cmd):
+    """Lệnh PowerShell với mỗi phần đầu `<shell> <cờ> -c` mà SHELL_C không nhận (`+e -c`, `-o pipefail -c`, `-euo pipefail
+    -c`, `-lc`), shell ở vị trí lệnh, rồi thân nháy hay here-string của PowerShell (PS_SHELL_C_BODY_STRICT): phần đầu viết
+    lại thành `<shell> -c `, thân giữ nguyên văn; None nếu không có. suspicious_labels đọc bản này như ps_launcher (một lệnh
+    riêng, hợp nhãn): nhãn thêm là nhãn main báo cho `<shell> -c` cùng thân. Cờ không đổi lệnh nào chạy trong thân (`-e`
+    dừng ở lệnh lỗi: main cũng báo `bash -c "false; rm -rf src"`). Thân lồng theo luật bash trong thân nháy kép (`bash +e -c
+    "echo; bash -lc 'echo ''a''; rm -rf src'"`) main chỉ đọc được sau `-c` trần (doc 2.8)."""
+    out, last = [], 0
+    for m in PS_SHELL_C_BODY_STRICT.finditer(cmd):
+        sh, body = m.group(1), m.start(2)
+        head = cmd[m.start():body]
+        if re.fullmatch(re.escape(sh) + r"\s+-c\s+", head) or not ps_cmd_pos(cmd, m.start()):
+            continue
+        out += [cmd[last:m.start()], sh, " -c "]
+        last = body
+    if not out:
+        return None
+    return "".join(out) + cmd[last:]
+
+
 def ps_rewrite(cmd, eq=False, col0=False):
     """Lệnh PowerShell mà thân -c viết theo nháy PowerShell (`''`, here-string, nháy kép thoát bằng backtick hay `""`)
     hay đứng sau cờ mà SHELL_C không nhận (`-lc`, `--login -c`, `-o pipefail -c`, `+e -c`), shell ở vị trí lệnh: viết lại
@@ -1916,6 +1936,11 @@ def suspicious_labels(cmd, patterns, tool="Bash", launch=True):
             done3.add(cmd3)
             labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     cmd3 = ps_launcher_var(cmd) if tool == "PowerShell" and launch else None
+    if cmd3 is not None and cmd3 not in done3:
+        done3.add(cmd3)
+        labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
+    # Cờ mà SHELL_C không nhận trước -c (ps_flag_norm, 2.8): đọc thêm bản viết lại phần đầu thành `<shell> -c`.
+    cmd3 = ps_flag_norm(cmd) if tool == "PowerShell" and launch else None
     if cmd3 is not None and cmd3 not in done3:
         labels += [x for x in suspicious_labels(cmd3, patterns, tool, launch=False) if x not in labels]
     return labels
