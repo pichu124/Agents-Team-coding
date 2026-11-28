@@ -2466,6 +2466,17 @@ nested_all = lambda c: sum(1 for _ in a.PS_NESTED_SH.finditer(c))
 linear("PS_NESTED_SH, nhiều shell lồng có cờ kèm tên", nested_all, lambda k: ("bash" + " -o x" * 9 + " 1 ") * 4000 * k)
 linear("PS_NESTED_SH, nhiều shell lồng có cờ dài", nested_all, lambda k: ("bash" + " --a-b" * 9 + " 1 ") * 4000 * k)
 linear("PS_NESTED_SH, nhiều shell lồng có -ooo kèm tên", nested_all, lambda k: ("bash" + " -ooo x" * 9 + " 1 ") * 4000 * k)
+# 2.8: cờ của shell viết trong nháy (`bash '-c' '…'`, `bash "-lc" "…"`): PowerShell bỏ nháy rồi đưa `-c` cho bash, bash xoá src.
+# Main chỉ nhận cờ trần, mọi ca trả [].
+for cmd in ("bash '-c' 'rm -rf src'", 'bash "-c" \'rm -rf src\'', "bash '-lc' 'rm -rf src'",
+            "bash '-e' '-c' 'rm -rf src'", "C:\\x\\bash.exe '-c' 'rm -rf src'", "cd C:\\w; bash '-c' 'rm -rf src'",
+            "bash '-c' 'echo ''a''; rm -rf src'", "bash '-c' @'\nrm -rf src\n'@"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" in got, f"PowerShell: cờ shell trong nháy: xoá src: {cmd!r}: {got!r}")
+# Thân chỉ xoá trong /tmp, hay shell không ở vị trí lệnh: main cũng trả [].
+for cmd in ("bash '-c' 'rm -rf /tmp/x'", "Write-Host bash '-c' 'rm -rf src'"):
+    got = a.suspicious_labels(cmd, a.SUSPICIOUS, tool="PowerShell")
+    check("xoá đệ quy" not in got, f"PowerShell: cờ shell trong nháy, vô hại: {cmd!r}: {got!r}")
 # Reviewer PR #120 lần ba: cụm cờ dài nhiều chữ c không có khoảng trắng sau trong thân (`bash -lc "bash -ccc…c1"`): cổng shell
 # lồng của ps_flag_norm không được backtrack bậc hai (`[A-Za-z]*c[A-Za-z]*` từng mất 18 giây ở 48 KB).
 # Cỡ đủ lớn để mỗi lần đo cỡ chục mili giây: ở 3000 chữ c lần đo ngắn dưới 1 ms, nhiễu runner Windows của PR #121 từng đẩy tỉ lệ
